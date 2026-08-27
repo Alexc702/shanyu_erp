@@ -1,0 +1,42 @@
+{
+  "source_file": "半包报价单_v2.xlsx",
+  "source_sha256": "bc9155a9b3854a09083125dfeebe31defdeb4fd3d92fcbb4f6570b24c51f55c5",
+  "source_sheet": "半包报价模板",
+  "section_count_excluding_summary": 8,
+  "option_count": 157,
+  "section_counts": {
+    "一、砌墙工程": 19,
+    "二、客餐厅工程": 45,
+    "三、卧室工程": 40,
+    "七、阳台工程": 3,
+    "八、厨卫工程": 27,
+    "十、油漆工程": 3,
+    "十一、水电工程": 17,
+    "十二、其他工程": 3
+  },
+  "sale_price_present_count": 157,
+  "sale_price_missing_count": 0,
+  "sale_price_missing_rows": [],
+  "cost_price_present_count": 157,
+  "cost_price_missing_count": 0,
+  "cost_price_missing_rows": [],
+  "cost_price_zero_count": 0,
+  "cost_price_zero_rows": [],
+  "missing_remarks_count": 3,
+  "missing_remarks_rows": [
+    56,
+    101,
+    163
+  ],
+  "pending_quantity_source_count": 0,
+  "pending_quantity_source_rows": [],
+  "invalid_quantity_cache_count": 0,
+  "invalid_quantity_cache_rows": [],
+  "formula_quantity_count": 41,
+  "manual_or_static_quantity_count": 116,
+  "unique_name_unit_count": 93,
+  "duplicate_name_unit_extra_rows": 64,
+  "duplicate_price_conflict_count": 2,
+  "material_trigger_source_row_count": 38,
+  "material_trigger_aggregate_count": 18
+}

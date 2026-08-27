@@ -1,0 +1,235 @@
+{
+  "main": {
+    "id": "915e7a8e01e1ad67",
+    "type": "split",
+    "children": [
+      {
+        "id": "e00070601e904a90",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "5cc62567626d6cb4",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "山屿ERP一期 - 半包报价与主材库详细设计.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "山屿ERP一期 - 半包报价与主材库详细设计"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "3314dbc84b63f66d",
+    "type": "split",
+    "children": [
+      {
+        "id": "07d8c3de01bdf3cf",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a6c4cefc3a8a0799",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "文件列表"
+            }
+          },
+          {
+            "id": "b7da5163eccba34c",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "搜索"
+            }
+          },
+          {
+            "id": "8b58f55ce33c54f0",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "书签"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 357.5
+  },
+  "right": {
+    "id": "92006cb2d3f2e992",
+    "type": "split",
+    "children": [
+      {
+        "id": "38b19b77287d2018",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "7c66113078b03555",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "原始需求录音文字.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "原始需求录音文字 的反向链接列表"
+            }
+          },
+          {
+            "id": "39ebe16255911d61",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "原始需求录音文字.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "原始需求录音文字 的出链列表"
+            }
+          },
+          {
+            "id": "6ce307785d288b31",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "标签"
+            }
+          },
+          {
+            "id": "32df25618ae8a69e",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "添加笔记属性"
+            }
+          },
+          {
+            "id": "fa6c95869788567d",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "原始需求录音文字.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "原始需求录音文字 的大纲"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:打开快速切换": false,
+      "graph:查看关系图谱": false,
+      "canvas:新建白板": false,
+      "daily-notes:打开/创建今天的日记": false,
+      "templates:插入模板": false,
+      "command-palette:打开命令面板": false,
+      "bases:新建数据库": false
+    }
+  },
+  "active": "5cc62567626d6cb4",
+  "lastOpenFiles": [
+    "山屿ERP一期 - 半包报价与主材库详细设计评审记录.md",
+    "山屿ERP一期 - 半包报价与主材库详细设计.md",
+    "山屿ERP系统需求一期 - 半包报价单需求评审和修改记录.md",
+    "shanyu_erp/docs/architecture/pending-decisions.md",
+    "shanyu_erp/docs/architecture/architecture-proposal.md",
+    "山屿ERP系统需求一期 - 半包报价单PRD.md",
+    "半包报价模板 - 完整表单内容.md",
+    "一期需求变更 - 与老板评审完@0825.md",
+    "半包报价单_v2.xlsx",
+    "shanyu_erp/docs/product/phase-boundaries.md",
+    "shanyu_erp/docs/product/design-baseline.md",
+    "shanyu_erp/CONTEXT-MAP.md",
+    "shanyu_erp/README.md",
+    "山屿ERP一期 - 老板评审Demo讲解流程.md",
+    "山屿erp设计稿.pen",
+    "images/山屿_仅logo.png",
+    "images/image.png",
+    "images/shanyu-logo.png",
+    "images",
+    "山屿erp设计稿_08251055.pen",
+    "室内装修ERP在线平台_PRD.md",
+    "shanyu_erp/docs/architecture",
+    "shanyu_erp/docs/product",
+    "shanyu_erp/docs/contexts/access/CONTEXT.md",
+    "shanyu_erp/docs/contexts/access",
+    "shanyu_erp/docs/contexts/finance/CONTEXT.md",
+    "shanyu_erp/docs/contexts/finance",
+    "shanyu_erp/docs/contexts/delivery/CONTEXT.md",
+    "shanyu_erp/docs/contexts/delivery",
+    "shanyu_erp/docs/contexts/quotation/CONTEXT.md",
+    "shanyu_erp/docs/contexts/quotation",
+    "shanyu_erp/docs/contexts/catalog/CONTEXT.md",
+    "shanyu_erp/docs/contexts/project/CONTEXT.md",
+    "室内装修ERP系统需求.md",
+    "山屿ERP老板核对台使用说明.md",
+    "山屿logo.png",
+    "山屿_仅logo.png",
+    "主材库完整版_静悦府融合说明.md",
+    "主材库完整版_静悦府融合_照片/MAT-BR-S11-C02-036__淋浴房.png",
+    "主材库完整版_静悦府融合_照片/MAT-BR-S11-C01-035__主次卫马桶.png",
+    "主材库完整版_静悦府融合_照片/MAT-BR-S11-C04-034__预埋花洒.jpg",
+    "主材库完整版_静悦府融合_照片/MAT-BR-S11-C03-033__明装花洒.jpg",
+    "主材库完整版_静悦府融合_照片/MAT-BR-S11-C02-032__预埋落地龙头.jpg",
+    "主材库一期第一批 - 半包关联表单内容.md",
+    "山屿ERP一期 - 页面与交互设计评审记录.md",
+    "装修ERP一期设计导出/README.md"
+  ]
+}
