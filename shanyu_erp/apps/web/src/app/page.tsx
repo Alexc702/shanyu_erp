@@ -49,7 +49,7 @@ export default async function Home() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">当前交付</p>
-                <h2>项目与空间框架</h2>
+            <h2>主材库 · 半包工程项</h2>
               </div>
               <span className="status-dot">运行中</span>
             </div>
@@ -58,6 +58,8 @@ export default async function Home() {
               <li>老板、主案、木作固定角色</li>
               <li>服务端权限判定与审计留痕</li>
               <li>稳定项目 ID 与统一空间参数</li>
+              <li>Excel 157 项导入校验与版本发布</li>
+              <li>销售价、成本价按角色隔离</li>
             </ul>
           </article>
 

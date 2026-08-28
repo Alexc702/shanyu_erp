@@ -7,6 +7,7 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "seed": "node --env-file-if-exists=../../.env scripts/seed-demo-users.mjs",
+    "reconcile:catalog": "node --env-file-if-exists=../../.env scripts/reconcile-half-package-catalog.mjs",
     "lint": "eslint src test --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -17,6 +18,7 @@
     "@nestjs/core": "12.0.1",
     "@nestjs/platform-express": "12.0.1",
     "@shanyu/contracts": "workspace:*",
+    "exceljs": "4.4.0",
     "pg": "^8.23.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2"
@@ -25,6 +27,7 @@
     "@eslint/js": "^9.0.0",
     "@nestjs/cli": "12.0.0",
     "@nestjs/testing": "^12.0.1",
+    "@types/express": "5.0.5",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",

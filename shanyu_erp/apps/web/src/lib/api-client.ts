@@ -1,5 +1,7 @@
 import type {
   LoginResponse,
+  PublishedHalfPackageCatalogResponse,
+  PublishedHalfPackageCatalogView,
   ProjectDetail,
   ProjectSummary,
   UserSummary,
@@ -74,4 +76,25 @@ export async function fetchProject(
   }
   const payload = (await response.json()) as { project: ProjectDetail };
   return payload.project;
+}
+
+export async function fetchPublishedCatalog(
+  cookieHeader: string,
+): Promise<PublishedHalfPackageCatalogView | null> {
+  const response = await fetch(`${apiUrl}/catalog/half-package/published`, {
+    cache: "no-store",
+    headers: { cookie: cookieHeader },
+  });
+  if (
+    response.status === 401 ||
+    response.status === 403 ||
+    response.status === 404
+  ) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Catalog request failed with status ${response.status}`);
+  }
+  const payload = (await response.json()) as PublishedHalfPackageCatalogResponse;
+  return payload.catalog;
 }

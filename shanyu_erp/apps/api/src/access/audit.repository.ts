@@ -5,6 +5,9 @@ export interface AuditRecord {
     | "AUTH_LOGIN"
     | "AUTH_LOGOUT"
     | "USER_CREATED"
+    | "CATALOG_IMPORT_REUSED"
+    | "CATALOG_IMPORT_VALIDATED"
+    | "CATALOG_VERSION_PUBLISHED"
     | "PROJECT_CREATED"
     | "SPACE_CREATED"
     | "SPACE_UPDATED"
@@ -13,7 +16,13 @@ export interface AuditRecord {
   readonly occurredAt: Date;
   readonly result: "SUCCESS" | "FAILURE";
   readonly targetId: string | null;
-  readonly targetType: "PROJECT" | "SESSION" | "SPACE" | "USER";
+  readonly targetType:
+    | "CATALOG_IMPORT_BATCH"
+    | "HALF_PACKAGE_TEMPLATE_VERSION"
+    | "PROJECT"
+    | "SESSION"
+    | "SPACE"
+    | "USER";
 }
 
 export interface AuditRepository {

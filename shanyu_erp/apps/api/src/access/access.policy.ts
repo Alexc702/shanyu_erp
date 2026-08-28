@@ -11,6 +11,16 @@ export class AccessPolicy {
     this.assertOwner(user);
   }
 
+  assertCanManageCatalog(user: SessionUser): void {
+    this.assertOwner(user);
+  }
+
+  assertCanReadCatalog(user: SessionUser): void {
+    if (user.role !== "OWNER" && user.role !== "LEAD_DESIGNER") {
+      throw new ForbiddenException("无权访问主材库");
+    }
+  }
+
   assertCanViewSensitivePricing(user: SessionUser): void {
     this.assertOwner(user);
   }

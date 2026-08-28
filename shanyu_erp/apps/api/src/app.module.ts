@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { resolve } from "node:path";
 
 import { AccessModule } from "./access/access.module";
+import { CatalogModule } from "./catalog/catalog.module";
 import { DatabaseModule } from "./database/database.module";
 import { HealthController } from "./health.controller";
 import { ProjectModule } from "./project/project.module";
@@ -19,6 +20,7 @@ import { ProjectModule } from "./project/project.module";
     }),
     DatabaseModule,
     AccessModule,
+    CatalogModule,
     ProjectModule,
   ],
 })

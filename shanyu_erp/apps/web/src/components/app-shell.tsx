@@ -7,12 +7,10 @@ import { getWorkbench } from "@/lib/workbench";
 import { LogoutButton } from "./logout-button";
 
 interface AppShellProps {
-  readonly active: "dashboard" | "projects" | "users";
+  readonly active: "catalog" | "dashboard" | "projects" | "users";
   readonly children: ReactNode;
   readonly user: SessionUser;
 }
-
-const futureEntries = ["半包报价", "主材库", "审批中心"];
 
 export function AppShell({ active, children, user }: AppShellProps) {
   const workbench = getWorkbench(user.role);
@@ -43,11 +41,24 @@ export function AppShell({ active, children, user }: AppShellProps) {
               <span className="nav-dot" />项目管理
             </span>
           )}
-          {futureEntries.map((entry) => (
-            <span className="nav-item disabled" key={entry} title="后续阶段开放">
-              <span className="nav-dot" />{entry}
+          <span className="nav-item disabled" title="后续阶段开放">
+            <span className="nav-dot" />半包报价
+          </span>
+          {user.role === "OWNER" || user.role === "LEAD_DESIGNER" ? (
+            <Link
+              className={active === "catalog" ? "nav-item active" : "nav-item"}
+              href="/catalog"
+            >
+              <span className="nav-dot" />主材库
+            </Link>
+          ) : (
+            <span className="nav-item disabled" title="当前角色无主材库权限">
+              <span className="nav-dot" />主材库
             </span>
-          ))}
+          )}
+          <span className="nav-item disabled" title="后续阶段开放">
+            <span className="nav-dot" />审批中心
+          </span>
           {workbench.canManageUsers ? (
             <>
               <p className="nav-section-label">系统管理</p>
@@ -77,7 +88,7 @@ export function AppShell({ active, children, user }: AppShellProps) {
           <div>
             <span className="mobile-brand">山屿 ERP</span>
           </div>
-          <div className="phase-badge">V1 · 阶段 2</div>
+          <div className="phase-badge">V1 · 阶段 3</div>
         </header>
         {children}
       </div>
