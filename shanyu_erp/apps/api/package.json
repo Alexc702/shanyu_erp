@@ -1,0 +1,38 @@
+{
+  "name": "@shanyu/api",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "nest start --watch",
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "seed": "node --env-file-if-exists=../../.env scripts/seed-demo-users.mjs",
+    "lint": "eslint src test --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nestjs/common": "12.0.1",
+    "@nestjs/config": "^12.0.0",
+    "@nestjs/core": "12.0.1",
+    "@nestjs/platform-express": "12.0.1",
+    "@shanyu/contracts": "workspace:*",
+    "pg": "^8.23.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@nestjs/cli": "12.0.0",
+    "@nestjs/testing": "^12.0.1",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "@types/supertest": "^7.2.1",
+    "eslint": "^9.0.0",
+    "globals": "^16.0.0",
+    "supertest": "^7.2.2",
+    "typescript": "catalog:",
+    "typescript-eslint": "8.68.0",
+    "vitest": "4.1.11"
+  }
+}

@@ -1,0 +1,27 @@
+# Dependencies and generated output
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+playwright-report/
+test-results/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and editor files
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Framework and tool state
+.turbo/
+.swc/
+.vercel/

@@ -1,0 +1,36 @@
+{
+  "name": "shanyu-erp",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.29.2",
+  "engines": {
+    "node": "24.20.0",
+    "pnpm": "10.29.2"
+  },
+  "volta": {
+    "node": "24.20.0",
+    "pnpm": "10.29.2"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @shanyu/web --filter @shanyu/api dev",
+    "dev:web": "pnpm --filter @shanyu/web dev",
+    "dev:api": "pnpm --filter @shanyu/api dev",
+    "build": "pnpm -r --if-present build",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "test:e2e": "pnpm db:migrate && pnpm db:seed && playwright test",
+    "db:migrate": "node --env-file-if-exists=.env scripts/run-migrations.mjs up",
+    "db:rollback": "node --env-file-if-exists=.env scripts/run-migrations.mjs down",
+    "db:seed": "pnpm --filter @shanyu/api seed",
+    "check:env": "bash scripts/environment-check.sh local",
+    "check:env:runtime": "bash scripts/environment-check.sh local-runtime",
+    "check:env:server": "bash scripts/environment-check.sh server",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "node-pg-migrate": "^9.0.0"
+  }
+}
