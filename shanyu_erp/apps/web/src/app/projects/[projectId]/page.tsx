@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { fetchProject, fetchSession } from "@/lib/api-client";
 
 import { SpaceManager } from "./space-manager";
@@ -32,22 +34,59 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
         <section className="project-hero">
           <div>
             <Link className="text-link" href="/projects">← 返回项目列表</Link>
-            <p className="eyebrow">住宅项目</p>
-            <h1>{project.name}</h1>
-            <p>{project.customerName} · {project.address}</p>
+            <h1>{project.name} · {project.customerName}</h1>
+            <p>
+              {Number(project.buildingArea).toFixed(2)}㎡ · 主案 {project.leadDesigner.displayName} · 当前 V1
+            </p>
           </div>
-          <span className="role-pill">报价阶段</span>
+          <div className="project-hero-actions">
+            <Badge variant="secondary">草稿</Badge>
+            <Button disabled title="阶段 6 开放" variant="outline">版本记录</Button>
+            <Button asChild>
+              <Link href={`/projects/${project.id}/quotation`}>继续编辑半包</Link>
+            </Button>
+          </div>
         </section>
 
-        <section className="project-facts">
-          <div><span>建筑面积</span><strong>{project.buildingArea} ㎡</strong></div>
-          <div><span>主案设计师</span><strong>{project.leadDesigner.displayName}</strong></div>
-          <div><span>空间数量</span><strong>{project.spaces.length}</strong></div>
+        <section className="project-status-flow" aria-label="报价状态">
+          {["草稿", "待定价/待补充", "待审批", "已批准"].map((label, index) => (
+            <div className={index === 0 ? "status-step active" : "status-step"} key={label}>
+              <span className="status-step-number">{index + 1}</span>
+              <span>{label}</span>
+            </div>
+          ))}
+        </section>
+
+        <section className="project-overview-grid">
+          <article className="panel">
+            <div className="module-card">
+              <div>
+                <p className="eyebrow">V1 报价模块</p>
+                <h2>半包工程</h2>
+                <p>8 个报价分区 · 157 个标准工程项 · 使用已发布主材库版本</p>
+              </div>
+              <div>
+                <Badge>编辑中</Badge>
+                <Button asChild className="inline-button" size="sm" variant="outline">
+                  <Link href={`/projects/${project.id}/quotation`}>继续编辑半包 →</Link>
+                </Button>
+              </div>
+            </div>
+          </article>
+          <aside className="panel project-space-summary">
+            <h2>项目与空间</h2>
+            <dl>
+              <div><dt>建筑面积</dt><dd>{Number(project.buildingArea).toFixed(2)}㎡</dd></div>
+              <div><dt>主案设计师</dt><dd>{project.leadDesigner.displayName}</dd></div>
+              <div><dt>空间数量</dt><dd>{project.spaces.length}</dd></div>
+              <div><dt>报价模板</dt><dd>山屿标准半包</dd></div>
+            </dl>
+          </aside>
         </section>
 
         <section className="space-section-heading">
           <div><p className="eyebrow">空间配置</p><h2>项目空间</h2></div>
-          <p>面积、周长、层高只作为 PRD 已确认的基础参数。</p>
+          <p>空间名称或参数影响自动项时，以服务端重算结果为准。</p>
         </section>
         <SpaceManager projectId={project.id} spaces={project.spaces} />
       </main>

@@ -1,8 +1,11 @@
 import { cookies } from "next/headers";
+import { Plus } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { fetchProjects, fetchSession } from "@/lib/api-client";
 
 export default async function ProjectsPage() {
@@ -21,13 +24,17 @@ export default async function ProjectsPage() {
       <main className="page-content">
         <section className="page-title-row">
           <div>
-            <p className="eyebrow">项目管理</p>
-            <h1>住宅项目</h1>
-            <p>项目身份会持续贯穿报价及后续阶段，不因阶段切换重复创建。</p>
+            <p className="eyebrow">项目报价</p>
+            <h1>{session.user.role === "OWNER" ? "全部项目报价" : "我的项目报价"}</h1>
+            <p>
+              {session.user.role === "OWNER"
+                ? "查看全公司项目；报价状态与审批将在后续阶段接入。"
+                : `服务端仅返回 ${session.user.displayName} 负责或被授权的项目。`}
+            </p>
           </div>
-          <Link className="primary-button inline-button" href="/projects/new">
-            新建项目
-          </Link>
+          <Button asChild>
+            <Link href="/projects/new"><Plus />新建项目</Link>
+          </Button>
         </section>
 
         {projects.length === 0 ? (
@@ -36,21 +43,44 @@ export default async function ProjectsPage() {
             <p>创建第一个项目并配置空间。</p>
           </section>
         ) : (
-          <section className="project-card-grid">
-            {projects.map((project) => (
-              <Link className="project-card" href={`/projects/${project.id}`} key={project.id}>
-                <div className="project-card-topline">
-                  <span>住宅项目</span>
-                  <span>{project.buildingArea} ㎡</span>
-                </div>
-                <h2>{project.name}</h2>
-                <p>{project.customerName}</p>
-                <div className="project-card-footer">
-                  <span>{project.address}</span>
-                  <strong>{project.leadDesigner.displayName}</strong>
-                </div>
-              </Link>
-            ))}
+          <section className="panel project-table-panel">
+            <div className="project-table-toolbar" aria-label="项目筛选">
+              <input className="filter-control filter-search" placeholder="搜索项目 / 客户 / 地址" />
+              <button className="filter-control" type="button">全部状态</button>
+              <button className="filter-control" type="button">全部版本</button>
+              <button className="filter-control" type="button">最近更新</button>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>项目 / 客户</th>
+                    <th>地址</th>
+                    <th>建筑面积</th>
+                    <th>主案设计师</th>
+                    <th>报价状态</th>
+                    <th>半包金额</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {projects.map((project) => (
+                    <tr key={project.id}>
+                      <td>
+                        <strong>{project.name}</strong>
+                        <span className="table-secondary">{project.customerName}</span>
+                      </td>
+                      <td>{project.address}</td>
+                      <td>{Number(project.buildingArea).toFixed(2)} ㎡</td>
+                      <td>{project.leadDesigner.displayName}</td>
+                      <td><Badge variant="secondary">项目已创建</Badge></td>
+                      <td>—</td>
+                      <td><Link className="text-link" href={`/projects/${project.id}`}>打开项目</Link></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
         )}
       </main>

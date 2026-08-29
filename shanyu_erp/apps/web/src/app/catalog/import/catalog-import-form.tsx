@@ -9,6 +9,10 @@ import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { apiUrl } from "@/lib/api-client";
 
 interface CatalogImportFormProps {
@@ -102,11 +106,11 @@ export function CatalogImportForm({
           </div>
         </div>
         <form className="catalog-upload-form" onSubmit={handleValidate}>
-          <label htmlFor="catalog-file">Excel 文件</label>
-          <input accept=".xlsx" id="catalog-file" name="file" required type="file" />
-          <button className="primary-button" disabled={isValidating}>
+          <Label htmlFor="catalog-file">Excel 文件</Label>
+          <Input accept=".xlsx" id="catalog-file" name="file" required type="file" />
+          <Button disabled={isValidating}>
             {isValidating ? "正在校验…" : "上传并校验"}
-          </button>
+          </Button>
         </form>
         {message ? <p className="catalog-form-message" aria-live="polite">{message}</p> : null}
       </section>
@@ -169,21 +173,19 @@ export function CatalogImportForm({
           {batch.status === "VALIDATED" ? (
             <div className="catalog-publish-box">
               <label className="inline-check">
-                <input
+                <Checkbox
                   checked={confirmed}
-                  onChange={(event) => setConfirmed(event.target.checked)}
-                  type="checkbox"
+                  onCheckedChange={(checked) => setConfirmed(checked === true)}
                 />
                 <span>我已确认上述对算结果，并同意发布不可变的新版本。</span>
               </label>
-              <button
-                className="primary-button"
+              <Button
                 disabled={!confirmed || isPublishing}
                 onClick={handlePublish}
                 type="button"
               >
                 {isPublishing ? "正在发布…" : "确认发布"}
-              </button>
+              </Button>
             </div>
           ) : null}
         </section>

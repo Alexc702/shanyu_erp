@@ -7,6 +7,7 @@ import { CatalogModule } from "./catalog/catalog.module";
 import { DatabaseModule } from "./database/database.module";
 import { HealthController } from "./health.controller";
 import { ProjectModule } from "./project/project.module";
+import { QuotationModule } from "./quotation/quotation.module";
 
 @Module({
   controllers: [HealthController],
@@ -22,6 +23,7 @@ import { ProjectModule } from "./project/project.module";
     AccessModule,
     CatalogModule,
     ProjectModule,
+    QuotationModule,
   ],
 })
 export class AppModule {}

@@ -8,6 +8,7 @@ import { PgCatalogRepository } from "./pg-catalog.repository";
 
 @Module({
   controllers: [CatalogController],
+  exports: [CATALOG_REPOSITORY],
   imports: [AccessModule],
   providers: [
     CatalogService,

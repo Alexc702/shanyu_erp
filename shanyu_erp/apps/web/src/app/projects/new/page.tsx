@@ -25,11 +25,21 @@ export default async function NewProjectPage() {
         <section className="page-title-row">
           <div>
             <p className="eyebrow">项目管理</p>
-            <h1>新建住宅项目</h1>
-            <p>先建立稳定项目与空间，半包报价将在下一阶段引用这些 ID。</p>
+            <h1>新建项目</h1>
+            <p>建立稳定项目与空间后，直接进入半包报价。</p>
           </div>
           <Link className="text-link" href="/projects">返回项目列表</Link>
         </section>
+        <div className="project-status-flow" aria-label="创建步骤">
+          {[["1", "项目信息"], ["2", "空间配置"], ["3", "确认创建"]].map(
+            ([number, label], index) => (
+              <div className={index < 2 ? "status-step active" : "status-step"} key={number}>
+                <span className="status-step-number">{number}</span>
+                <span>{label}</span>
+              </div>
+            ),
+          )}
+        </div>
         <CreateProjectForm currentUser={session.user} leadDesigners={leadDesigners} />
       </main>
     </AppShell>

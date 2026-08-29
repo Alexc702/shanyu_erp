@@ -9,6 +9,16 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { apiUrl } from "@/lib/api-client";
 
 interface CreateProjectFormProps {
@@ -24,6 +34,7 @@ const spaceLabels: Record<SpaceType, string> = {
   BALCONY: "阳台",
   BATHROOM: "卫生间",
   BEDROOM: "卧室",
+  CLOSET: "衣帽间",
   KITCHEN: "厨房",
   LIVING_DINING: "客餐厅",
 };
@@ -35,6 +46,8 @@ export function CreateProjectForm({
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [standaloneBalconyDialogOpen, setStandaloneBalconyDialogOpen] =
+    useState(false);
   const [spaces, setSpaces] = useState<SpaceDraft[]>([
     draftSpace("LIVING_DINING", "客餐厅"),
   ]);
@@ -57,6 +70,20 @@ export function CreateProjectForm({
   }
 
   function addSpace(type: SpaceType) {
+    if (
+      type === "BALCONY" &&
+      spaces.some(
+        (space) =>
+          space.type === "LIVING_DINING" && space.includesBalcony,
+      )
+    ) {
+      setStandaloneBalconyDialogOpen(true);
+      return;
+    }
+    appendSpace(type);
+  }
+
+  function appendSpace(type: SpaceType) {
     const sameTypeCount = spaces.filter((space) => space.type === type).length;
     const base = spaceLabels[type];
     const displayName = sameTypeCount === 0 ? base : `${base}${sameTypeCount + 1}`;
@@ -174,9 +201,41 @@ export function CreateProjectForm({
       </section>
 
       <div className="project-submit-row">
+        <ul className="check-list">
+          <li>项目名称、客户与地址为必填</li>
+          <li>空间名称须为 1–6 字且项目内唯一</li>
+          <li>面积、周长、层高用于已确认数量规则</li>
+          <li>客餐厅包阳台与独立阳台分别计量</li>
+        </ul>
         <span className="form-message" role="status">{message}</span>
-        <button className="primary-button" disabled={isSubmitting}>{isSubmitting ? "创建中…" : "创建项目"}</button>
+        <Button disabled={isSubmitting}>{isSubmitting ? "创建中…" : "创建并进入项目"}</Button>
       </div>
+
+      <Dialog
+        onOpenChange={setStandaloneBalconyDialogOpen}
+        open={standaloneBalconyDialogOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>仍要增加独立阳台吗？</DialogTitle>
+            <DialogDescription>
+              当前“客餐厅”已勾选包阳台，其内部会自动包含七、阳台工程。继续新增“生活阳台”后，两处阳台工程将分别计量、汇总和导出。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline">取消</Button></DialogClose>
+            <Button
+              onClick={() => {
+                appendSpace("BALCONY");
+                setStandaloneBalconyDialogOpen(false);
+              }}
+              type="button"
+            >
+              确认新增独立阳台
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }

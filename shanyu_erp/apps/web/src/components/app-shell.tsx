@@ -1,4 +1,16 @@
 import type { SessionUser } from "@shanyu/contracts";
+import {
+  BadgeCheck,
+  Bell,
+  Database,
+  FolderKanban,
+  HardHat,
+  LayoutDashboard,
+  Search,
+  UsersRound,
+  WalletCards,
+} from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -7,73 +19,74 @@ import { getWorkbench } from "@/lib/workbench";
 import { LogoutButton } from "./logout-button";
 
 interface AppShellProps {
-  readonly active: "catalog" | "dashboard" | "projects" | "users";
+  readonly active: "catalog" | "dashboard" | "projects" | "quotation" | "users";
   readonly children: ReactNode;
   readonly user: SessionUser;
 }
 
+const pageTitles: Record<AppShellProps["active"], string> = {
+  catalog: "主材库",
+  dashboard: "工作台",
+  projects: "项目报价",
+  quotation: "半包报价",
+  users: "用户与权限",
+};
+
 export function AppShell({ active, children, user }: AppShellProps) {
   const workbench = getWorkbench(user.role);
+  const canAccessQuotation = user.role === "OWNER" || user.role === "LEAD_DESIGNER";
 
   return (
     <div className="app-frame">
       <aside className="sidebar">
-        <div className="sidebar-brand">
-          <div className="brand-mark">山屿</div>
-          <span>SHANYU DESIGN</span>
-        </div>
+        <Link className="sidebar-brand" href="/">
+          <Image
+            alt="山屿"
+            className="brand-logo"
+            height={38}
+            priority
+            src="/images/shanyu-logo.png"
+            width={38}
+          />
+          <span className="brand-name">山屿 ERP</span>
+        </Link>
+
         <nav className="sidebar-nav" aria-label="主要导航">
-          <Link
-            className={active === "dashboard" ? "nav-item active" : "nav-item"}
-            href="/"
-          >
-            <span className="nav-dot" />工作台
-          </Link>
-          {user.role === "OWNER" || user.role === "LEAD_DESIGNER" ? (
-            <Link
-              className={active === "projects" ? "nav-item active" : "nav-item"}
+          <NavLink active={active === "dashboard"} href="/" icon={<LayoutDashboard />}>
+            工作台
+          </NavLink>
+          {canAccessQuotation ? (
+            <NavLink
+              active={active === "projects" || active === "quotation"}
               href="/projects"
+              icon={<FolderKanban />}
             >
-              <span className="nav-dot" />项目管理
-            </Link>
+              项目报价
+            </NavLink>
           ) : (
-            <span className="nav-item disabled" title="当前角色无项目权限">
-              <span className="nav-dot" />项目管理
-            </span>
+            <DisabledNav icon={<FolderKanban />}>项目报价</DisabledNav>
           )}
-          <span className="nav-item disabled" title="后续阶段开放">
-            <span className="nav-dot" />半包报价
-          </span>
-          {user.role === "OWNER" || user.role === "LEAD_DESIGNER" ? (
-            <Link
-              className={active === "catalog" ? "nav-item active" : "nav-item"}
-              href="/catalog"
-            >
-              <span className="nav-dot" />主材库
-            </Link>
+          {canAccessQuotation ? (
+            <NavLink active={active === "catalog"} href="/catalog" icon={<Database />}>
+              主材库
+            </NavLink>
           ) : (
-            <span className="nav-item disabled" title="当前角色无主材库权限">
-              <span className="nav-dot" />主材库
-            </span>
+            <DisabledNav icon={<Database />}>主材库</DisabledNav>
           )}
-          <span className="nav-item disabled" title="后续阶段开放">
-            <span className="nav-dot" />审批中心
-          </span>
+          <DisabledNav icon={<BadgeCheck />}>审批中心</DisabledNav>
+
+          <p className="nav-section-label">长期规划</p>
+          <DisabledNav future icon={<HardHat />}>施工项目</DisabledNav>
+          <DisabledNav future icon={<WalletCards />}>财务中心</DisabledNav>
+
+          <span className="nav-spacer" />
           {workbench.canManageUsers ? (
-            <>
-              <p className="nav-section-label">系统管理</p>
-              <Link
-                className={active === "users" ? "nav-item active" : "nav-item"}
-                href="/users"
-              >
-                <span className="nav-dot" />用户与权限
-              </Link>
-              <span className="nav-item disabled" title="后续阶段开放">
-                <span className="nav-dot" />操作日志
-              </span>
-            </>
+            <NavLink active={active === "users"} href="/users" icon={<UsersRound />}>
+              用户与权限
+            </NavLink>
           ) : null}
         </nav>
+
         <div className="sidebar-user">
           <span className="avatar">{user.displayName.slice(0, 1)}</span>
           <span className="user-meta">
@@ -83,15 +96,58 @@ export function AppShell({ active, children, user }: AppShellProps) {
           <LogoutButton />
         </div>
       </aside>
+
       <div className="main-column">
         <header className="topbar">
-          <div>
-            <span className="mobile-brand">山屿 ERP</span>
+          <strong className="topbar-title">{pageTitles[active]}</strong>
+          <span className="topbar-spacer" />
+          <div className="global-search" role="search">
+            <Search aria-hidden="true" />
+            <span>搜索项目、客户…</span>
           </div>
-          <div className="phase-badge">V1 · 阶段 3</div>
+          <button aria-label="通知" className="notification-button" type="button">
+            <Bell aria-hidden="true" />
+          </button>
         </header>
         {children}
       </div>
     </div>
+  );
+}
+
+function NavLink({
+  active,
+  children,
+  href,
+  icon,
+}: {
+  readonly active: boolean;
+  readonly children: ReactNode;
+  readonly href: string;
+  readonly icon: ReactNode;
+}) {
+  return (
+    <Link className={active ? "nav-item active" : "nav-item"} href={href}>
+      {icon}
+      <span>{children}</span>
+    </Link>
+  );
+}
+
+function DisabledNav({
+  children,
+  future = false,
+  icon,
+}: {
+  readonly children: ReactNode;
+  readonly future?: boolean;
+  readonly icon: ReactNode;
+}) {
+  return (
+    <span aria-disabled="true" className="nav-item disabled" title="当前阶段不开放">
+      {icon}
+      <span>{children}</span>
+      {future ? <span className="future-badge">后续</span> : null}
+    </span>
   );
 }

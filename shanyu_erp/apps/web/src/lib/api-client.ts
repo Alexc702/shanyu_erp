@@ -1,4 +1,6 @@
 import type {
+  HalfPackageQuotation,
+  HalfPackageQuotationResponse,
   LoginResponse,
   PublishedHalfPackageCatalogResponse,
   PublishedHalfPackageCatalogView,
@@ -97,4 +99,27 @@ export async function fetchPublishedCatalog(
   }
   const payload = (await response.json()) as PublishedHalfPackageCatalogResponse;
   return payload.catalog;
+}
+
+export async function fetchHalfPackageQuotation(
+  cookieHeader: string,
+  projectId: string,
+): Promise<HalfPackageQuotation | null> {
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/half-package-quotation`,
+    {
+      cache: "no-store",
+      headers: { cookie: cookieHeader },
+    },
+  );
+  if (response.status === 401 || response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Quotation request failed with status ${response.status}`,
+    );
+  }
+  const payload = (await response.json()) as HalfPackageQuotationResponse;
+  return payload.quotation;
 }

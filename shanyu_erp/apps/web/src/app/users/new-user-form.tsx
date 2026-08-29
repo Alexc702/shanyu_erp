@@ -4,6 +4,9 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { apiUrl } from "@/lib/api-client";
 
 export function NewUserForm() {
@@ -50,19 +53,19 @@ export function NewUserForm() {
   return (
     <form className="new-user-form" onSubmit={handleSubmit}>
       <div className="compact-field">
-        <label htmlFor="displayName">姓名</label>
-        <input id="displayName" name="displayName" required />
+        <Label htmlFor="displayName">姓名</Label>
+        <Input id="displayName" name="displayName" required />
       </div>
       <div className="compact-field">
-        <label htmlFor="account">登录账号</label>
-        <input id="account" name="account" pattern="[A-Za-z0-9._-]{3,64}" required />
+        <Label htmlFor="account">登录账号</Label>
+        <Input id="account" name="account" pattern="[A-Za-z0-9._-]{3,64}" required />
       </div>
       <div className="compact-field">
-        <label htmlFor="phone">手机号（选填）</label>
-        <input id="phone" name="phone" />
+        <Label htmlFor="phone">手机号（选填）</Label>
+        <Input id="phone" name="phone" />
       </div>
       <div className="compact-field">
-        <label htmlFor="role">角色</label>
+        <Label htmlFor="role">角色</Label>
         <select defaultValue="LEAD_DESIGNER" id="role" name="role">
           <option value="OWNER">老板</option>
           <option value="LEAD_DESIGNER">主案设计师</option>
@@ -72,14 +75,14 @@ export function NewUserForm() {
         </select>
       </div>
       <div className="compact-field">
-        <label htmlFor="password">初始密码</label>
-        <input id="password" minLength={8} name="password" required type="password" />
+        <Label htmlFor="password">初始密码</Label>
+        <Input id="password" minLength={8} name="password" required type="password" />
       </div>
       <div className="form-action-row">
         <span className="form-message" aria-live="polite">{message}</span>
-        <button className="primary-button" disabled={isSubmitting}>
+        <Button disabled={isSubmitting}>
           {isSubmitting ? "创建中…" : "创建账号"}
-        </button>
+        </Button>
       </div>
     </form>
   );

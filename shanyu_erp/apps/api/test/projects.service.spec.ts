@@ -76,6 +76,21 @@ describe("ProjectsService", () => {
     ]);
   });
 
+  it("保留衣帽间的独立空间类型", async () => {
+    const project = await service.create(owner, {
+      address: "地址",
+      buildingArea: "100",
+      customerName: "客户",
+      leadDesignerId: lead.id,
+      name: "项目",
+      spaces: [space("衣帽间", "CLOSET")],
+    });
+
+    expect(project.spaces).toMatchObject([
+      { displayName: "衣帽间", type: "CLOSET" },
+    ]);
+  });
+
   it("only lets a lead create a project for themselves", async () => {
     await expect(
       service.create(lead, {

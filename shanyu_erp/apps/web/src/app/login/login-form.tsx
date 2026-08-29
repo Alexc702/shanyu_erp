@@ -4,6 +4,10 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { apiUrl } from "@/lib/api-client";
 
 export function LoginForm() {
@@ -44,41 +48,44 @@ export function LoginForm() {
 
   return (
     <form className="login-form" onSubmit={handleSubmit}>
-      <label className="field-label" htmlFor="identifier">
-        账号或手机号
-      </label>
-      <input
+      <Label className="field-label" htmlFor="identifier">
+        手机号 / 账号
+      </Label>
+      <Input
         autoComplete="username"
         className="text-input"
         id="identifier"
         name="identifier"
-        placeholder="请输入账号或手机号"
+        placeholder="请输入手机号或账号"
         required
       />
 
-      <label className="field-label" htmlFor="password">
+      <Label className="field-label" htmlFor="password">
         密码
-      </label>
-      <input
+      </Label>
+      <Input
         autoComplete="current-password"
         className="text-input"
         id="password"
         name="password"
-        placeholder="请输入密码"
+        placeholder="请输入登录密码"
         required
         type="password"
       />
 
-      <label className="remember-row">
-        <input name="rememberMe" type="checkbox" />
-        <span>30 天内保持登录</span>
-      </label>
+      <div className="remember-row">
+        <label className="remember-control" htmlFor="rememberMe">
+          <Checkbox id="rememberMe" name="rememberMe" />
+          <span>记住登录状态</span>
+        </label>
+        <span className="login-help">忘记密码？联系管理员</span>
+      </div>
 
       {error ? <p className="form-error" role="alert">{error}</p> : null}
 
-      <button className="primary-button login-button" disabled={isSubmitting}>
-        {isSubmitting ? "正在登录…" : "登录系统"}
-      </button>
+      <Button className="login-button" disabled={isSubmitting}>
+        {isSubmitting ? "正在登录…" : "登录"}
+      </Button>
     </form>
   );
 }

@@ -8,6 +8,7 @@ import { ProjectsService } from "./projects.service";
 
 @Module({
   controllers: [ProjectsController],
+  exports: [PROJECTS_REPOSITORY],
   imports: [AccessModule],
   providers: [
     PgProjectsRepository,

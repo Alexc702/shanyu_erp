@@ -45,6 +45,7 @@ export interface CreateUserRequest {
 export type SpaceType =
   | "LIVING_DINING"
   | "BEDROOM"
+  | "CLOSET"
   | "KITCHEN"
   | "BATHROOM"
   | "BALCONY";
@@ -166,4 +167,60 @@ export interface CatalogImportResponse {
 
 export interface PublishedHalfPackageCatalogResponse {
   readonly catalog: PublishedHalfPackageCatalogView;
+}
+
+export type HalfPackageQuantitySource =
+  | "MANUAL"
+  | "PROJECT_BUILDING_AREA"
+  | "SPACE_AREA"
+  | "SPACE_PERIMETER_HEIGHT"
+  | "LINE_REFERENCE";
+
+export interface HalfPackageQuotationLine {
+  readonly amount: string | null;
+  readonly id: string;
+  readonly itemName: string;
+  readonly quantity: string | null;
+  readonly quantitySource: HalfPackageQuantitySource;
+  readonly remarks: string | null;
+  readonly saleUnitPrice: string;
+  readonly sectionName: string;
+  readonly selected: boolean;
+  readonly unit: string;
+}
+
+export interface HalfPackageQuotationScope {
+  readonly area: string | null;
+  readonly height: string | null;
+  readonly id: string;
+  readonly lines: readonly HalfPackageQuotationLine[];
+  readonly name: string;
+  readonly perimeter: string | null;
+  readonly projectSpaceId: string | null;
+  readonly spaceType: SpaceType | null;
+  readonly subtotal: string;
+}
+
+export interface HalfPackageQuotation {
+  readonly directCost: string;
+  readonly id: string;
+  readonly managementFee: string;
+  readonly managementRate: string;
+  readonly projectId: string;
+  readonly projectName: string;
+  readonly revision: number;
+  readonly scopes: readonly HalfPackageQuotationScope[];
+  readonly status: "DRAFT";
+  readonly templateVersion: number;
+  readonly total: string;
+}
+
+export interface HalfPackageQuotationResponse {
+  readonly quotation: HalfPackageQuotation;
+}
+
+export interface UpdateHalfPackageQuotationLineRequest {
+  readonly expectedRevision: number;
+  readonly quantity: string | null;
+  readonly selected: boolean;
 }

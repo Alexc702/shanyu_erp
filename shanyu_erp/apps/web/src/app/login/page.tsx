@@ -1,27 +1,35 @@
+import Image from "next/image";
+
 import { LoginForm } from "./login-form";
 
 export default function LoginPage() {
   return (
     <main className="login-page">
       <section className="login-brand-panel" aria-label="山屿品牌介绍">
-        <div className="brand-mark brand-mark-large">山屿</div>
-        <p className="brand-en">SHANYU DESIGN</p>
-        <div className="brand-divider" />
-        <h1>让每一份设计，都有清晰的价值。</h1>
-        <p>项目、报价与审批，在一个可靠的工作空间中持续沉淀。</p>
+        <div className="login-brand">
+          <Image
+            alt="山屿"
+            className="brand-logo"
+            height={38}
+            priority
+            src="/images/shanyu-logo.png"
+            width={38}
+          />
+          <span className="brand-name">山屿 ERP</span>
+        </div>
+        <div className="login-value">
+          <h1>从报价开始，<br />把每个项目管清楚。</h1>
+          <p>统一材料价格、空间工程量、主材选型与成本毛利，形成可追溯的项目基准。</p>
+        </div>
+        <p className="login-copyright">山屿装饰设计有限公司 · 内部业务系统</p>
       </section>
 
       <section className="login-card-wrap">
         <div className="login-card">
-          <p className="eyebrow">SHANYU ERP</p>
-          <h2>欢迎回来</h2>
-          <p className="muted-copy">使用公司账号进入工作台</p>
+          <h2>欢迎进入山屿 ERP</h2>
+          <p className="muted-copy">使用公司分配的账号登录山屿 ERP</p>
           <LoginForm />
-          <div className="demo-account-note">
-            本地演示账号：owner / alex / mori
-          </div>
         </div>
-        <p className="login-footer">山屿设计 · 内部业务系统</p>
       </section>
     </main>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { apiUrl } from "@/lib/api-client";
@@ -23,8 +24,15 @@ export function LogoutButton() {
   }
 
   return (
-    <button className="logout-button" disabled={isPending} onClick={logout}>
-      {isPending ? "退出中…" : "退出登录"}
+    <button
+      aria-label={isPending ? "退出中" : "退出登录"}
+      className="logout-button"
+      disabled={isPending}
+      onClick={logout}
+      title="退出登录"
+      type="button"
+    >
+      <LogOut aria-hidden="true" size={15} />
     </button>
   );
 }

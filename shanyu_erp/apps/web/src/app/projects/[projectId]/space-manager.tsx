@@ -20,6 +20,7 @@ export const spaceTypeLabels: Record<SpaceType, string> = {
   BALCONY: "阳台",
   BATHROOM: "卫生间",
   BEDROOM: "卧室",
+  CLOSET: "衣帽间",
   KITCHEN: "厨房",
   LIVING_DINING: "客餐厅",
 };
@@ -113,9 +114,9 @@ function SpaceCard({
         <span className="space-order">#{space.sortOrder + 1}</span>
       </div>
       <dl className="space-metrics">
-        <div><dt>面积</dt><dd>{space.area} ㎡</dd></div>
-        <div><dt>周长</dt><dd>{space.perimeter} m</dd></div>
-        <div><dt>层高</dt><dd>{space.height} m</dd></div>
+        <div><dt>面积</dt><dd>{Number(space.area).toFixed(2)} ㎡</dd></div>
+        <div><dt>周长</dt><dd>{Number(space.perimeter).toFixed(2)} m</dd></div>
+        <div><dt>层高</dt><dd>{Number(space.height).toFixed(2)} m</dd></div>
       </dl>
       {space.includesBalcony ? <p className="wrapped-balcony">已包含阳台工程项</p> : null}
       <details className="space-edit">
@@ -127,9 +128,9 @@ function SpaceCard({
             </select>
           </label>
           <label>空间名称<input defaultValue={space.displayName} maxLength={6} minLength={1} name="displayName" required /></label>
-          <label>面积（㎡）<input defaultValue={space.area} inputMode="decimal" name="area" required /></label>
-          <label>周长（m）<input defaultValue={space.perimeter} inputMode="decimal" name="perimeter" required /></label>
-          <label>层高（m）<input defaultValue={space.height} inputMode="decimal" name="height" required /></label>
+          <label>面积（㎡）<input defaultValue={Number(space.area).toFixed(2)} inputMode="decimal" name="area" required /></label>
+          <label>周长（m）<input defaultValue={Number(space.perimeter).toFixed(2)} inputMode="decimal" name="perimeter" required /></label>
+          <label>层高（m）<input defaultValue={Number(space.height).toFixed(2)} inputMode="decimal" name="height" required /></label>
           <label className="inline-check"><input defaultChecked={space.includesBalcony} name="includesBalcony" type="checkbox" />客餐厅包阳台</label>
           <div className="space-edit-actions">
             <span role="status">{message}</span>

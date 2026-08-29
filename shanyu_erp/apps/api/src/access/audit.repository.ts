@@ -9,6 +9,9 @@ export interface AuditRecord {
     | "CATALOG_IMPORT_VALIDATED"
     | "CATALOG_VERSION_PUBLISHED"
     | "PROJECT_CREATED"
+    | "QUOTATION_DRAFT_CREATED"
+    | "QUOTATION_LINE_UPDATED"
+    | "QUOTATION_SCOPES_SYNCED"
     | "SPACE_CREATED"
     | "SPACE_UPDATED"
     | "SPACE_DELETED";
@@ -18,6 +21,8 @@ export interface AuditRecord {
   readonly targetId: string | null;
   readonly targetType:
     | "CATALOG_IMPORT_BATCH"
+    | "HALF_PACKAGE_QUOTATION"
+    | "HALF_PACKAGE_QUOTATION_LINE"
     | "HALF_PACKAGE_TEMPLATE_VERSION"
     | "PROJECT"
     | "SESSION"

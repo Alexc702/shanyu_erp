@@ -32,6 +32,7 @@ import {
 const spaceTypes = new Set<SpaceType>([
   "LIVING_DINING",
   "BEDROOM",
+  "CLOSET",
   "KITCHEN",
   "BATHROOM",
   "BALCONY",
