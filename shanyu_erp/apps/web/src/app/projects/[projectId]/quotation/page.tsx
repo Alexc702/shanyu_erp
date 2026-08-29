@@ -30,7 +30,10 @@ export default async function QuotationPage({ params }: QuotationPageProps) {
 
   return (
     <AppShell active="quotation" user={session.user}>
-      <QuotationEditor initialQuotation={quotation} />
+      <QuotationEditor
+        canViewCosts={session.user.role === "OWNER"}
+        initialQuotation={quotation}
+      />
     </AppShell>
   );
 }

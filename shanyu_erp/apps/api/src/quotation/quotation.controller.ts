@@ -8,6 +8,7 @@ import {
   Patch,
 } from "@nestjs/common";
 import type {
+  HalfPackageCostMarginResponse,
   HalfPackageQuotationResponse,
   UpdateHalfPackageQuotationLineRequest,
 } from "@shanyu/contracts";
@@ -22,6 +23,17 @@ export class QuotationController {
     private readonly authService: AuthService,
     private readonly quotationService: QuotationService,
   ) {}
+
+  @Get("cost-margin")
+  async getCostMargin(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("projectId") projectId: string,
+  ): Promise<HalfPackageCostMarginResponse> {
+    const actor = await this.currentUser(cookieHeader);
+    return {
+      costMargin: await this.quotationService.getCostMargin(actor, projectId),
+    };
+  }
 
   @Get()
   async getOrCreateDraft(

@@ -25,7 +25,7 @@ export default async function CatalogImportPage() {
           <div>
             <p className="eyebrow">V1 · 半包标准工程项</p>
             <h1>主材库导入与发布</h1>
-            <p>先完成 8 个分区、157 项、价格完整性与公式保留对算，再确认发布。</p>
+            <p>先完成 8 个分区、161 项、价格完整性与公式保留对算，再确认发布。</p>
           </div>
           <Link className="text-link" href="/catalog">返回主材库</Link>
         </section>

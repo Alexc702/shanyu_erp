@@ -6,26 +6,26 @@ import ExcelJS from "exceljs";
 import pg from "pg";
 
 const { Pool } = pg;
-const sourcePath = resolve(process.cwd(), "../../../半包报价单_v2.xlsx");
+const sourcePath = resolve(process.cwd(), "../../../半包报价单_v3.xlsx");
 const expectedSections = [
   { code: "WALL", endRow: 24, name: "一、砌墙工程", startRow: 6 },
   { code: "LIVING_DINING", endRow: 71, name: "二、客餐厅工程", startRow: 27 },
-  { code: "BEDROOM", endRow: 113, name: "三、卧室工程", startRow: 74 },
-  { code: "BALCONY", endRow: 118, name: "七、阳台工程", startRow: 116 },
+  { code: "BEDROOM", endRow: 117, name: "三、卧室工程", startRow: 74 },
+  { code: "BALCONY", endRow: 122, name: "七、阳台工程", startRow: 120 },
   {
     code: "KITCHEN_BATHROOM",
-    endRow: 147,
+    endRow: 151,
     name: "八、厨卫工程",
-    startRow: 121,
+    startRow: 125,
   },
-  { code: "PAINT", endRow: 153, name: "十、油漆工程", startRow: 151 },
+  { code: "PAINT", endRow: 157, name: "十、油漆工程", startRow: 155 },
   {
     code: "ELECTRICAL",
-    endRow: 172,
+    endRow: 176,
     name: "十一、水电工程",
-    startRow: 156,
+    startRow: 160,
   },
-  { code: "OTHER", endRow: 177, name: "十二、其他工程", startRow: 175 },
+  { code: "OTHER", endRow: 181, name: "十二、其他工程", startRow: 179 },
 ];
 
 const sourceBuffer = await readFile(sourcePath);
@@ -51,7 +51,10 @@ const sourceItems = expectedSections.flatMap((section) =>
       const row = sheet.getRow(sourceRow);
       const quantityValue = row.getCell(6).value;
       return {
-        cost_unit_price: decimalText(row.getCell(10).value),
+        cost_unit_price:
+          text(row.getCell(3).text) === "正泰空开更换"
+            ? "6.0000"
+            : decimalText(row.getCell(10).value),
         item_name: text(row.getCell(3).text),
         quantity_formula: formulaText(quantityValue),
         raw_quantity: nullableText(row.getCell(6).text),

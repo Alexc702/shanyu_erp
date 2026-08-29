@@ -9,6 +9,7 @@ import type { QuantityRule } from "./half-package-calculator";
 export const QUOTATION_REPOSITORY = Symbol("QUOTATION_REPOSITORY");
 
 export interface QuotationTemplateItem {
+  readonly costUnitPrice: string;
   readonly id: string;
   readonly itemName: string;
   readonly remarks: string | null;
@@ -29,6 +30,10 @@ export interface QuotationTemplate {
 export interface QuotationDraftLine {
   readonly amount: string | null;
   readonly calculatedQuantity: string | null;
+  readonly costAmount: string | null;
+  readonly costUnitPrice: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string | null;
   readonly id: string;
   readonly itemName: string;
   readonly manualQuantity: string | null;
@@ -47,6 +52,9 @@ export interface QuotationDraftScope {
   readonly area: string | null;
   readonly height: string | null;
   readonly id: string;
+  readonly expectedCost: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
   readonly lines: readonly QuotationDraftLine[];
   readonly name: string;
   readonly perimeter: string | null;
@@ -58,8 +66,13 @@ export interface QuotationDraftScope {
 
 export interface QuotationDraft {
   readonly buildingArea: string;
+  readonly costTemplateVersionId: string;
+  readonly costTemplateVersionNumber: number;
   readonly createdByUserId: string;
   readonly directCost: string;
+  readonly expectedCost: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
   readonly id: string;
   readonly managementFee: string;
   readonly managementRate: string;

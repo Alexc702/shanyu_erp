@@ -48,12 +48,12 @@ export function formatQuotationMoney(value: string | null): string {
   if (value === null) {
     return "—";
   }
-  const match = /^(\d+)\.(\d{4})$/.exec(value);
-  if (!match?.[1] || !match[2]) {
+  const match = /^(-?)(\d+)\.(\d{4})$/.exec(value);
+  if (!match?.[2] || !match[3]) {
     throw new Error(`服务端金额格式无效：${value}`);
   }
   const hundred = BigInt(100);
-  const scaled = BigInt(match[1]) * BigInt(10_000) + BigInt(match[2]);
+  const scaled = BigInt(match[2]) * BigInt(10_000) + BigInt(match[3]);
   const cents = (scaled + BigInt(50)) / hundred;
-  return `${cents / hundred}.${(cents % hundred).toString().padStart(2, "0")}`;
+  return `${match[1]}${cents / hundred}.${(cents % hundred).toString().padStart(2, "0")}`;
 }

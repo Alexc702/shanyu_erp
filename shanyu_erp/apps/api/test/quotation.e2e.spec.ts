@@ -124,6 +124,38 @@ describe("half-package quotation HTTP interface", () => {
       saleUnitPrice: "62.0000",
     });
     expect(JSON.stringify(saved.body)).not.toContain("costUnitPrice");
+    for (const sensitiveField of [
+      "costAmount",
+      "costVersion",
+      "expectedCost",
+      "grossMarginRate",
+      "grossProfit",
+    ]) {
+      expect(JSON.stringify(saved.body)).not.toContain(sensitiveField);
+    }
+
+    const ownerCookie = await login("owner", "owner-password");
+    const ownerCost = await request(app.getHttpServer())
+      .get(`/projects/${project.id}/half-package-quotation/cost-margin`)
+      .set("Cookie", ownerCookie)
+      .expect(200);
+    expect(ownerCost.body.costMargin).toMatchObject({
+      costVersion: { id: template.id, versionNumber: 1 },
+      expectedCost: "80.0000",
+      grossMarginRate: "0.3548",
+      grossProfit: "44.0000",
+      salesAmount: "124.0000",
+    });
+    expect(ownerCost.body.costMargin.scopes[0].lines[0]).toMatchObject({
+      costAmount: "80.0000",
+      costUnitPrice: "40.0000",
+      saleAmount: "124.0000",
+    });
+
+    await request(app.getHttpServer())
+      .get(`/projects/${project.id}/half-package-quotation/cost-margin`)
+      .set("Cookie", cookie)
+      .expect(403);
   });
 
   it("lets the owner enter but hides project existence from woodwork and unrelated leads", async () => {
@@ -142,6 +174,11 @@ describe("half-package quotation HTTP interface", () => {
         .get(`/projects/${project.id}/half-package-quotation`)
         .set("Cookie", cookie)
         .expect(404);
+      const deniedCost = await request(app.getHttpServer())
+        .get(`/projects/${project.id}/half-package-quotation/cost-margin`)
+        .set("Cookie", cookie)
+        .expect(403);
+      expect(JSON.stringify(deniedCost.body)).not.toContain(project.name);
     }
   });
 
@@ -259,6 +296,7 @@ const template: QuotationTemplate = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   items: [
     {
+      costUnitPrice: "40.0000",
       id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       itemName: "120墙体拆除",
       remarks: "人工费",

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type {
+  HalfPackageCostMargin,
   HalfPackageSectionCode,
   ProjectDetail,
   SessionUser,
@@ -191,6 +192,27 @@ export class QuotationService {
     return toView(saved);
   }
 
+  async getCostMargin(
+    actor: SessionUser,
+    projectId: string,
+  ): Promise<HalfPackageCostMargin> {
+    this.accessPolicy.assertCanViewSensitivePricing(actor);
+    await this.getOrCreateDraft(actor, projectId);
+    const draft = await this.quotationRepository.findDraft(projectId);
+    if (!draft) {
+      throw new NotFoundException("半包报价草稿不存在");
+    }
+    await this.auditRepository.append({
+      action: "QUOTATION_COST_MARGIN_VIEWED",
+      actorUserId: actor.id,
+      occurredAt: new Date(),
+      result: "SUCCESS",
+      targetId: draft.id,
+      targetType: "HALF_PACKAGE_QUOTATION",
+    });
+    return toCostMargin(draft);
+  }
+
   private async authorizedProject(
     actor: SessionUser,
     projectId: string,
@@ -284,6 +306,7 @@ export class QuotationService {
         height: scope.height,
         id: scope.id,
         lines: scope.lines.map((line) => ({
+          costUnitPrice: line.costUnitPrice,
           id: line.id,
           manualQuantity: line.manualQuantity,
           quantityRule: line.quantityRule,
@@ -299,6 +322,9 @@ export class QuotationService {
     return {
       ...draft,
       directCost: result.directCost,
+      expectedCost: result.expectedCost,
+      grossMarginRate: result.grossMarginRate,
+      grossProfit: result.grossProfit,
       managementFee: result.managementFee,
       scopes: draft.scopes.map((scope) => {
         const calculatedScope = calculatedScopes.get(scope.id);
@@ -310,6 +336,9 @@ export class QuotationService {
         );
         return {
           ...scope,
+          expectedCost: calculatedScope.expectedCost,
+          grossMarginRate: calculatedScope.grossMarginRate,
+          grossProfit: calculatedScope.grossProfit,
           lines: scope.lines.map((line) => {
             const calculatedLine = lines.get(line.id);
             if (!calculatedLine) {
@@ -319,6 +348,9 @@ export class QuotationService {
               ...line,
               amount: calculatedLine.amount,
               calculatedQuantity: calculatedLine.quantity,
+              costAmount: calculatedLine.costAmount,
+              grossMarginRate: calculatedLine.grossMarginRate,
+              grossProfit: calculatedLine.grossProfit,
             };
           }),
           subtotal: calculatedScope.subtotal,
@@ -403,8 +435,13 @@ function buildDraft(
 
   return {
     buildingArea: project.buildingArea,
+    costTemplateVersionId: template.id,
+    costTemplateVersionNumber: template.versionNumber,
     createdByUserId: actorUserId,
     directCost: "0.0000",
+    expectedCost: "0.0000",
+    grossMarginRate: null,
+    grossProfit: "0.0000",
     id: randomUUID(),
     managementFee: "0.0000",
     managementRate: "0.1000",
@@ -433,6 +470,10 @@ function buildScope(
   const baseLines = items.map((item) => ({
     amount: null,
     calculatedQuantity: null,
+    costAmount: null,
+    costUnitPrice: item.costUnitPrice,
+    grossMarginRate: null,
+    grossProfit: null,
     id: randomUUID(),
     itemName: item.itemName,
     manualQuantity: null,
@@ -456,6 +497,9 @@ function buildScope(
   });
   return {
     area,
+    expectedCost: "0.0000",
+    grossMarginRate: null,
+    grossProfit: "0.0000",
     height,
     id: randomUUID(),
     lines,
@@ -631,6 +675,54 @@ function toView(draft: QuotationDraft): QuotationView {
     status: draft.status,
     templateVersion: draft.templateVersionNumber,
     total: draft.total,
+  };
+}
+
+function toCostMargin(draft: QuotationDraft): HalfPackageCostMargin {
+  return {
+    costVersion: {
+      id: draft.costTemplateVersionId,
+      versionNumber: draft.costTemplateVersionNumber,
+    },
+    expectedCost: draft.expectedCost,
+    grossMarginRate: draft.grossMarginRate,
+    grossProfit: draft.grossProfit,
+    id: draft.id,
+    projectId: draft.projectId,
+    projectName: draft.projectName,
+    salesAmount: draft.directCost,
+    scopes: draft.scopes.map((scope) => ({
+      expectedCost: scope.expectedCost,
+      grossMarginRate: scope.grossMarginRate,
+      grossProfit: scope.grossProfit,
+      id: scope.id,
+      lines: scope.lines.flatMap((line) =>
+        line.calculatedQuantity !== null &&
+        line.amount !== null &&
+        line.costAmount !== null &&
+        line.grossProfit !== null &&
+        line.grossMarginRate !== null
+          ? [
+              {
+                costAmount: line.costAmount,
+                costUnitPrice: line.costUnitPrice,
+                grossMarginRate: line.grossMarginRate,
+                grossProfit: line.grossProfit,
+                id: line.id,
+                itemName: line.itemName,
+                quantity: line.calculatedQuantity,
+                saleAmount: line.amount,
+                saleUnitPrice: line.saleUnitPrice,
+                unit: line.unit,
+              },
+            ]
+          : [],
+      ),
+      name: scope.name,
+      salesAmount: scope.subtotal,
+      spaceType: scope.spaceType,
+    })),
+    status: draft.status,
   };
 }
 

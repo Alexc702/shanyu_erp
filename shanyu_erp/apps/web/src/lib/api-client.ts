@@ -1,4 +1,6 @@
 import type {
+  HalfPackageCostMargin,
+  HalfPackageCostMarginResponse,
   HalfPackageQuotation,
   HalfPackageQuotationResponse,
   LoginResponse,
@@ -122,4 +124,31 @@ export async function fetchHalfPackageQuotation(
   }
   const payload = (await response.json()) as HalfPackageQuotationResponse;
   return payload.quotation;
+}
+
+export async function fetchHalfPackageCostMargin(
+  cookieHeader: string,
+  projectId: string,
+): Promise<HalfPackageCostMargin | null> {
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/half-package-quotation/cost-margin`,
+    {
+      cache: "no-store",
+      headers: { cookie: cookieHeader },
+    },
+  );
+  if (
+    response.status === 401 ||
+    response.status === 403 ||
+    response.status === 404
+  ) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Cost margin request failed with status ${response.status}`,
+    );
+  }
+  const payload = (await response.json()) as HalfPackageCostMarginResponse;
+  return payload.costMargin;
 }

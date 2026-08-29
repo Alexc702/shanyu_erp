@@ -224,3 +224,47 @@ export interface UpdateHalfPackageQuotationLineRequest {
   readonly quantity: string | null;
   readonly selected: boolean;
 }
+
+export interface HalfPackageCostMarginLine {
+  readonly costAmount: string;
+  readonly costUnitPrice: string;
+  readonly grossMarginRate: string;
+  readonly grossProfit: string;
+  readonly id: string;
+  readonly itemName: string;
+  readonly quantity: string;
+  readonly saleAmount: string;
+  readonly saleUnitPrice: string;
+  readonly unit: string;
+}
+
+export interface HalfPackageCostMarginScope {
+  readonly expectedCost: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
+  readonly id: string;
+  readonly lines: readonly HalfPackageCostMarginLine[];
+  readonly name: string;
+  readonly salesAmount: string;
+  readonly spaceType: SpaceType | null;
+}
+
+export interface HalfPackageCostMargin {
+  readonly costVersion: {
+    readonly id: string;
+    readonly versionNumber: number;
+  };
+  readonly expectedCost: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
+  readonly id: string;
+  readonly projectId: string;
+  readonly projectName: string;
+  readonly salesAmount: string;
+  readonly scopes: readonly HalfPackageCostMarginScope[];
+  readonly status: "DRAFT";
+}
+
+export interface HalfPackageCostMarginResponse {
+  readonly costMargin: HalfPackageCostMargin;
+}

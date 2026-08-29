@@ -42,6 +42,13 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
           <div className="project-hero-actions">
             <Badge variant="secondary">草稿</Badge>
             <Button disabled title="阶段 6 开放" variant="outline">版本记录</Button>
+            {session.user.role === "OWNER" ? (
+              <Button asChild variant="outline">
+                <Link href={`/projects/${project.id}/quotation/cost-margin`}>
+                  查看预计成本毛利
+                </Link>
+              </Button>
+            ) : null}
             <Button asChild>
               <Link href={`/projects/${project.id}/quotation`}>继续编辑半包</Link>
             </Button>
@@ -63,7 +70,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
               <div>
                 <p className="eyebrow">V1 报价模块</p>
                 <h2>半包工程</h2>
-                <p>8 个报价分区 · 157 个标准工程项 · 使用已发布主材库版本</p>
+                <p>8 个报价分区 · 161 个标准工程项 · 使用已发布主材库版本</p>
               </div>
               <div>
                 <Badge>编辑中</Badge>

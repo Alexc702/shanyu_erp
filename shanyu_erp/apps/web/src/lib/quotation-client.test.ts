@@ -12,6 +12,7 @@ describe("quotation client", () => {
     expect(formatQuotationMoney("19.1350")).toBe("19.14");
     expect(formatQuotationMoney("1.0050")).toBe("1.01");
     expect(formatQuotationMoney("0.0000")).toBe("0.00");
+    expect(formatQuotationMoney("-39018.0824")).toBe("-39018.08");
     expect(formatQuotationMoney(null)).toBe("—");
   });
 

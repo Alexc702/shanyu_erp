@@ -5,15 +5,16 @@ const sourceSheetName = "半包报价模板";
 const expectedSections = [
   { code: "WALL", endRow: 24, headerRow: 5, name: "一、砌墙工程", startRow: 6 },
   { code: "LIVING_DINING", endRow: 71, headerRow: 26, name: "二、客餐厅工程", startRow: 27 },
-  { code: "BEDROOM", endRow: 113, headerRow: 73, name: "三、卧室工程", startRow: 74 },
-  { code: "BALCONY", endRow: 118, headerRow: 115, name: "七、阳台工程", startRow: 116 },
-  { code: "KITCHEN_BATHROOM", endRow: 147, headerRow: 120, name: "八、厨卫工程", startRow: 121 },
-  { code: "PAINT", endRow: 153, headerRow: 150, name: "十、油漆工程", startRow: 151 },
-  { code: "ELECTRICAL", endRow: 172, headerRow: 155, name: "十一、水电工程", startRow: 156 },
-  { code: "OTHER", endRow: 177, headerRow: 174, name: "十二、其他工程", startRow: 175 },
+  { code: "BEDROOM", endRow: 117, headerRow: 73, name: "三、卧室工程", startRow: 74 },
+  { code: "BALCONY", endRow: 122, headerRow: 119, name: "七、阳台工程", startRow: 120 },
+  { code: "KITCHEN_BATHROOM", endRow: 151, headerRow: 124, name: "八、厨卫工程", startRow: 125 },
+  { code: "PAINT", endRow: 157, headerRow: 154, name: "十、油漆工程", startRow: 155 },
+  { code: "ELECTRICAL", endRow: 176, headerRow: 159, name: "十一、水电工程", startRow: 160 },
+  { code: "OTHER", endRow: 181, headerRow: 178, name: "十二、其他工程", startRow: 179 },
 ] as const;
 
-const knownBlankRemarkRows = new Set([56, 101, 163]);
+const knownBlankRemarkRows = new Set([56, 105, 167]);
+const confirmedCostUnitPrices = new Map([["正泰空开更换", "6.0000"]]);
 
 export interface HalfPackageWorkbookItem {
   readonly costUnitPrice: string;
@@ -83,7 +84,9 @@ export async function validateHalfPackageWorkbook(
       const quantityFormula = formulaText(quantityCell.value);
 
       items.push({
-        costUnitPrice: decimalText(row.getCell(10).value),
+        costUnitPrice:
+          confirmedCostUnitPrices.get(itemName) ??
+          decimalText(row.getCell(10).value),
         itemName,
         quantityFormula,
         rawQuantity: optionalText(quantityCell.text),
@@ -135,8 +138,8 @@ function validateParsedItems(
   if (sections.length !== 8) {
     blockers.push(`报价分区应为 8 个，实际为 ${sections.length} 个`);
   }
-  if (items.length !== 157) {
-    blockers.push(`标准工程项应为 157 项，实际为 ${items.length} 项`);
+  if (items.length !== 161) {
+    blockers.push(`标准工程项应为 161 项，实际为 ${items.length} 项`);
   }
   for (const item of items) {
     if (!item.itemName || !item.unit) {

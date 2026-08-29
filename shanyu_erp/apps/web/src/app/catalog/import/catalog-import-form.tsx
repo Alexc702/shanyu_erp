@@ -119,10 +119,10 @@ export function CatalogImportForm({
         <p className="eyebrow">本次对算口径</p>
         <h2>源 Excel → 发布版本</h2>
         <ul>
-          <li>8 个固定报价分区、157 个标准工程项</li>
-          <li>销售价 157 项、成本价 157 项，内部保留 4 位小数</li>
+          <li>8 个固定报价分区、161 个标准工程项</li>
+          <li>销售价 161 项、成本价 161 项，内部保留 4 位小数</li>
           <li>41 条 Excel 公式仅原样保留，未经映射不自动执行</li>
-          <li>第 56、101、163 行缺施工说明按已确认警告处理</li>
+          <li>第 56、105、167 行缺施工说明按已确认警告处理</li>
         </ul>
       </aside>
 
@@ -140,9 +140,9 @@ export function CatalogImportForm({
 
           <div className="validation-metrics">
             <ValidationMetric actual={report.sectionCount} expected={8} label="报价分区" />
-            <ValidationMetric actual={report.itemCount} expected={157} label="工程项" />
-            <ValidationMetric actual={report.salePriceCount} expected={157} label="销售价" />
-            <ValidationMetric actual={report.costPriceCount} expected={157} label="成本价" />
+            <ValidationMetric actual={report.itemCount} expected={161} label="工程项" />
+            <ValidationMetric actual={report.salePriceCount} expected={161} label="销售价" />
+            <ValidationMetric actual={report.costPriceCount} expected={161} label="成本价" />
             <ValidationMetric actual={report.formulaCount} expected={41} label="保留公式" />
           </div>
 

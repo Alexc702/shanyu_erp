@@ -19,13 +19,20 @@ import { getWorkbench } from "@/lib/workbench";
 import { LogoutButton } from "./logout-button";
 
 interface AppShellProps {
-  readonly active: "catalog" | "dashboard" | "projects" | "quotation" | "users";
+  readonly active:
+    | "catalog"
+    | "cost-margin"
+    | "dashboard"
+    | "projects"
+    | "quotation"
+    | "users";
   readonly children: ReactNode;
   readonly user: SessionUser;
 }
 
 const pageTitles: Record<AppShellProps["active"], string> = {
   catalog: "主材库",
+  "cost-margin": "成本毛利",
   dashboard: "工作台",
   projects: "项目报价",
   quotation: "半包报价",
@@ -57,7 +64,11 @@ export function AppShell({ active, children, user }: AppShellProps) {
           </NavLink>
           {canAccessQuotation ? (
             <NavLink
-              active={active === "projects" || active === "quotation"}
+              active={
+                active === "projects" ||
+                active === "quotation" ||
+                active === "cost-margin"
+              }
               href="/projects"
               icon={<FolderKanban />}
             >

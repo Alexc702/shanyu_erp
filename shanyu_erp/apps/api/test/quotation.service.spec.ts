@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
 import type { ProjectDetail, SessionUser } from "@shanyu/contracts";
@@ -301,6 +302,60 @@ describe("QuotationService", () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it("returns snapshot cost and margin only to the owner without changing on a newer catalog", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const manualLine = draft.scopes[0]?.lines[0];
+    if (!manualLine) {
+      throw new Error("测试报价缺少手工工程项");
+    }
+    await service.updateLine(lead, project.id, manualLine.id, {
+      expectedRevision: draft.revision,
+      quantity: "2.5000",
+      selected: true,
+    });
+
+    const costMargin = await service.getCostMargin(owner, project.id);
+    expect(costMargin).toMatchObject({
+      costVersion: { id: template.id, versionNumber: 1 },
+      expectedCost: "10682.2000",
+      grossMarginRate: "0.0051",
+      grossProfit: "55.0000",
+      salesAmount: "10737.2000",
+    });
+    expect(costMargin.scopes[0]?.lines[0]).toMatchObject({
+      costAmount: "100.0000",
+      costUnitPrice: "40.0000",
+      grossMarginRate: "0.3548",
+      grossProfit: "55.0000",
+      saleAmount: "155.0000",
+    });
+    expect(audits.at(-1)).toMatchObject({
+      action: "QUOTATION_COST_MARGIN_VIEWED",
+      actorUserId: owner.id,
+    });
+
+    for (const actor of [lead, unrelatedLead, woodwork]) {
+      await expect(service.getCostMargin(actor, project.id)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    }
+
+    repository.template = {
+      ...template,
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      items: template.items.map((item) => ({
+        ...item,
+        costUnitPrice: "1.0000",
+      })),
+      versionNumber: 2,
+    };
+    await expect(service.getCostMargin(owner, project.id)).resolves.toMatchObject({
+      costVersion: { id: template.id, versionNumber: 1 },
+      expectedCost: "10682.2000",
+      grossProfit: "55.0000",
+    });
+  });
+
   it("reports missing projects and templates without creating partial drafts", async () => {
     repository.project = null;
     await expect(
@@ -431,7 +486,7 @@ let templateOrder = 0;
 const template: QuotationTemplate = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   items: [
-    item("wall-1", "WALL", "120墙体拆除", "M2", "62.0000"),
+    item("wall-1", "WALL", "120墙体拆除", "M2", "62.0000", "40.0000"),
     item("paint-1", "PAINT", "3D放样", "M2", "12.0000"),
     item("electrical-1", "ELECTRICAL", "开管线槽", "M2", "15.5000"),
     item("other-1", "OTHER", "装潢垃圾清理费", "M2", "15.0000"),
@@ -483,8 +538,10 @@ function item(
   itemName: string,
   unit: string,
   saleUnitPrice: string,
+  costUnitPrice = saleUnitPrice,
 ): QuotationTemplate["items"][number] {
   return {
+    costUnitPrice,
     id,
     itemName,
     remarks: null,

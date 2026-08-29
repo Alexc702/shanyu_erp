@@ -43,6 +43,7 @@ interface TemplateVersionRow {
 }
 
 interface TemplateItemRow {
+  cost_unit_price: string;
   id: string;
   item_name: string;
   remarks: string | null;
@@ -55,8 +56,13 @@ interface TemplateItemRow {
 
 interface QuotationRow {
   building_area: string;
+  cost_template_version_id: string;
+  cost_template_version_number: number;
   created_by_user_id: string;
   direct_cost: string;
+  expected_cost: string;
+  gross_margin_rate: string | null;
+  gross_profit: string;
   id: string;
   management_fee: string;
   management_rate: string;
@@ -72,6 +78,9 @@ interface QuotationRow {
 
 interface ScopeRow {
   area: string | null;
+  expected_cost: string;
+  gross_margin_rate: string | null;
+  gross_profit: string;
   height: string | null;
   id: string;
   name: string;
@@ -84,6 +93,10 @@ interface ScopeRow {
 
 interface LineRow {
   calculated_quantity: string | null;
+  cost_amount: string | null;
+  cost_unit_price: string;
+  gross_margin_rate: string | null;
+  gross_profit: string | null;
   id: string;
   item_name: string;
   manual_quantity: string | null;
@@ -156,6 +169,7 @@ export class PgQuotationRepository implements QuotationRepository {
           throw new Error("已发布主材库工程项缺少版本快照");
         }
         return {
+          costUnitPrice: item.costUnitPrice,
           id: versionItemId,
           itemName: item.itemName,
           remarks: item.remarks,
@@ -188,7 +202,7 @@ export class PgQuotationRepository implements QuotationRepository {
     const itemResult = await this.database.query<TemplateItemRow>(
       `SELECT vi.id, vi.item_name, vi.remarks, vi.sort_order, vi.unit,
               hs.code AS section_code, hs.name AS section_name,
-              pv.sale_unit_price
+              pv.sale_unit_price, pv.cost_unit_price
          FROM half_package_version_items vi
          JOIN half_package_sections hs ON hs.id = vi.section_id
          JOIN half_package_item_price_versions pv
@@ -200,6 +214,7 @@ export class PgQuotationRepository implements QuotationRepository {
     return {
       id: version.id,
       items: itemResult.rows.map((item) => ({
+        costUnitPrice: item.cost_unit_price,
         id: item.id,
         itemName: item.item_name,
         remarks: item.remarks,
@@ -230,17 +245,23 @@ export class PgQuotationRepository implements QuotationRepository {
       await database.query(
         `INSERT INTO half_package_quotations
            (id, project_id, version_number, status, template_version_id,
-            quantity_rule_version_id, building_area, management_rate,
-            direct_cost, management_fee, total, revision, created_by_user_id)
-         VALUES ($1, $2, 1, 'DRAFT', $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            cost_template_version_id, quantity_rule_version_id, building_area,
+            management_rate, direct_cost, expected_cost, gross_profit,
+            gross_margin_rate, management_fee, total, revision, created_by_user_id)
+         VALUES ($1, $2, 1, 'DRAFT', $3, $4, $5, $6, $7, $8, $9, $10,
+                 $11, $12, $13, $14, $15)`,
         [
           input.id,
           input.projectId,
           input.templateVersionId,
+          input.costTemplateVersionId,
           input.ruleVersionId,
           input.buildingArea,
           input.managementRate,
           input.directCost,
+          input.expectedCost,
+          input.grossProfit,
+          input.grossMarginRate,
           input.managementFee,
           input.total,
           input.revision,
@@ -266,14 +287,18 @@ export class PgQuotationRepository implements QuotationRepository {
     await this.database.transaction(async (database) => {
       const updated = await database.query(
         `UPDATE half_package_quotations
-            SET direct_cost = $3, management_fee = $4, total = $5,
-                revision = $6, updated_at = current_timestamp
+            SET direct_cost = $3, expected_cost = $4, gross_profit = $5,
+                gross_margin_rate = $6, management_fee = $7, total = $8,
+                revision = $9, updated_at = current_timestamp
           WHERE id = $1 AND project_id = $2 AND status = 'DRAFT'
-            AND revision = $7`,
+            AND revision = $10`,
         [
           input.id,
           input.projectId,
           input.directCost,
+          input.expectedCost,
+          input.grossProfit,
+          input.grossMarginRate,
           input.managementFee,
           input.total,
           input.revision,
@@ -301,14 +326,18 @@ export class PgQuotationRepository implements QuotationRepository {
     await this.database.transaction(async (database) => {
       const updated = await database.query(
         `UPDATE half_package_quotations
-            SET direct_cost = $3, management_fee = $4, total = $5,
-                revision = $6, updated_at = current_timestamp
+            SET direct_cost = $3, expected_cost = $4, gross_profit = $5,
+                gross_margin_rate = $6, management_fee = $7, total = $8,
+                revision = $9, updated_at = current_timestamp
           WHERE id = $1 AND project_id = $2 AND status = 'DRAFT'
-            AND revision = $7`,
+            AND revision = $10`,
         [
           input.id,
           input.projectId,
           input.directCost,
+          input.expectedCost,
+          input.grossProfit,
+          input.grossMarginRate,
           input.managementFee,
           input.total,
           input.revision,
@@ -321,9 +350,17 @@ export class PgQuotationRepository implements QuotationRepository {
       for (const scope of input.scopes) {
         const scopeUpdate = await database.query(
           `UPDATE half_package_quotation_spaces
-              SET subtotal = $3
+              SET subtotal = $3, expected_cost = $4, gross_profit = $5,
+                  gross_margin_rate = $6
             WHERE id = $1 AND quotation_id = $2`,
-          [scope.id, input.id, scope.subtotal],
+          [
+            scope.id,
+            input.id,
+            scope.subtotal,
+            scope.expectedCost,
+            scope.grossProfit,
+            scope.grossMarginRate,
+          ],
         );
         if (scopeUpdate.rowCount !== 1) {
           throw new Error("报价范围不存在");
@@ -332,7 +369,9 @@ export class PgQuotationRepository implements QuotationRepository {
           const lineUpdate = await database.query(
             `UPDATE half_package_quotation_lines
                 SET selected = $3, manual_quantity = $4,
-                    calculated_quantity = $5, sale_amount = $6
+                    calculated_quantity = $5, sale_amount = $6,
+                    cost_amount = $7, gross_profit = $8,
+                    gross_margin_rate = $9
               WHERE id = $1 AND quotation_space_id = $2`,
             [
               line.id,
@@ -341,6 +380,9 @@ export class PgQuotationRepository implements QuotationRepository {
               line.manualQuantity,
               line.calculatedQuantity,
               line.amount,
+              line.costAmount,
+              line.grossProfit,
+              line.grossMarginRate,
             ],
           );
           if (lineUpdate.rowCount !== 1) {
@@ -362,7 +404,8 @@ export class PgQuotationRepository implements QuotationRepository {
   ): Promise<QuotationDraft> {
     const scopeResult = await database.query<ScopeRow>(
       `SELECT id, project_space_id, name, space_type, area, perimeter,
-              height, subtotal, sort_order
+              height, subtotal, expected_cost, gross_profit,
+              gross_margin_rate, sort_order
          FROM half_package_quotation_spaces
         WHERE quotation_id = $1
         ORDER BY sort_order, id`,
@@ -373,7 +416,9 @@ export class PgQuotationRepository implements QuotationRepository {
               l.section_code, l.section_name, l.item_name, l.unit,
               l.remarks, l.sort_order, l.selected, l.quantity_rule_kind,
               l.referenced_line_id, l.manual_quantity,
-              l.calculated_quantity, l.sale_unit_price, l.sale_amount
+              l.calculated_quantity, l.sale_unit_price, l.sale_amount,
+              l.cost_unit_price, l.cost_amount, l.gross_profit,
+              l.gross_margin_rate
          FROM half_package_quotation_lines l
          JOIN half_package_quotation_spaces qs
            ON qs.id = l.quotation_space_id
@@ -383,8 +428,13 @@ export class PgQuotationRepository implements QuotationRepository {
     );
     return {
       buildingArea: row.building_area,
+      costTemplateVersionId: row.cost_template_version_id,
+      costTemplateVersionNumber: row.cost_template_version_number,
       createdByUserId: row.created_by_user_id,
       directCost: row.direct_cost,
+      expectedCost: row.expected_cost,
+      grossMarginRate: row.gross_margin_rate,
+      grossProfit: row.gross_profit,
       id: row.id,
       managementFee: row.management_fee,
       managementRate: row.management_rate,
@@ -396,6 +446,9 @@ export class PgQuotationRepository implements QuotationRepository {
         area: scope.area,
         height: scope.height,
         id: scope.id,
+        expectedCost: scope.expected_cost,
+        grossMarginRate: scope.gross_margin_rate,
+        grossProfit: scope.gross_profit,
         lines: lineResult.rows
           .filter((line) => line.quotation_space_id === scope.id)
           .map(toDraftLine),
@@ -422,8 +475,9 @@ async function insertScope(
   await database.query(
     `INSERT INTO half_package_quotation_spaces
        (id, quotation_id, project_space_id, name, space_type, area,
-        perimeter, height, subtotal, sort_order)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        perimeter, height, subtotal, expected_cost, gross_profit,
+        gross_margin_rate, sort_order)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       scope.id,
       quotationId,
@@ -434,6 +488,9 @@ async function insertScope(
       scope.perimeter,
       scope.height,
       scope.subtotal,
+      scope.expectedCost,
+      scope.grossProfit,
+      scope.grossMarginRate,
       scope.sortOrder,
     ],
   );
@@ -461,9 +518,10 @@ async function insertLine(
        (id, quotation_space_id, version_item_id, section_code, section_name,
         item_name, unit, remarks, sort_order, selected, quantity_rule_kind,
         referenced_line_id, manual_quantity, calculated_quantity,
-        sale_unit_price, sale_amount)
+        sale_unit_price, sale_amount, cost_unit_price, cost_amount,
+        gross_profit, gross_margin_rate)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-             $13, $14, $15, $16)`,
+             $13, $14, $15, $16, $17, $18, $19, $20)`,
     [
       line.id,
       scopeId,
@@ -483,6 +541,10 @@ async function insertLine(
       line.calculatedQuantity,
       line.saleUnitPrice,
       line.amount,
+      line.costUnitPrice,
+      line.costAmount,
+      line.grossProfit,
+      line.grossMarginRate,
     ],
   );
 }
@@ -491,6 +553,10 @@ function toDraftLine(row: LineRow): QuotationDraftLine {
   return {
     amount: row.sale_amount,
     calculatedQuantity: row.calculated_quantity,
+    costAmount: row.cost_amount,
+    costUnitPrice: row.cost_unit_price,
+    grossMarginRate: row.gross_margin_rate,
+    grossProfit: row.gross_profit,
     id: row.id,
     itemName: row.item_name,
     manualQuantity: row.manual_quantity,
@@ -522,11 +588,16 @@ function requiredReference(row: LineRow): string {
 const quotationSelect = `SELECT q.id, q.project_id, p.name AS project_name,
                                  q.status, q.template_version_id,
                                  tv.version_number AS template_version_number,
+                                 q.cost_template_version_id,
+                                 ctv.version_number AS cost_template_version_number,
                                  q.quantity_rule_version_id, q.building_area,
-                                 q.management_rate, q.direct_cost,
+                                 q.management_rate, q.direct_cost, q.expected_cost,
+                                 q.gross_profit, q.gross_margin_rate,
                                  q.management_fee, q.total, q.revision,
                                  q.created_by_user_id
                             FROM half_package_quotations q
                             JOIN projects p ON p.id = q.project_id
                             JOIN half_package_template_versions tv
-                              ON tv.id = q.template_version_id`;
+                              ON tv.id = q.template_version_id
+                            JOIN half_package_template_versions ctv
+                              ON ctv.id = q.cost_template_version_id`;

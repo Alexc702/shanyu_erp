@@ -9,6 +9,7 @@ export type QuantityRule =
     };
 
 export interface QuotationCalculationLineInput {
+  readonly costUnitPrice: string;
   readonly id: string;
   readonly manualQuantity: string | null;
   readonly quantityRule: QuantityRule;
@@ -32,11 +33,17 @@ export interface QuotationCalculationInput {
 
 export interface QuotationCalculationLineResult {
   readonly amount: string | null;
+  readonly costAmount: string | null;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string | null;
   readonly id: string;
   readonly quantity: string | null;
 }
 
 export interface QuotationCalculationScopeResult {
+  readonly expectedCost: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
   readonly id: string;
   readonly lines: readonly QuotationCalculationLineResult[];
   readonly subtotal: string;
@@ -44,6 +51,9 @@ export interface QuotationCalculationScopeResult {
 
 export interface QuotationCalculationResult {
   readonly directCost: string;
+  readonly expectedCost: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
   readonly managementFee: string;
   readonly scopes: readonly QuotationCalculationScopeResult[];
   readonly total: string;
@@ -61,6 +71,11 @@ export class HalfPackageCalculator {
       (sum, scope) => sum + parseDecimal4(scope.subtotal),
       0n,
     );
+    const expectedCost = scopes.reduce(
+      (sum, scope) => sum + parseDecimal4(scope.expectedCost),
+      0n,
+    );
+    const grossProfit = directCost - expectedCost;
     const managementFee = multiply4(
       directCost,
       parseDecimal4(input.managementRate),
@@ -68,6 +83,12 @@ export class HalfPackageCalculator {
 
     return {
       directCost: formatDecimal4(directCost),
+      expectedCost: formatDecimal4(expectedCost),
+      grossMarginRate:
+        directCost === 0n
+          ? null
+          : formatDecimal4(divide4(grossProfit, directCost)),
+      grossProfit: formatDecimal4(grossProfit),
       managementFee: formatDecimal4(managementFee),
       scopes,
       total: formatDecimal4(directCost + managementFee),
@@ -115,23 +136,50 @@ export class HalfPackageCalculator {
     };
 
     let subtotal = 0n;
+    let expectedCost = 0n;
     const lines = scope.lines.map((line) => {
       const quantity = resolveQuantity(line.id);
       const amount =
         quantity === null
           ? null
           : multiply4(quantity, parseDecimal4(line.saleUnitPrice));
+      const costAmount =
+        quantity === null
+          ? null
+          : multiply4(quantity, parseDecimal4(line.costUnitPrice));
       if (amount !== null) {
         subtotal += amount;
       }
+      if (costAmount !== null) {
+        expectedCost += costAmount;
+      }
+      const grossProfit =
+        amount === null || costAmount === null ? null : amount - costAmount;
       return {
         amount: amount === null || amount === 0n ? null : formatDecimal4(amount),
+        costAmount:
+          costAmount === null || costAmount === 0n
+            ? null
+            : formatDecimal4(costAmount),
+        grossMarginRate:
+          grossProfit === null || amount === null || amount === 0n
+            ? null
+            : formatDecimal4(divide4(grossProfit, amount)),
+        grossProfit:
+          grossProfit === null ? null : formatDecimal4(grossProfit),
         id: line.id,
         quantity: quantity === null ? null : formatDecimal4(quantity),
       };
     });
 
+    const grossProfit = subtotal - expectedCost;
     return {
+      expectedCost: formatDecimal4(expectedCost),
+      grossMarginRate:
+        subtotal === 0n
+          ? null
+          : formatDecimal4(divide4(grossProfit, subtotal)),
+      grossProfit: formatDecimal4(grossProfit),
       id: scope.id,
       lines,
       subtotal: formatDecimal4(subtotal),
@@ -184,7 +232,19 @@ function multiply4(left: bigint, right: bigint): bigint {
 }
 
 function formatDecimal4(value: bigint): string {
-  const whole = value / scale;
-  const fraction = (value % scale).toString().padStart(4, "0");
-  return `${whole}.${fraction}`;
+  const negative = value < 0n;
+  const absolute = negative ? -value : value;
+  const whole = absolute / scale;
+  const fraction = (absolute % scale).toString().padStart(4, "0");
+  return `${negative ? "-" : ""}${whole}.${fraction}`;
+}
+
+function divide4(numerator: bigint, denominator: bigint): bigint {
+  if (denominator <= 0n) {
+    throw new Error("毛利率分母必须大于 0");
+  }
+  const negative = numerator < 0n;
+  const absolute = negative ? -numerator : numerator;
+  const quotient = (absolute * scale + denominator / 2n) / denominator;
+  return negative ? -quotient : quotient;
 }

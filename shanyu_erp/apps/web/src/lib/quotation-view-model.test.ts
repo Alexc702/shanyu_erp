@@ -69,7 +69,10 @@ describe("quotation view model", () => {
       "800*800mm地砖（水泥砂浆粘贴）",
       "600*1200mm地砖（水泥砂浆粘贴）",
       "750*1500mm地砖（水泥砂浆粘贴）",
+      "多规格古堡砖（水泥砂浆粘贴）",
       "900*1800mm地砖（水泥砂浆粘贴）",
+      "木纹砖长条150*900（水泥砂浆粘贴）",
+      "木纹砖长条200*1200（水泥砂浆粘贴）",
     ];
     const adhesiveOptions = [
       "200*700mm小砖（胶泥粘帖）",
@@ -80,7 +83,7 @@ describe("quotation view model", () => {
     ];
 
     expect(cementMortarOptions.map(quotationOptionGroup)).toEqual(
-      Array(4).fill("水泥砂浆粘贴"),
+      Array(7).fill("水泥砂浆粘贴"),
     );
     expect(adhesiveOptions.map(quotationOptionGroup)).toEqual(
       Array(5).fill("胶泥粘帖"),
@@ -89,7 +92,10 @@ describe("quotation view model", () => {
       "800×800",
       "600×1200",
       "750×1500",
+      "多规格古堡砖",
       "900×1800",
+      "木纹砖长条150×900",
+      "木纹砖长条200×1200",
     ]);
     expect(adhesiveOptions.map(quotationOptionModelLabel)).toEqual([
       "200×700",
@@ -135,6 +141,7 @@ describe("quotation view model", () => {
     expect(quotationLineCategory("120墙体拆除", "一、砌墙工程")).toBe("砌墙");
     expect(quotationLineCategory("墙面水性防水涂料", "二、客餐厅工程")).toBe("防水");
     expect(quotationLineCategory("600*1200mm地砖（水泥砂浆粘贴）", "三、卧室工程")).toBe("泥工贴砖");
+    expect(quotationLineCategory("斜铺/人字贴人工费", "三、卧室工程")).toBe("泥工贴砖");
     expect(quotationLineCategory("粗找平", "八、厨卫工程")).toBe("找平");
     expect(quotationLineCategory("石膏板吊平顶", "二、客餐厅工程")).toBe("木工吊顶");
     expect(quotationLineCategory("顶面乳胶漆", "三、卧室工程")).toBe("油漆");

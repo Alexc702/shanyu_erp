@@ -56,7 +56,7 @@ export function quotationOptionGroup(
 ): "水泥砂浆粘贴" | "胶泥粘帖" | "找平做法" | null {
   const tileOption = matchTileOption(itemName);
   if (tileOption) {
-    return tileOption[3] as "水泥砂浆粘贴" | "胶泥粘帖";
+    return tileOption.group;
   }
   if (/找平/.test(itemName) && !/墙面找平|填充后/.test(itemName)) {
     return "找平做法";
@@ -68,7 +68,7 @@ export function quotationOptionModelLabel(
   itemName: HalfPackageQuotationLine["itemName"],
 ): string {
   const tileOption = matchTileOption(itemName);
-  return tileOption ? `${tileOption[1]}×${tileOption[2]}` : itemName;
+  return tileOption ? tileOption.label : itemName;
 }
 
 export function shouldDisplayQuotationOptionLine(
@@ -120,17 +120,30 @@ export function quotationLineCategory(
 }
 
 function isTileItem(itemName: string): boolean {
-  return /地砖|墙砖|小砖|瓷砖增加人工费/.test(itemName);
+  return (
+    matchTileOption(itemName) !== null ||
+    /瓷砖增加人工费|斜铺\/人字贴人工费/.test(itemName)
+  );
 }
 
 function isLevellingOption(itemName: string): boolean {
   return /^(粗找平|瓜子片豆石精找平|半干成品砂浆找平)$/.test(itemName);
 }
 
-function matchTileOption(itemName: string): RegExpMatchArray | null {
-  return itemName.match(
-    /^(\d+)\*(\d+)mm(?:地砖|墙砖|小砖)（(水泥砂浆粘贴|胶泥粘帖)）$/,
-  );
+function matchTileOption(itemName: string): {
+  readonly group: "水泥砂浆粘贴" | "胶泥粘帖";
+  readonly label: string;
+} | null {
+  const match = itemName.match(/^(.+)（(水泥砂浆粘贴|胶泥粘帖)）$/);
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+  return {
+    group: match[2] as "水泥砂浆粘贴" | "胶泥粘帖",
+    label: match[1]
+      .replace(/mm(?:地砖|墙砖|小砖)$/, "")
+      .replaceAll("*", "×"),
+  };
 }
 
 function scopeOrder(scope: HalfPackageQuotationScope): number {

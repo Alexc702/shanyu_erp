@@ -32,10 +32,14 @@ import {
 } from "@/lib/quotation-view-model";
 
 interface QuotationEditorProps {
+  readonly canViewCosts: boolean;
   readonly initialQuotation: HalfPackageQuotation;
 }
 
-export function QuotationEditor({ initialQuotation }: QuotationEditorProps) {
+export function QuotationEditor({
+  canViewCosts,
+  initialQuotation,
+}: QuotationEditorProps) {
   const initialScopes = orderQuotationScopes(initialQuotation.scopes);
   const [quotation, setQuotation] = useState(initialQuotation);
   const [activeScopeId, setActiveScopeId] = useState(
@@ -131,6 +135,13 @@ export function QuotationEditor({ initialQuotation }: QuotationEditorProps) {
           >
             保存草稿
           </Button>
+          {canViewCosts ? (
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/projects/${quotation.projectId}/quotation/cost-margin`}>
+                查看预计成本毛利
+              </Link>
+            </Button>
+          ) : null}
           <Button
             onClick={() => setMessage("提交审批将在阶段 6 开放，当前草稿未改变。")}
             size="sm"
@@ -330,7 +341,7 @@ export function QuotationEditor({ initialQuotation }: QuotationEditorProps) {
           <section className="quotation-checks">
             <p className="eyebrow">提交前检查</p>
             <p>✓ 标准销售价来自已发布主材库</p>
-            <p>✓ 157 项按空间类型完整映射</p>
+            <p>✓ 161 项按空间类型完整映射</p>
             <p>✓ 地砖 / 墙砖 / 找平可多选</p>
             <p>审批流程将在阶段 6 开放</p>
           </section>
