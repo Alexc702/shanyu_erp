@@ -8,6 +8,21 @@ import type { QuantityRule } from "./half-package-calculator";
 
 export const QUOTATION_REPOSITORY = Symbol("QUOTATION_REPOSITORY");
 
+export type QuotationStatus =
+  | "DRAFT"
+  | "PENDING_PRICING"
+  | "PENDING_SUPPLEMENT"
+  | "PENDING_APPROVAL"
+  | "RETURNED"
+  | "APPROVED"
+  | "SUPERSEDED"
+  | "VOID";
+
+export type QuotationDecisionAction =
+  | "APPROVED"
+  | "SPECIAL_APPROVED"
+  | "RETURNED";
+
 export interface QuotationTemplateItem {
   readonly costUnitPrice: string;
   readonly id: string;
@@ -76,15 +91,23 @@ export interface QuotationDraft {
   readonly id: string;
   readonly managementFee: string;
   readonly managementRate: string;
+  readonly parentVersionId: string | null;
   readonly projectId: string;
   readonly projectName: string;
   readonly revision: number;
   readonly ruleVersionId: string;
   readonly scopes: readonly QuotationDraftScope[];
-  readonly status: "DRAFT";
+  readonly status: QuotationStatus;
+  readonly submittedAt: Date | null;
+  readonly submittedByUserId: string | null;
+  readonly decidedAt: Date | null;
+  readonly decidedByUserId: string | null;
+  readonly decisionAction: QuotationDecisionAction | null;
+  readonly decisionReason: string | null;
   readonly templateVersionId: string;
   readonly templateVersionNumber: number;
   readonly total: string;
+  readonly versionNumber: number;
 }
 
 export type NewQuotationDraft = QuotationDraft;
@@ -92,6 +115,10 @@ export type NewQuotationDraft = QuotationDraft;
 export interface QuotationRepository {
   findProject(projectId: string): Promise<ProjectDetail | null>;
   findDraft(projectId: string): Promise<QuotationDraft | null>;
+  findLatest(projectId: string): Promise<QuotationDraft | null>;
+  findById(quotationId: string): Promise<QuotationDraft | null>;
+  listByProject(projectId: string): Promise<readonly QuotationDraft[]>;
+  listPendingApproval(): Promise<readonly QuotationDraft[]>;
   findPublishedTemplate(): Promise<QuotationTemplate | null>;
   findTemplate(
     templateVersionId: string,
@@ -107,6 +134,40 @@ export interface QuotationRepository {
     input: QuotationDraft,
     expectedRevision: number,
   ): Promise<QuotationDraft>;
+  submitDraft(
+    quotationId: string,
+    actorUserId: string,
+    expectedRevision: number,
+  ): Promise<QuotationDraft>;
+  decide(
+    quotationId: string,
+    actorUserId: string,
+    action: QuotationDecisionAction,
+    reason: string | null,
+  ): Promise<QuotationDraft>;
+  createDraftFromVersion(
+    source: QuotationDraft,
+    actorUserId: string,
+  ): Promise<QuotationDraft>;
+  createExport(input: NewQuotationExport): Promise<QuotationExport>;
+  findExport(exportId: string): Promise<QuotationExport | null>;
+}
+
+export type QuotationExportFormat = "PDF" | "XLSX";
+
+export interface QuotationExport {
+  readonly contentType: string;
+  readonly createdAt: Date;
+  readonly fileName: string;
+  readonly format: QuotationExportFormat;
+  readonly id: string;
+  readonly payload: Buffer;
+  readonly quotationId: string;
+  readonly sha256: string;
+}
+
+export interface NewQuotationExport extends QuotationExport {
+  readonly createdByUserId: string;
 }
 
 export class QuotationRevisionConflictError extends Error {}

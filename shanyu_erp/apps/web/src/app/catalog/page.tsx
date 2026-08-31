@@ -87,7 +87,7 @@ export default async function CatalogPage({ searchParams }: CatalogPageProps) {
                     <h2>{selectedSection.name}</h2>
                     <p>{items.length} 项 · 同名工程项允许因章节与口径不同设置不同价格</p>
                   </div>
-                  <Badge variant="outline">{canViewCost ? "销售价 / 成本价" : "仅销售价"}</Badge>
+                  {canViewCost ? <Badge variant="outline">销售价 / 成本价</Badge> : null}
                 </div>
                 <div className="table-wrap catalog-table-wrap">
                   <table>

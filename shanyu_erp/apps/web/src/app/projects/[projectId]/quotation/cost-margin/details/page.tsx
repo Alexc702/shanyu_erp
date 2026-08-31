@@ -68,7 +68,7 @@ export default async function CostDetailsPage({
               <strong>工程项成本明细</strong>
             </nav>
             <h1>{costMargin.projectName} · 工程项成本明细</h1>
-            <p>老板专属 · 价格与成本均为报价版本快照，设计师接口不返回此数据</p>
+            <p>价格与成本均为报价版本快照</p>
           </div>
           <Badge variant="warning">V1 草稿</Badge>
         </header>
@@ -110,26 +110,26 @@ export default async function CostDetailsPage({
                 <TableHeader>
                   <TableRow>
                     <TableHead>工程项</TableHead>
-                    <TableHead className="text-right">数量</TableHead>
-                    <TableHead className="text-right">销售单价</TableHead>
-                    <TableHead className="text-right">销售金额</TableHead>
-                    <TableHead className="text-right">成本单价</TableHead>
-                    <TableHead className="text-right">成本金额</TableHead>
-                    <TableHead className="text-right">毛利率</TableHead>
+                    <TableHead>数量</TableHead>
+                    <TableHead>销售单价</TableHead>
+                    <TableHead>销售金额</TableHead>
+                    <TableHead>成本单价</TableHead>
+                    <TableHead>成本金额</TableHead>
+                    <TableHead>毛利率</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {activeScope.lines.map((line) => (
                     <TableRow key={line.id}>
                       <TableCell className="font-medium">{line.itemName}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell>
                         {formatDisplayNumber(line.quantity)}{formatQuotationUnit(line.unit)}
                       </TableCell>
-                      <TableCell className="text-right">¥ {formatQuotationMoney(line.saleUnitPrice)}</TableCell>
-                      <TableCell className="text-right">¥ {formatQuotationMoney(line.saleAmount)}</TableCell>
-                      <TableCell className="text-right">¥ {formatQuotationMoney(line.costUnitPrice)}</TableCell>
-                      <TableCell className="text-right">¥ {formatQuotationMoney(line.costAmount)}</TableCell>
-                      <TableCell className="text-right">{formatMarginRate(line.grossMarginRate)}</TableCell>
+                      <TableCell>¥ {formatQuotationMoney(line.saleUnitPrice)}</TableCell>
+                      <TableCell>¥ {formatQuotationMoney(line.saleAmount)}</TableCell>
+                      <TableCell>¥ {formatQuotationMoney(line.costUnitPrice)}</TableCell>
+                      <TableCell>¥ {formatQuotationMoney(line.costAmount)}</TableCell>
+                      <TableCell>{formatMarginRate(line.grossMarginRate)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

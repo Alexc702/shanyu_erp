@@ -4,6 +4,7 @@ import type {
   ProjectDetail,
   SpaceType,
 } from "@shanyu/contracts";
+import { randomUUID } from "node:crypto";
 
 import {
   CATALOG_REPOSITORY,
@@ -20,12 +21,16 @@ import {
 import type { QuantityRule } from "./half-package-calculator";
 import {
   type NewQuotationDraft,
+  type NewQuotationExport,
   type QuotationDraft,
+  type QuotationDecisionAction,
+  type QuotationExport,
   type QuotationDraftLine,
   type QuotationDraftScope,
   type QuotationRepository,
   QuotationRevisionConflictError,
   type QuotationTemplate,
+  type QuotationStatus,
 } from "./quotation.repository";
 
 interface RuleVersionRow {
@@ -66,14 +71,33 @@ interface QuotationRow {
   id: string;
   management_fee: string;
   management_rate: string;
+  parent_version_id: string | null;
   project_id: string;
   project_name: string;
   quantity_rule_version_id: string;
   revision: number;
-  status: "DRAFT";
+  status: QuotationStatus;
+  submitted_at: Date | null;
+  submitted_by_user_id: string | null;
+  decided_at: Date | null;
+  decided_by_user_id: string | null;
+  decision_action: QuotationDecisionAction | null;
+  decision_reason: string | null;
   template_version_id: string;
   template_version_number: number;
   total: string;
+  version_number: number;
+}
+
+interface ExportRow {
+  content_type: string;
+  content_sha256: string;
+  created_at: Date;
+  file_name: string;
+  format: "PDF" | "XLSX";
+  id: string;
+  payload: Buffer;
+  quotation_id: string;
 }
 
 interface ScopeRow {
@@ -240,6 +264,52 @@ export class PgQuotationRepository implements QuotationRepository {
       : null;
   }
 
+  async findLatest(projectId: string): Promise<QuotationDraft | null> {
+    const result = await this.database.query<QuotationRow>(
+      `${quotationSelect}
+        WHERE q.project_id = $1
+        ORDER BY q.version_number DESC
+        LIMIT 1`,
+      [projectId],
+    );
+    return result.rows[0]
+      ? this.hydrateDraft(this.database, result.rows[0])
+      : null;
+  }
+
+  async findById(quotationId: string): Promise<QuotationDraft | null> {
+    const result = await this.database.query<QuotationRow>(
+      `${quotationSelect} WHERE q.id = $1`,
+      [quotationId],
+    );
+    return result.rows[0]
+      ? this.hydrateDraft(this.database, result.rows[0])
+      : null;
+  }
+
+  async listByProject(projectId: string): Promise<readonly QuotationDraft[]> {
+    const result = await this.database.query<QuotationRow>(
+      `${quotationSelect}
+        WHERE q.project_id = $1
+        ORDER BY q.version_number DESC`,
+      [projectId],
+    );
+    return Promise.all(
+      result.rows.map((row) => this.hydrateDraft(this.database, row)),
+    );
+  }
+
+  async listPendingApproval(): Promise<readonly QuotationDraft[]> {
+    const result = await this.database.query<QuotationRow>(
+      `${quotationSelect}
+        WHERE q.status = 'PENDING_APPROVAL'
+        ORDER BY q.submitted_at, q.id`,
+    );
+    return Promise.all(
+      result.rows.map((row) => this.hydrateDraft(this.database, row)),
+    );
+  }
+
   async createDraft(input: NewQuotationDraft): Promise<QuotationDraft> {
     await this.database.transaction(async (database) => {
       await database.query(
@@ -248,11 +318,12 @@ export class PgQuotationRepository implements QuotationRepository {
             cost_template_version_id, quantity_rule_version_id, building_area,
             management_rate, direct_cost, expected_cost, gross_profit,
             gross_margin_rate, management_fee, total, revision, created_by_user_id)
-         VALUES ($1, $2, 1, 'DRAFT', $3, $4, $5, $6, $7, $8, $9, $10,
-                 $11, $12, $13, $14, $15)`,
+         VALUES ($1, $2, $3, 'DRAFT', $4, $5, $6, $7, $8, $9, $10, $11,
+                 $12, $13, $14, $15, $16)`,
         [
           input.id,
           input.projectId,
+          input.versionNumber,
           input.templateVersionId,
           input.costTemplateVersionId,
           input.ruleVersionId,
@@ -268,6 +339,14 @@ export class PgQuotationRepository implements QuotationRepository {
           input.createdByUserId,
         ],
       );
+      if (input.parentVersionId) {
+        await database.query(
+          `UPDATE half_package_quotations
+              SET parent_version_id = $2
+            WHERE id = $1`,
+          [input.id, input.parentVersionId],
+        );
+      }
       for (const scope of input.scopes) {
         await insertScope(database, input.id, scope);
       }
@@ -398,6 +477,130 @@ export class PgQuotationRepository implements QuotationRepository {
     return saved;
   }
 
+  async submitDraft(
+    quotationId: string,
+    actorUserId: string,
+    expectedRevision: number,
+  ): Promise<QuotationDraft> {
+    await this.database.transaction(async (database) => {
+      const updated = await database.query(
+        `UPDATE half_package_quotations
+            SET status = 'PENDING_APPROVAL', submitted_by_user_id = $2,
+                submitted_at = current_timestamp, updated_at = current_timestamp
+          WHERE id = $1 AND status = 'DRAFT' AND revision = $3`,
+        [quotationId, actorUserId, expectedRevision],
+      );
+      if (updated.rowCount !== 1) {
+        throw new QuotationRevisionConflictError();
+      }
+      await insertDecision(database, quotationId, actorUserId, "SUBMITTED", null);
+    });
+    const submitted = await this.findById(quotationId);
+    if (!submitted) {
+      throw new Error("提交半包报价后无法读取结果");
+    }
+    return submitted;
+  }
+
+  async decide(
+    quotationId: string,
+    actorUserId: string,
+    action: QuotationDecisionAction,
+    reason: string | null,
+  ): Promise<QuotationDraft> {
+    await this.database.transaction(async (database) => {
+      const target = await database.query<{ project_id: string }>(
+        `SELECT project_id FROM half_package_quotations
+          WHERE id = $1 AND status = 'PENDING_APPROVAL'
+          FOR UPDATE`,
+        [quotationId],
+      );
+      const projectId = target.rows[0]?.project_id;
+      if (!projectId) {
+        throw new QuotationRevisionConflictError();
+      }
+      if (action === "APPROVED" || action === "SPECIAL_APPROVED") {
+        await database.query(
+          `UPDATE half_package_quotations
+              SET status = 'SUPERSEDED', updated_at = current_timestamp
+            WHERE project_id = $1 AND status = 'APPROVED'`,
+          [projectId],
+        );
+      }
+      const status = action === "RETURNED" ? "RETURNED" : "APPROVED";
+      const updated = await database.query(
+        `UPDATE half_package_quotations
+            SET status = $2, decided_by_user_id = $3,
+                decided_at = current_timestamp, decision_action = $4,
+                decision_reason = $5, updated_at = current_timestamp
+          WHERE id = $1 AND status = 'PENDING_APPROVAL'`,
+        [quotationId, status, actorUserId, action, reason],
+      );
+      if (updated.rowCount !== 1) {
+        throw new QuotationRevisionConflictError();
+      }
+      await insertDecision(database, quotationId, actorUserId, action, reason);
+    });
+    const decided = await this.findById(quotationId);
+    if (!decided) {
+      throw new Error("审批半包报价后无法读取结果");
+    }
+    return decided;
+  }
+
+  async createDraftFromVersion(
+    source: QuotationDraft,
+    actorUserId: string,
+  ): Promise<QuotationDraft> {
+    const versions = await this.listByProject(source.projectId);
+    const nextVersion = Math.max(0, ...versions.map((item) => item.versionNumber)) + 1;
+    return this.createDraft(cloneAsDraft(source, actorUserId, nextVersion));
+  }
+
+  async createExport(input: NewQuotationExport): Promise<QuotationExport> {
+    await this.database.query(
+      `INSERT INTO half_package_exports
+         (id, quotation_id, format, file_name, content_type,
+          content_sha256, payload, created_by_user_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        input.id,
+        input.quotationId,
+        input.format,
+        input.fileName,
+        input.contentType,
+        input.sha256,
+        input.payload,
+        input.createdByUserId,
+        input.createdAt,
+      ],
+    );
+    return input;
+  }
+
+  async findExport(exportId: string): Promise<QuotationExport | null> {
+    const result = await this.database.query<ExportRow>(
+      `SELECT id, quotation_id, format, file_name, content_type,
+              content_sha256, payload, created_at
+         FROM half_package_exports
+        WHERE id = $1`,
+      [exportId],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          contentType: row.content_type,
+          createdAt: row.created_at,
+          fileName: row.file_name,
+          format: row.format,
+          id: row.id,
+          payload: row.payload,
+          quotationId: row.quotation_id,
+          sha256: row.content_sha256,
+        }
+      : null;
+  }
+
   private async hydrateDraft(
     database: DatabaseExecutor,
     row: QuotationRow,
@@ -438,6 +641,7 @@ export class PgQuotationRepository implements QuotationRepository {
       id: row.id,
       managementFee: row.management_fee,
       managementRate: row.management_rate,
+      parentVersionId: row.parent_version_id,
       projectId: row.project_id,
       projectName: row.project_name,
       revision: row.revision,
@@ -460,9 +664,16 @@ export class PgQuotationRepository implements QuotationRepository {
         subtotal: scope.subtotal,
       })),
       status: row.status,
+      submittedAt: row.submitted_at,
+      submittedByUserId: row.submitted_by_user_id,
+      decidedAt: row.decided_at,
+      decidedByUserId: row.decided_by_user_id,
+      decisionAction: row.decision_action,
+      decisionReason: row.decision_reason,
       templateVersionId: row.template_version_id,
       templateVersionNumber: row.template_version_number,
       total: row.total,
+      versionNumber: row.version_number,
     };
   }
 }
@@ -585,8 +796,70 @@ function requiredReference(row: LineRow): string {
   return row.referenced_line_id;
 }
 
+async function insertDecision(
+  database: DatabaseExecutor,
+  quotationId: string,
+  actorUserId: string,
+  action: "SUBMITTED" | QuotationDecisionAction,
+  reason: string | null,
+): Promise<void> {
+  await database.query(
+    `INSERT INTO half_package_approval_decisions
+       (id, quotation_id, action, actor_user_id, reason)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [randomUUID(), quotationId, action, actorUserId, reason],
+  );
+}
+
+function cloneAsDraft(
+  source: QuotationDraft,
+  actorUserId: string,
+  versionNumber: number,
+): QuotationDraft {
+  const lineIds = new Map<string, string>();
+  for (const line of source.scopes.flatMap((scope) => scope.lines)) {
+    lineIds.set(line.id, randomUUID());
+  }
+  return {
+    ...source,
+    createdByUserId: actorUserId,
+    decidedAt: null,
+    decidedByUserId: null,
+    decisionAction: null,
+    decisionReason: null,
+    id: randomUUID(),
+    parentVersionId: source.id,
+    revision: 0,
+    scopes: source.scopes.map((scope) => ({
+      ...scope,
+      id: randomUUID(),
+      lines: scope.lines.map((line) => ({
+        ...line,
+        id: lineIds.get(line.id) ?? randomUUID(),
+        quantityRule:
+          line.quantityRule.kind === "LINE_REFERENCE"
+            ? {
+                kind: "LINE_REFERENCE" as const,
+                referencedLineId:
+                  lineIds.get(line.quantityRule.referencedLineId) ??
+                  line.quantityRule.referencedLineId,
+              }
+            : line.quantityRule,
+      })),
+    })),
+    status: "DRAFT",
+    submittedAt: null,
+    submittedByUserId: null,
+    versionNumber,
+  };
+}
+
 const quotationSelect = `SELECT q.id, q.project_id, p.name AS project_name,
-                                 q.status, q.template_version_id,
+                                 q.version_number, q.status,
+                                 q.parent_version_id, q.submitted_by_user_id,
+                                 q.submitted_at, q.decided_by_user_id,
+                                 q.decided_at, q.decision_action,
+                                 q.decision_reason, q.template_version_id,
                                  tv.version_number AS template_version_number,
                                  q.cost_template_version_id,
                                  ctv.version_number AS cost_template_version_number,

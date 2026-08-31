@@ -1,102 +1,399 @@
+import type {
+  HalfPackageExportFormat,
+  HalfPackageExportResponse,
+  ProjectSpace,
+  SpaceType,
+} from "@shanyu/contracts";
 import { cookies } from "next/headers";
+import {
+  Download,
+  FileSpreadsheet,
+  FileText,
+  History,
+  Printer,
+  Send,
+} from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { fetchProject, fetchSession } from "@/lib/api-client";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  apiUrl,
+  fetchHalfPackageQuotation,
+  fetchProject,
+  fetchPublishedCatalog,
+  fetchQuotationVersion,
+  fetchQuotationVersions,
+  fetchSession,
+} from "@/lib/api-client";
+import { formatQuotationMoney } from "@/lib/quotation-client";
 
 import { SpaceManager } from "./space-manager";
 
 interface ProjectPageProps {
   readonly params: Promise<{ projectId: string }>;
+  readonly searchParams: Promise<
+    Record<string, string | string[] | undefined>
+  >;
 }
 
-export default async function ProjectPage({ params }: ProjectPageProps) {
+export default async function ProjectPage({
+  params,
+  searchParams,
+}: ProjectPageProps) {
   const cookieHeader = (await cookies()).toString();
   const session = await fetchSession(cookieHeader);
-  if (!session) {
-    redirect("/login");
-  }
+  if (!session) redirect("/login");
   if (session.user.role !== "OWNER" && session.user.role !== "LEAD_DESIGNER") {
     redirect("/");
   }
+
   const { projectId } = await params;
+  const query = await searchParams;
+  const quotationId = firstValue(query.quotationId);
   const project = await fetchProject(cookieHeader, projectId);
-  if (!project) {
-    notFound();
-  }
+  if (!project) notFound();
+  const [quotation, versions, catalog] = await Promise.all([
+    quotationId
+      ? fetchQuotationVersion(cookieHeader, quotationId)
+      : fetchHalfPackageQuotation(cookieHeader, projectId),
+    fetchQuotationVersions(cookieHeader, projectId),
+    fetchPublishedCatalog(cookieHeader),
+  ]);
+  if (!quotation || quotation.projectId !== projectId) notFound();
+
+  const selectedItemCount = quotation.scopes.reduce(
+    (total, scope) =>
+      total + scope.lines.filter((line) => line.selected).length,
+    0,
+  );
+  const completedItemCount = quotation.scopes.reduce(
+    (total, scope) =>
+      total +
+      scope.lines.filter((line) => line.selected && line.quantity !== null)
+        .length,
+    0,
+  );
+  const completion =
+    selectedItemCount === 0
+      ? 0
+      : Math.round((completedItemCount / selectedItemCount) * 100);
+  const standardItemCount = catalog?.items.length ?? 0;
+  const currentStep = quoteStep(quotation.status);
+  const approved = currentStep === 3;
 
   return (
     <AppShell active="projects" user={session.user}>
-      <main className="page-content">
-        <section className="project-hero">
-          <div>
-            <Link className="text-link" href="/projects">← 返回项目列表</Link>
-            <h1>{project.name} · {project.customerName}</h1>
-            <p>
-              {Number(project.buildingArea).toFixed(2)}㎡ · 主案 {project.leadDesigner.displayName} · 当前 V1
+      <main className="grid gap-4 p-6">
+        <section className="flex flex-wrap items-center justify-between gap-4">
+          <div className="grid gap-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="m-0 text-2xl font-bold tracking-tight">
+                {project.name} · {project.customerName}
+              </h1>
+              <Badge variant={approved ? "success" : "secondary"}>
+                {quoteStatusLabel(quotation.status)}
+              </Badge>
+            </div>
+            <p className="m-0 text-[13px] text-muted-foreground">
+              {Number(project.buildingArea).toFixed(2)}㎡ · 主案 {project.leadDesigner.displayName} · 木作设计师未指派 · 当前 V{quotation.versionNumber}
             </p>
           </div>
-          <div className="project-hero-actions">
-            <Badge variant="secondary">草稿</Badge>
-            <Button disabled title="阶段 6 开放" variant="outline">版本记录</Button>
-            {session.user.role === "OWNER" ? (
-              <Button asChild variant="outline">
-                <Link href={`/projects/${project.id}/quotation/cost-margin`}>
-                  查看预计成本毛利
+
+          <div className="flex flex-wrap items-center gap-2">
+            {quotation.status === "DRAFT" ? (
+              <SpaceManager
+                projectId={project.id}
+                quotation={quotation}
+                spaces={project.spaces}
+              />
+            ) : null}
+            <Button asChild className="border-border" variant="outline">
+              <Link href={`/projects/${project.id}/quotation/versions`}>
+                <History />
+                版本记录
+              </Link>
+            </Button>
+            {approved ? (
+              <ExportMenu quotationId={quotation.id} />
+            ) : quotation.status === "DRAFT" ? (
+              <Button asChild>
+                <Link href={`/projects/${project.id}/quotation/submit`}>
+                  <Send />
+                  提交审批
                 </Link>
               </Button>
-            ) : null}
-            <Button asChild>
-              <Link href={`/projects/${project.id}/quotation`}>继续编辑半包</Link>
-            </Button>
+            ) : quotation.status === "RETURNED" ? (
+              <Button asChild>
+                <Link href={`/projects/${project.id}`}>
+                  继续修订
+                </Link>
+              </Button>
+            ) : (
+              <Button asChild>
+                <Link href={`/projects/${project.id}/quotation`}>
+                  查看半包报价
+                </Link>
+              </Button>
+            )}
           </div>
         </section>
 
-        <section className="project-status-flow" aria-label="报价状态">
-          {["草稿", "待定价/待补充", "待审批", "已批准"].map((label, index) => (
-            <div className={index === 0 ? "status-step active" : "status-step"} key={label}>
-              <span className="status-step-number">{index + 1}</span>
-              <span>{label}</span>
+        <Card className="border-border py-0 shadow-none">
+          <CardContent className="p-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {["草稿", "待定价/待补充", "待审批", "已批准"].map(
+                (label, index) => (
+                  <div className="flex items-center gap-2" key={label}>
+                    <span
+                      className={`grid size-7 place-items-center rounded-full text-xs font-semibold ${
+                        index <= currentStep
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {index + 1}
+                    </span>
+                    <span
+                      className={`text-[13px] font-semibold ${
+                        index === currentStep
+                          ? "text-primary"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      {label}
+                    </span>
+                  </div>
+                ),
+              )}
             </div>
-          ))}
-        </section>
+          </CardContent>
+        </Card>
 
-        <section className="project-overview-grid">
-          <article className="panel">
-            <div className="module-card">
-              <div>
-                <p className="eyebrow">V1 报价模块</p>
-                <h2>半包工程</h2>
-                <p>8 个报价分区 · 161 个标准工程项 · 使用已发布主材库版本</p>
-              </div>
-              <div>
-                <Badge>编辑中</Badge>
-                <Button asChild className="inline-button" size="sm" variant="outline">
-                  <Link href={`/projects/${project.id}/quotation`}>继续编辑半包 →</Link>
-                </Button>
-              </div>
-            </div>
-          </article>
-          <aside className="panel project-space-summary">
-            <h2>项目与空间</h2>
-            <dl>
-              <div><dt>建筑面积</dt><dd>{Number(project.buildingArea).toFixed(2)}㎡</dd></div>
-              <div><dt>主案设计师</dt><dd>{project.leadDesigner.displayName}</dd></div>
-              <div><dt>空间数量</dt><dd>{project.spaces.length}</dd></div>
-              <div><dt>报价模板</dt><dd>山屿标准半包</dd></div>
-            </dl>
-          </aside>
-        </section>
+        <section className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
+          <div className="grid gap-3">
+            <Card className="border-border py-0 shadow-none">
+              <CardContent className="grid gap-3 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="grid gap-1">
+                    <h2 className="text-lg font-bold">半包工程</h2>
+                    <p className="m-0 text-xs text-muted-foreground">
+                      {quotation.scopes.length} 个报价分区 · {standardItemCount} 个标准项 · 当前完成 {completion}%
+                    </p>
+                  </div>
+                  <Badge variant={approved ? "success" : "default"}>
+                    {quoteStatusLabel(quotation.status)}
+                  </Badge>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    aria-label={`半包报价完成度 ${completion}%`}
+                    className="h-full rounded-full bg-primary"
+                    style={{ width: `${completion}%` }}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <strong className="text-base">
+                    销售金额 ¥{displayMoney(quotation.total)}
+                  </strong>
+                  <Link
+                    className="text-[13px] font-semibold text-primary hover:underline"
+                    href={
+                      approved
+                        ? `/projects/${project.id}/quotation/versions`
+                        : `/projects/${project.id}/quotation`
+                    }
+                  >
+                    {approved ? "查看半包报价" : "继续编辑半包"} →
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
 
-        <section className="space-section-heading">
-          <div><p className="eyebrow">空间配置</p><h2>项目空间</h2></div>
-          <p>空间名称或参数影响自动项时，以服务端重算结果为准。</p>
+            <Card className="border-border py-0 shadow-none">
+              <CardContent className="grid gap-3 p-4">
+                <h2 className="text-base font-bold">V2 报价扩展（本轮不展开）</h2>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                  {[
+                    "主材报价",
+                    "铂屿木作定制",
+                    "第三方代购",
+                    "定制项目",
+                    "全案汇总",
+                  ].map((label) => (
+                    <div
+                      className="grid gap-1.5 rounded-lg bg-muted p-3 opacity-70"
+                      key={label}
+                    >
+                      <strong className="text-[13px]">{label}</strong>
+                      <span className="text-[11px] text-muted-foreground">
+                        V2 · 待正式模板
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border-border py-0 shadow-none">
+            <CardContent className="grid gap-3 p-4">
+              <h2 className="text-lg font-bold">项目与空间</h2>
+              <ProjectInfoRow
+                label="建筑面积"
+                value={`${Number(project.buildingArea).toFixed(2)}㎡`}
+              />
+              <ProjectInfoRow
+                label="客餐厅"
+                value={spaceNames(project.spaces, ["LIVING_DINING"], true)}
+              />
+              <ProjectInfoRow
+                label="卧室"
+                value={spaceNames(project.spaces, ["BEDROOM", "CLOSET"])}
+              />
+              <ProjectInfoRow
+                label="厨卫"
+                value={spaceNames(project.spaces, ["KITCHEN", "BATHROOM"])}
+              />
+              <ProjectInfoRow
+                label="独立阳台"
+                value={spaceNames(project.spaces, ["BALCONY"])}
+              />
+              <ProjectInfoRow
+                label="报价模板"
+                value={`山屿标准半包 V${quotation.templateVersion}`}
+              />
+              <p className="m-0 text-xs font-medium leading-5 text-warning">
+                空间名称或参数可在空间调整中修改；影响自动项时以服务端重算结果为准。
+              </p>
+              <p className="m-0 text-[11px] text-muted-foreground">
+                共 {versions?.length ?? 1} 个报价版本
+              </p>
+            </CardContent>
+          </Card>
         </section>
-        <SpaceManager projectId={project.id} spaces={project.spaces} />
       </main>
     </AppShell>
   );
+}
+
+function ExportMenu({ quotationId }: { readonly quotationId: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button>
+          <Printer />
+          打印/导出
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="grid w-52 gap-2 p-2">
+        <p className="px-2 pt-1 text-xs font-semibold">客户版报价文件</p>
+        <form action={exportApprovedQuotation.bind(null, quotationId, "PDF")}>
+          <Button className="w-full justify-start" type="submit" variant="ghost">
+            <FileText />
+            导出 PDF
+          </Button>
+        </form>
+        <form action={exportApprovedQuotation.bind(null, quotationId, "XLSX")}>
+          <Button className="w-full justify-start" type="submit" variant="ghost">
+            <FileSpreadsheet />
+            导出 Excel
+          </Button>
+        </form>
+        <p className="flex items-center gap-1.5 border-t border-border px-2 pt-2 text-[11px] text-muted-foreground">
+          <Download className="size-3" />
+          文件仅包含客户报价内容
+        </p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+async function exportApprovedQuotation(
+  quotationId: string,
+  format: HalfPackageExportFormat,
+): Promise<never> {
+  "use server";
+  const cookieHeader = (await cookies()).toString();
+  const response = await fetch(
+    `${apiUrl}/approvals/half-package/${quotationId}/exports`,
+    {
+      body: JSON.stringify({ format }),
+      cache: "no-store",
+      headers: {
+        "content-type": "application/json",
+        cookie: cookieHeader,
+      },
+      method: "POST",
+    },
+  );
+  if (response.status === 401) redirect("/login");
+  if (!response.ok) {
+    throw new Error(`导出失败（${response.status}）`);
+  }
+  const record = ((await response.json()) as HalfPackageExportResponse).export;
+  redirect(`${apiUrl}${record.downloadPath}`);
+}
+
+function ProjectInfoRow({
+  label,
+  value,
+}: {
+  readonly label: string;
+  readonly value: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 border-b border-border py-2 text-xs">
+      <span className="shrink-0 font-medium text-muted-foreground">{label}</span>
+      <strong className="text-right">{value}</strong>
+    </div>
+  );
+}
+
+function spaceNames(
+  spaces: readonly ProjectSpace[],
+  types: readonly SpaceType[],
+  includeBalcony = false,
+): string {
+  const names = spaces
+    .filter((space) => types.includes(space.type))
+    .map((space) =>
+      includeBalcony && space.includesBalcony
+        ? `${space.displayName} · 包阳台`
+        : space.displayName,
+    );
+  return names.length ? names.join(" / ") : "未配置";
+}
+
+function quoteStep(status: string): number {
+  if (status === "APPROVED" || status === "SUPERSEDED") return 3;
+  if (status === "PENDING_APPROVAL") return 2;
+  if (status === "PENDING_PRICING" || status === "PENDING_SUPPLEMENT") return 1;
+  return 0;
+}
+
+function quoteStatusLabel(status: string): string {
+  if (status === "APPROVED" || status === "SUPERSEDED") return "已批准";
+  if (status === "PENDING_APPROVAL") return "待审批";
+  if (status === "PENDING_PRICING") return "待定价";
+  if (status === "PENDING_SUPPLEMENT") return "待补充";
+  if (status === "RETURNED") return "已退回";
+  return "草稿";
+}
+
+function displayMoney(value: string): string {
+  return formatQuotationMoney(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function firstValue(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
 }

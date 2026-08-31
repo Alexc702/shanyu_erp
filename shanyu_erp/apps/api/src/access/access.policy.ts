@@ -25,6 +25,14 @@ export class AccessPolicy {
     this.assertOwner(user);
   }
 
+  assertCanApproveQuotation(user: SessionUser): void {
+    this.assertOwner(user);
+  }
+
+  assertCanReadAudit(user: SessionUser): void {
+    this.assertOwner(user);
+  }
+
   assertCanCreateProject(user: SessionUser, leadDesignerId: string): void {
     if (user.role === "OWNER") {
       return;

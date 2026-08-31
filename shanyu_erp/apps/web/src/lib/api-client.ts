@@ -1,8 +1,16 @@
 import type {
+  AuditEventListResponse,
+  AuditEventView,
+  HalfPackageApprovalListResponse,
+  HalfPackageApprovalSummary,
   HalfPackageCostMargin,
   HalfPackageCostMarginResponse,
   HalfPackageQuotation,
   HalfPackageQuotationResponse,
+  HalfPackageQuotationVersionSummary,
+  HalfPackageQuotationVersionsResponse,
+  HalfPackageSubmissionCheck,
+  HalfPackageSubmissionCheckResponse,
   LoginResponse,
   PublishedHalfPackageCatalogResponse,
   PublishedHalfPackageCatalogView,
@@ -151,4 +159,84 @@ export async function fetchHalfPackageCostMargin(
   }
   const payload = (await response.json()) as HalfPackageCostMarginResponse;
   return payload.costMargin;
+}
+
+export async function fetchSubmissionCheck(
+  cookieHeader: string,
+  projectId: string,
+): Promise<HalfPackageSubmissionCheck | null> {
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/half-package-quotation/submission-check`,
+    { cache: "no-store", headers: { cookie: cookieHeader } },
+  );
+  if (response.status === 401 || response.status === 404) return null;
+  if (!response.ok) throw new Error(`Submission check failed with status ${response.status}`);
+  return ((await response.json()) as HalfPackageSubmissionCheckResponse).check;
+}
+
+export async function fetchPendingApprovals(
+  cookieHeader: string,
+): Promise<readonly HalfPackageApprovalSummary[] | null> {
+  const response = await fetch(`${apiUrl}/approvals/half-package`, {
+    cache: "no-store",
+    headers: { cookie: cookieHeader },
+  });
+  if (response.status === 401 || response.status === 403) return null;
+  if (!response.ok) throw new Error(`Approvals request failed with status ${response.status}`);
+  return ((await response.json()) as HalfPackageApprovalListResponse).quotations;
+}
+
+export async function fetchQuotationVersion(
+  cookieHeader: string,
+  quotationId: string,
+): Promise<HalfPackageQuotation | null> {
+  const response = await fetch(`${apiUrl}/approvals/half-package/${quotationId}`, {
+    cache: "no-store",
+    headers: { cookie: cookieHeader },
+  });
+  if (response.status === 401 || response.status === 404) return null;
+  if (!response.ok) throw new Error(`Quotation version failed with status ${response.status}`);
+  return ((await response.json()) as HalfPackageQuotationResponse).quotation;
+}
+
+export async function fetchQuotationVersionCostMargin(
+  cookieHeader: string,
+  quotationId: string,
+): Promise<HalfPackageCostMargin | null> {
+  const response = await fetch(
+    `${apiUrl}/approvals/half-package/${quotationId}/cost-margin`,
+    { cache: "no-store", headers: { cookie: cookieHeader } },
+  );
+  if ([401, 403, 404].includes(response.status)) return null;
+  if (!response.ok) throw new Error(`Version cost margin failed with status ${response.status}`);
+  return ((await response.json()) as HalfPackageCostMarginResponse).costMargin;
+}
+
+export async function fetchQuotationVersions(
+  cookieHeader: string,
+  projectId: string,
+): Promise<readonly HalfPackageQuotationVersionSummary[] | null> {
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/half-package-quotation/versions`,
+    { cache: "no-store", headers: { cookie: cookieHeader } },
+  );
+  if (response.status === 401 || response.status === 404) return null;
+  if (!response.ok) throw new Error(`Quotation versions failed with status ${response.status}`);
+  return ((await response.json()) as HalfPackageQuotationVersionsResponse).versions;
+}
+
+export async function fetchAuditEvents(
+  cookieHeader: string,
+  filters: { readonly action?: string; readonly result?: string } = {},
+): Promise<readonly AuditEventView[] | null> {
+  const params = new URLSearchParams();
+  if (filters.action) params.set("action", filters.action);
+  if (filters.result) params.set("result", filters.result);
+  const response = await fetch(`${apiUrl}/audit-events?${params}`, {
+    cache: "no-store",
+    headers: { cookie: cookieHeader },
+  });
+  if (response.status === 401 || response.status === 403) return null;
+  if (!response.ok) throw new Error(`Audit request failed with status ${response.status}`);
+  return ((await response.json()) as AuditEventListResponse).events;
 }

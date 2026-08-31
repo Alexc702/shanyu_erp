@@ -1,4 +1,8 @@
 import type {
+  HalfPackageApprovalAction,
+  HalfPackageExportFormat,
+  HalfPackageExportResponse,
+  HalfPackageVersionCompareResponse,
   HalfPackageQuotation,
   HalfPackageQuotationResponse,
   UpdateHalfPackageQuotationLineRequest,
@@ -42,6 +46,106 @@ export async function saveQuotationLine(
   }
   const payload = (await response.json()) as HalfPackageQuotationResponse;
   return payload.quotation;
+}
+
+export function quotationLineUpdateForQuantity(quantity: string): Pick<
+  UpdateHalfPackageQuotationLineRequest,
+  "quantity" | "selected"
+> {
+  const normalized = quantity.trim();
+  return {
+    quantity: normalized || null,
+    selected: normalized !== "",
+  };
+}
+
+export async function submitQuotation(
+  projectId: string,
+  expectedRevision: number,
+  fetcher: Fetcher = fetch,
+): Promise<HalfPackageQuotation> {
+  return quotationMutation(
+    `${apiUrl}/projects/${projectId}/half-package-quotation/submit`,
+    { expectedRevision },
+    fetcher,
+  );
+}
+
+export async function decideQuotation(
+  quotationId: string,
+  action: HalfPackageApprovalAction,
+  reason: string | null,
+  fetcher: Fetcher = fetch,
+): Promise<HalfPackageQuotation> {
+  return quotationMutation(
+    `${apiUrl}/approvals/half-package/${quotationId}/decision`,
+    { action, reason },
+    fetcher,
+  );
+}
+
+export async function cloneQuotationVersion(
+  projectId: string,
+  quotationId: string,
+  fetcher: Fetcher = fetch,
+): Promise<HalfPackageQuotation> {
+  return quotationMutation(
+    `${apiUrl}/projects/${projectId}/half-package-quotation/versions/${quotationId}/clone`,
+    {},
+    fetcher,
+  );
+}
+
+export async function createQuotationExport(
+  quotationId: string,
+  format: HalfPackageExportFormat,
+  fetcher: Fetcher = fetch,
+) {
+  const response = await fetcher(
+    `${apiUrl}/approvals/half-package/${quotationId}/exports`,
+    {
+      body: JSON.stringify({ format }),
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  if (!response.ok) throw await responseError(response, "导出失败");
+  return ((await response.json()) as HalfPackageExportResponse).export;
+}
+
+export async function compareQuotationVersions(
+  projectId: string,
+  fromId: string,
+  toId: string,
+  fetcher: Fetcher = fetch,
+): Promise<HalfPackageVersionCompareResponse> {
+  const response = await fetcher(
+    `${apiUrl}/projects/${projectId}/half-package-quotation/versions/compare?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(toId)}`,
+    { credentials: "include" },
+  );
+  if (!response.ok) throw await responseError(response, "版本对比失败");
+  return (await response.json()) as HalfPackageVersionCompareResponse;
+}
+
+async function quotationMutation(
+  url: string,
+  body: Readonly<Record<string, unknown>>,
+  fetcher: Fetcher,
+): Promise<HalfPackageQuotation> {
+  const response = await fetcher(url, {
+    body: JSON.stringify(body),
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  if (!response.ok) throw await responseError(response, "操作失败");
+  return ((await response.json()) as HalfPackageQuotationResponse).quotation;
+}
+
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  const error = (await response.json().catch(() => null)) as { message?: unknown } | null;
+  return new Error(typeof error?.message === "string" ? error.message : `${fallback}（${response.status}）`);
 }
 
 export function formatQuotationMoney(value: string | null): string {

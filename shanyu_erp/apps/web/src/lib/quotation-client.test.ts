@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   formatQuotationMoney,
+  quotationLineUpdateForQuantity,
   saveQuotationLine,
 } from "./quotation-client";
 
@@ -14,6 +15,21 @@ describe("quotation client", () => {
     expect(formatQuotationMoney("0.0000")).toBe("0.00");
     expect(formatQuotationMoney("-39018.0824")).toBe("-39018.08");
     expect(formatQuotationMoney(null)).toBe("—");
+  });
+
+  it("clears selection and quantity when a manual quantity is emptied", () => {
+    expect(quotationLineUpdateForQuantity("")).toEqual({
+      quantity: null,
+      selected: false,
+    });
+    expect(quotationLineUpdateForQuantity("  ")).toEqual({
+      quantity: null,
+      selected: false,
+    });
+    expect(quotationLineUpdateForQuantity("3.5000")).toEqual({
+      quantity: "3.5000",
+      selected: true,
+    });
   });
 
   it("sends only selection, quantity, and optimistic revision", async () => {
@@ -78,8 +94,10 @@ const quotation: HalfPackageQuotation = {
   revision: 3,
   scopes: [],
   status: "DRAFT",
+  submittedAt: null,
   templateVersion: 1,
   total: "136.4000",
+  versionNumber: 1,
 };
 
 type Fetcher = (

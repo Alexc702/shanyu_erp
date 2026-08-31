@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/popover";
 import {
   formatQuotationMoney,
+  quotationLineUpdateForQuantity,
   saveQuotationLine,
 } from "@/lib/quotation-client";
 import {
@@ -54,6 +55,7 @@ export function QuotationEditor({
   );
   const [message, setMessage] = useState("已从服务端恢复草稿");
   const [error, setError] = useState<string | null>(null);
+  const editable = quotation.status === "DRAFT";
   const orderedScopes = useMemo(
     () => orderQuotationScopes(quotation.scopes),
     [quotation.scopes],
@@ -127,14 +129,16 @@ export function QuotationEditor({
           <div className="quotation-save-state" aria-live="polite">
             <span className={error ? "save-dot error" : "save-dot"} />{message}
           </div>
-          <Button
-            onClick={() => setMessage(`草稿已保存 · 修订 ${quotation.revision}`)}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            保存草稿
-          </Button>
+          {editable ? (
+            <Button
+              onClick={() => setMessage(`草稿已保存 · 修订 ${quotation.revision}`)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              保存草稿
+            </Button>
+          ) : null}
           {canViewCosts ? (
             <Button asChild size="sm" variant="outline">
               <Link href={`/projects/${quotation.projectId}/quotation/cost-margin`}>
@@ -142,13 +146,19 @@ export function QuotationEditor({
               </Link>
             </Button>
           ) : null}
-          <Button
-            onClick={() => setMessage("提交审批将在阶段 6 开放，当前草稿未改变。")}
-            size="sm"
-            type="button"
-          >
-            提交何老板审批
-          </Button>
+          {editable ? (
+            <Button asChild size="sm">
+              <Link href={`/projects/${quotation.projectId}/quotation/submit`}>
+                提交何老板审批
+              </Link>
+            </Button>
+          ) : (
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/projects/${quotation.projectId}/quotation/versions`}>
+                查看版本记录
+              </Link>
+            </Button>
+          )}
         </div>
       </header>
 
@@ -236,7 +246,7 @@ export function QuotationEditor({
                           </td>
                           <td colSpan={4}>
                             <MultiSelectControl
-                              disabled={savingLineId !== null}
+                              disabled={savingLineId !== null || !editable}
                               lines={groupLines}
                               onToggle={(selectedLine, checked) =>
                                 saveLine(
@@ -264,7 +274,7 @@ export function QuotationEditor({
                             <Checkbox
                               aria-label={`选择 ${line.itemName}`}
                               checked={line.selected}
-                              disabled={saving}
+                              disabled={saving || !editable}
                               onCheckedChange={(checked) =>
                                 saveLine(
                                   line,
@@ -286,12 +296,13 @@ export function QuotationEditor({
                             <input
                               aria-label={`${line.itemName} 数量`}
                               className="quantity-input"
-                              disabled={saving}
+                              disabled={saving || !editable}
                               inputMode="decimal"
                               onBlur={() => {
                                 const quantity = draftQuantities[line.id];
                                 if (quantity !== undefined) {
-                                  void saveLine(line, line.selected || quantity !== "", quantity || null);
+                                  const update = quotationLineUpdateForQuantity(quantity);
+                                  void saveLine(line, update.selected, update.quantity);
                                 }
                               }}
                               onChange={(event) =>
@@ -343,7 +354,7 @@ export function QuotationEditor({
             <p>✓ 标准销售价来自已发布主材库</p>
             <p>✓ 161 项按空间类型完整映射</p>
             <p>✓ 地砖 / 墙砖 / 找平可多选</p>
-            <p>审批流程将在阶段 6 开放</p>
+            <p>{editable ? "提交前请完成所有已选工程项数量" : `当前版本状态：${quotation.status}`}</p>
           </section>
           <section className="quotation-explanation">
             <p className="eyebrow">施工说明</p>

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type { ProjectDetail, SessionUser } from "@shanyu/contracts";
+import ExcelJS from "exceljs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { AccessPolicy } from "../src/access/access.policy";
@@ -15,7 +16,10 @@ import type {
 import { HalfPackageCalculator } from "../src/quotation/half-package-calculator";
 import type {
   NewQuotationDraft,
+  NewQuotationExport,
   QuotationDraft,
+  QuotationDecisionAction,
+  QuotationExport,
   QuotationRepository,
   QuotationTemplate,
 } from "../src/quotation/quotation.repository";
@@ -134,9 +138,27 @@ describe("QuotationService", () => {
       主卫: 1,
       厨房: 1,
       客餐厅: 3,
-      生活阳台: 1,
+      生活阳台: 2,
       衣帽间: 3,
     });
+    expect(
+      quotation.scopes
+        .find((scope) => scope.name === "生活阳台")
+        ?.lines.map(({ itemName, quantitySource, saleUnitPrice }) => ({
+          itemName,
+          quantitySource,
+          saleUnitPrice,
+        })),
+    ).toEqual(
+      quotation.scopes
+        .find((scope) => scope.name === "客餐厅")
+        ?.lines.filter((line) => line.itemName !== "包管道（1根）")
+        .map(({ itemName, quantitySource, saleUnitPrice }) => ({
+          itemName,
+          quantitySource,
+          saleUnitPrice,
+        })),
+    );
   });
 
   it("adds project spaces created after the draft without replacing saved quotation lines", async () => {
@@ -369,6 +391,119 @@ describe("QuotationService", () => {
     ).rejects.toBeInstanceOf(ConflictException);
     expect(repository.createdCount).toBe(0);
   });
+
+  it("checks and submits a complete draft as an immutable pending snapshot", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const check = await service.checkSubmission(lead, project.id);
+
+    expect(check).toMatchObject({
+      blockerCount: 0,
+      itemCount: 11,
+      sectionCount: 8,
+    });
+    const submitted = await service.submit(lead, project.id, draft.revision);
+    expect(submitted).toMatchObject({
+      status: "PENDING_APPROVAL",
+      versionNumber: 1,
+    });
+    expect(submitted.submittedAt).not.toBeNull();
+    const line = submitted.scopes[0]?.lines[0];
+    if (!line) throw new Error("提交快照缺少工程项");
+    await expect(
+      service.updateLine(lead, project.id, line.id, {
+        expectedRevision: submitted.revision,
+        quantity: "1.0000",
+        selected: true,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(audits.at(-1)).toMatchObject({ action: "QUOTATION_SUBMITTED" });
+  });
+
+  it("allows only the owner to approve and exports an approved customer workbook", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const submitted = await service.submit(lead, project.id, draft.revision);
+    await expect(
+      service.decide(lead, submitted.id, "APPROVED", null),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    const approved = await service.decide(
+      owner,
+      submitted.id,
+      "APPROVED",
+      null,
+    );
+    expect(approved.status).toBe("APPROVED");
+    const exported = await service.createExport(owner, approved.id, "XLSX");
+    expect(exported).toMatchObject({ format: "XLSX" });
+    expect(exported.payload.subarray(0, 2).toString()).toBe("PK");
+    expect(exported.sha256).toHaveLength(64);
+    const customerExport = await service.getExport(lead, exported.id);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      customerExport.payload as unknown as Parameters<typeof workbook.xlsx.load>[0],
+    );
+    expect(workbook.getWorksheet("半包报价单")?.getRow(4).values).toEqual([
+      undefined,
+      "分区/空间",
+      "工程项",
+      "单位",
+      "数量",
+      "销售单价",
+      "金额",
+      "施工说明",
+    ]);
+    expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues()))).not.toContain("成本");
+    await expect(
+      service.getExport(unrelatedLead, exported.id),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    const pdf = await service.createExport(owner, approved.id, "PDF");
+    expect(pdf.payload.subarray(0, 4).toString()).toBe("%PDF");
+  }, 20_000);
+
+  it("requires a return reason and creates the next editable version", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const submitted = await service.submit(lead, project.id, draft.revision);
+    await expect(
+      service.decide(owner, submitted.id, "RETURNED", "  "),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    const returned = await service.decide(
+      owner,
+      submitted.id,
+      "RETURNED",
+      "补充客餐厅数量",
+    );
+    expect(returned.status).toBe("RETURNED");
+    await expect(
+      service.createExport(owner, returned.id, "PDF"),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const nextDraft = await repository.findDraft();
+    expect(nextDraft).toMatchObject({
+      parentVersionId: submitted.id,
+      status: "DRAFT",
+      versionNumber: 2,
+    });
+  });
+
+  it("requires a reason for special approval and records the decision", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const submitted = await service.submit(lead, project.id, draft.revision);
+    await expect(
+      service.decide(owner, submitted.id, "SPECIAL_APPROVED", ""),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    const approved = await service.decide(
+      owner,
+      submitted.id,
+      "SPECIAL_APPROVED",
+      "风险已确认",
+    );
+    expect(approved.status).toBe("APPROVED");
+    expect(audits.at(-1)).toMatchObject({
+      action: "QUOTATION_SPECIAL_APPROVED",
+      reason: "风险已确认",
+    });
+  });
 });
 
 class InMemoryQuotationRepository implements QuotationRepository {
@@ -378,13 +513,32 @@ class InMemoryQuotationRepository implements QuotationRepository {
   project: ProjectDetail | null = structuredClone(project);
   template: QuotationTemplate | null = structuredClone(template);
   templateLookups: [string, string][] = [];
+  exports: QuotationExport[] = [];
 
   async findProject(): Promise<ProjectDetail | null> {
     return this.project;
   }
 
   async findDraft(): Promise<QuotationDraft | null> {
+    return this.draft?.status === "DRAFT" ? structuredClone(this.draft) : null;
+  }
+
+  async findLatest(): Promise<QuotationDraft | null> {
     return this.draft ? structuredClone(this.draft) : null;
+  }
+
+  async findById(): Promise<QuotationDraft | null> {
+    return this.draft ? structuredClone(this.draft) : null;
+  }
+
+  async listByProject(): Promise<readonly QuotationDraft[]> {
+    return this.draft ? [structuredClone(this.draft)] : [];
+  }
+
+  async listPendingApproval(): Promise<readonly QuotationDraft[]> {
+    return this.draft?.status === "PENDING_APPROVAL"
+      ? [structuredClone(this.draft)]
+      : [];
   }
 
   async findPublishedTemplate(): Promise<QuotationTemplate | null> {
@@ -417,6 +571,64 @@ class InMemoryQuotationRepository implements QuotationRepository {
     }
     this.draft = structuredClone(input);
     return structuredClone(input);
+  }
+
+  async submitDraft(
+    _quotationId: string,
+    actorUserId: string,
+  ): Promise<QuotationDraft> {
+    if (!this.draft) throw new QuotationRevisionConflictError();
+    this.draft = {
+      ...this.draft,
+      status: "PENDING_APPROVAL",
+      submittedAt: new Date("2026-08-30T00:00:00Z"),
+      submittedByUserId: actorUserId,
+    };
+    return structuredClone(this.draft);
+  }
+
+  async decide(
+    _quotationId: string,
+    actorUserId: string,
+    action: QuotationDecisionAction,
+    reason: string | null,
+  ): Promise<QuotationDraft> {
+    if (!this.draft) throw new QuotationRevisionConflictError();
+    this.draft = {
+      ...this.draft,
+      decidedAt: new Date("2026-08-30T01:00:00Z"),
+      decidedByUserId: actorUserId,
+      decisionAction: action,
+      decisionReason: reason,
+      status: action === "RETURNED" ? "RETURNED" : "APPROVED",
+    };
+    return structuredClone(this.draft);
+  }
+
+  async createDraftFromVersion(
+    source: QuotationDraft,
+    actorUserId: string,
+  ): Promise<QuotationDraft> {
+    this.draft = {
+      ...structuredClone(source),
+      createdByUserId: actorUserId,
+      id: `${source.id}-copy`,
+      parentVersionId: source.id,
+      status: "DRAFT",
+      submittedAt: null,
+      submittedByUserId: null,
+      versionNumber: source.versionNumber + 1,
+    };
+    return structuredClone(this.draft);
+  }
+
+  async createExport(input: NewQuotationExport): Promise<QuotationExport> {
+    this.exports.push(input);
+    return input;
+  }
+
+  async findExport(exportId: string): Promise<QuotationExport | null> {
+    return this.exports.find((item) => item.id === exportId) ?? null;
   }
 }
 

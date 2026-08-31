@@ -19,11 +19,19 @@ import {
 import { AuthService } from "../src/access/auth.service";
 import { hashPassword } from "../src/access/password";
 import { HalfPackageCalculator } from "../src/quotation/half-package-calculator";
-import { QuotationController } from "../src/quotation/quotation.controller";
+import {
+  QuotationApprovalController,
+  QuotationController,
+  QuotationExportController,
+} from "../src/quotation/quotation.controller";
+import { QuotationExporter } from "../src/quotation/quotation-exporter";
 import {
   type NewQuotationDraft,
+  type NewQuotationExport,
   QUOTATION_REPOSITORY,
   type QuotationDraft,
+  type QuotationDecisionAction,
+  type QuotationExport,
   type QuotationRepository,
   type QuotationTemplate,
 } from "../src/quotation/quotation.repository";
@@ -68,11 +76,17 @@ describe("half-package quotation HTTP interface", () => {
     const auditRepository: AuditRepository = { async append() {} };
 
     const moduleRef = await Test.createTestingModule({
-      controllers: [AuthController, QuotationController],
+      controllers: [
+        AuthController,
+        QuotationController,
+        QuotationApprovalController,
+        QuotationExportController,
+      ],
       providers: [
         AccessPolicy,
         AuthService,
         HalfPackageCalculator,
+        QuotationExporter,
         QuotationService,
         { provide: AUTH_REPOSITORY, useValue: authRepository },
         { provide: AUDIT_REPOSITORY, useValue: auditRepository },
@@ -193,6 +207,52 @@ describe("half-package quotation HTTP interface", () => {
       .expect(400);
   });
 
+  it("enforces submit, owner approval and approved-only customer export", async () => {
+    const leadCookie = await login("alex", "lead-password");
+    const opened = await request(app.getHttpServer())
+      .get(`/projects/${project.id}/half-package-quotation`)
+      .set("Cookie", leadCookie)
+      .expect(200);
+    const quotationId = opened.body.quotation.id as string;
+
+    await request(app.getHttpServer())
+      .post(`/projects/${project.id}/half-package-quotation/submit`)
+      .set("Cookie", leadCookie)
+      .send({ expectedRevision: opened.body.quotation.revision })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.quotation.status).toBe("PENDING_APPROVAL");
+      });
+    await request(app.getHttpServer())
+      .post(`/approvals/half-package/${quotationId}/decision`)
+      .set("Cookie", leadCookie)
+      .send({ action: "APPROVED", reason: null })
+      .expect(403);
+
+    const ownerCookie = await login("owner", "owner-password");
+    await request(app.getHttpServer())
+      .get("/approvals/half-package")
+      .set("Cookie", ownerCookie)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.quotations).toHaveLength(1);
+      });
+    await request(app.getHttpServer())
+      .post(`/approvals/half-package/${quotationId}/decision`)
+      .set("Cookie", ownerCookie)
+      .send({ action: "APPROVED", reason: null })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/approvals/half-package/${quotationId}/exports`)
+      .set("Cookie", ownerCookie)
+      .send({ format: "XLSX" })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.export.fileName).toContain("半包报价");
+        expect(body.export.sha256).toHaveLength(64);
+      });
+  });
+
   async function login(account: string, password: string): Promise<string> {
     const response = await request(app.getHttpServer())
       .post("/auth/login")
@@ -208,13 +268,32 @@ describe("half-package quotation HTTP interface", () => {
 
 class StaticQuotationRepository implements QuotationRepository {
   private draft: QuotationDraft | null = null;
+  private exports: QuotationExport[] = [];
 
   async findProject(): Promise<ProjectDetail | null> {
     return project;
   }
 
   async findDraft(): Promise<QuotationDraft | null> {
+    return this.draft?.status === "DRAFT" ? structuredClone(this.draft) : null;
+  }
+
+  async findLatest(): Promise<QuotationDraft | null> {
     return this.draft ? structuredClone(this.draft) : null;
+  }
+
+  async findById(): Promise<QuotationDraft | null> {
+    return this.draft ? structuredClone(this.draft) : null;
+  }
+
+  async listByProject(): Promise<readonly QuotationDraft[]> {
+    return this.draft ? [structuredClone(this.draft)] : [];
+  }
+
+  async listPendingApproval(): Promise<readonly QuotationDraft[]> {
+    return this.draft?.status === "PENDING_APPROVAL"
+      ? [structuredClone(this.draft)]
+      : [];
   }
 
   async findPublishedTemplate(): Promise<QuotationTemplate> {
@@ -238,6 +317,64 @@ class StaticQuotationRepository implements QuotationRepository {
   async saveDraft(input: QuotationDraft): Promise<QuotationDraft> {
     this.draft = structuredClone(input);
     return structuredClone(input);
+  }
+
+  async submitDraft(
+    _quotationId: string,
+    actorUserId: string,
+  ): Promise<QuotationDraft> {
+    if (!this.draft) throw new Error("missing draft");
+    this.draft = {
+      ...this.draft,
+      status: "PENDING_APPROVAL",
+      submittedAt: new Date("2026-08-30T00:00:00Z"),
+      submittedByUserId: actorUserId,
+    };
+    return structuredClone(this.draft);
+  }
+
+  async decide(
+    _quotationId: string,
+    actorUserId: string,
+    action: QuotationDecisionAction,
+    reason: string | null,
+  ): Promise<QuotationDraft> {
+    if (!this.draft) throw new Error("missing quotation");
+    this.draft = {
+      ...this.draft,
+      decidedAt: new Date("2026-08-30T01:00:00Z"),
+      decidedByUserId: actorUserId,
+      decisionAction: action,
+      decisionReason: reason,
+      status: action === "RETURNED" ? "RETURNED" : "APPROVED",
+    };
+    return structuredClone(this.draft);
+  }
+
+  async createDraftFromVersion(
+    source: QuotationDraft,
+    actorUserId: string,
+  ): Promise<QuotationDraft> {
+    this.draft = {
+      ...structuredClone(source),
+      createdByUserId: actorUserId,
+      id: `${source.id}-copy`,
+      parentVersionId: source.id,
+      status: "DRAFT",
+      submittedAt: null,
+      submittedByUserId: null,
+      versionNumber: source.versionNumber + 1,
+    };
+    return structuredClone(this.draft);
+  }
+
+  async createExport(input: NewQuotationExport): Promise<QuotationExport> {
+    this.exports.push(input);
+    return input;
+  }
+
+  async findExport(exportId: string): Promise<QuotationExport | null> {
+    return this.exports.find((item) => item.id === exportId) ?? null;
   }
 }
 

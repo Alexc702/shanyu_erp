@@ -6,13 +6,17 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type {
+  HalfPackageApprovalAction,
+  HalfPackageApprovalSummary,
   HalfPackageCostMargin,
   HalfPackageSectionCode,
+  HalfPackageSubmissionCheck,
+  HalfPackageVersionDifference,
   ProjectDetail,
   SessionUser,
   SpaceType,
 } from "@shanyu/contracts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { AccessPolicy } from "../access/access.policy";
 import {
@@ -28,11 +32,14 @@ import {
   type QuotationDraft,
   type QuotationDraftLine,
   type QuotationDraftScope,
+  type QuotationExport,
+  type QuotationExportFormat,
   type QuotationRepository,
   QuotationRevisionConflictError,
   type QuotationTemplate,
   type QuotationTemplateItem,
 } from "./quotation.repository";
+import { QuotationExporter } from "./quotation-exporter";
 
 export interface UpdateQuotationLineInput {
   readonly expectedRevision: number;
@@ -74,9 +81,11 @@ export interface QuotationView {
   readonly projectName: string;
   readonly revision: number;
   readonly scopes: readonly QuotationScopeView[];
-  readonly status: "DRAFT";
+  readonly status: QuotationDraft["status"];
+  readonly submittedAt: string | null;
   readonly templateVersion: number;
   readonly total: string;
+  readonly versionNumber: number;
 }
 
 @Injectable()
@@ -88,6 +97,7 @@ export class QuotationService {
     @Inject(AUDIT_REPOSITORY)
     private readonly auditRepository: AuditRepository,
     private readonly calculator: HalfPackageCalculator,
+    private readonly exporter: QuotationExporter = new QuotationExporter(),
   ) {}
 
   async getOrCreateDraft(
@@ -100,6 +110,10 @@ export class QuotationService {
       return toView(
         await this.addMissingProjectScopes(actor, project, existing),
       );
+    }
+    const latest = await this.quotationRepository.findLatest(projectId);
+    if (latest) {
+      return toView(latest);
     }
     const template = await this.quotationRepository.findPublishedTemplate();
     if (!template) {
@@ -197,8 +211,8 @@ export class QuotationService {
     projectId: string,
   ): Promise<HalfPackageCostMargin> {
     this.accessPolicy.assertCanViewSensitivePricing(actor);
-    await this.getOrCreateDraft(actor, projectId);
-    const draft = await this.quotationRepository.findDraft(projectId);
+    const quotation = await this.getOrCreateDraft(actor, projectId);
+    const draft = await this.quotationRepository.findById(quotation.id);
     if (!draft) {
       throw new NotFoundException("半包报价草稿不存在");
     }
@@ -213,6 +227,271 @@ export class QuotationService {
     return toCostMargin(draft);
   }
 
+  async checkSubmission(
+    actor: SessionUser,
+    projectId: string,
+  ): Promise<HalfPackageSubmissionCheck> {
+    await this.authorizedProject(actor, projectId);
+    const draft = await this.quotationRepository.findDraft(projectId);
+    if (!draft) {
+      throw new NotFoundException("半包报价草稿不存在");
+    }
+    return this.submissionCheck(draft);
+  }
+
+  async submit(
+    actor: SessionUser,
+    projectId: string,
+    expectedRevision: number,
+  ): Promise<QuotationView> {
+    await this.authorizedProject(actor, projectId);
+    const draft = await this.quotationRepository.findDraft(projectId);
+    if (!draft) {
+      throw new NotFoundException("半包报价草稿不存在");
+    }
+    const check = await this.submissionCheck(draft);
+    if (check.blockerCount > 0) {
+      throw new BadRequestException(
+        `提交前仍有 ${check.blockerCount} 个阻断项：${check.blockers.join("；")}`,
+      );
+    }
+    let submitted: QuotationDraft;
+    try {
+      submitted = await this.quotationRepository.submitDraft(
+        draft.id,
+        actor.id,
+        expectedRevision,
+      );
+    } catch (error) {
+      if (error instanceof QuotationRevisionConflictError) {
+        throw new ConflictException("报价已变化，请重新检查后提交");
+      }
+      throw error;
+    }
+    await this.auditRepository.append({
+      action: "QUOTATION_SUBMITTED",
+      actorUserId: actor.id,
+      afterState: { status: submitted.status, version: submitted.versionNumber },
+      beforeState: { status: draft.status, version: draft.versionNumber },
+      occurredAt: new Date(),
+      result: "SUCCESS",
+      targetId: submitted.id,
+      targetType: "HALF_PACKAGE_QUOTATION",
+    });
+    return toView(submitted);
+  }
+
+  async listPendingApprovals(
+    actor: SessionUser,
+  ): Promise<readonly HalfPackageApprovalSummary[]> {
+    this.accessPolicy.assertCanApproveQuotation(actor);
+    const quotations = await this.quotationRepository.listPendingApproval();
+    return Promise.all(
+      quotations.map(async (quotation) => {
+        const project = await this.quotationRepository.findProject(
+          quotation.projectId,
+        );
+        if (!project) {
+          throw new Error("待审批报价关联项目不存在");
+        }
+        return {
+          buildingArea: project.buildingArea,
+          customerName: project.customerName,
+          id: quotation.id,
+          projectId: quotation.projectId,
+          projectName: quotation.projectName,
+          salesAmount: quotation.total,
+          status: quotation.status,
+          submittedAt: quotation.submittedAt?.toISOString() ?? null,
+          versionNumber: quotation.versionNumber,
+        };
+      }),
+    );
+  }
+
+  async getVersion(
+    actor: SessionUser,
+    quotationId: string,
+  ): Promise<QuotationView> {
+    return toView(await this.authorizedVersion(actor, quotationId));
+  }
+
+  async getVersionCostMargin(
+    actor: SessionUser,
+    quotationId: string,
+  ): Promise<HalfPackageCostMargin> {
+    this.accessPolicy.assertCanViewSensitivePricing(actor);
+    return toCostMargin(await this.authorizedVersion(actor, quotationId));
+  }
+
+  async decide(
+    actor: SessionUser,
+    quotationId: string,
+    action: HalfPackageApprovalAction,
+    reason: string | null,
+  ): Promise<QuotationView> {
+    this.accessPolicy.assertCanApproveQuotation(actor);
+    const current = await this.authorizedVersion(actor, quotationId);
+    const normalizedReason = reason?.trim() || null;
+    if (
+      (action === "RETURNED" || action === "SPECIAL_APPROVED") &&
+      !normalizedReason
+    ) {
+      throw new BadRequestException("退回或特批必须填写审批意见");
+    }
+    let decided: QuotationDraft;
+    try {
+      decided = await this.quotationRepository.decide(
+        quotationId,
+        actor.id,
+        action,
+        normalizedReason,
+      );
+    } catch (error) {
+      if (error instanceof QuotationRevisionConflictError) {
+        throw new ConflictException("该报价已被审批，请刷新后重试");
+      }
+      throw error;
+    }
+    if (action === "RETURNED") {
+      await this.quotationRepository.createDraftFromVersion(decided, actor.id);
+    }
+    const auditAction =
+      action === "RETURNED"
+        ? "QUOTATION_RETURNED"
+        : action === "SPECIAL_APPROVED"
+          ? "QUOTATION_SPECIAL_APPROVED"
+          : "QUOTATION_APPROVED";
+    await this.auditRepository.append({
+      action: auditAction,
+      actorUserId: actor.id,
+      afterState: { status: decided.status },
+      beforeState: { status: current.status },
+      occurredAt: new Date(),
+      reason: normalizedReason,
+      result: "SUCCESS",
+      targetId: decided.id,
+      targetType: "HALF_PACKAGE_QUOTATION",
+    });
+    return toView(decided);
+  }
+
+  async listVersions(actor: SessionUser, projectId: string) {
+    await this.authorizedProject(actor, projectId);
+    const versions = await this.quotationRepository.listByProject(projectId);
+    return versions.map((version) => ({
+      decisionAction: version.decisionAction,
+      decisionReason: version.decisionReason,
+      id: version.id,
+      status: version.status,
+      submittedAt: version.submittedAt?.toISOString() ?? null,
+      total: version.total,
+      versionNumber: version.versionNumber,
+    }));
+  }
+
+  async cloneVersion(
+    actor: SessionUser,
+    quotationId: string,
+  ): Promise<QuotationView> {
+    const source = await this.authorizedVersion(actor, quotationId);
+    if (!["APPROVED", "SUPERSEDED", "RETURNED"].includes(source.status)) {
+      throw new ConflictException("仅可复制已审批、已替代或已退回的版本");
+    }
+    if (await this.quotationRepository.findDraft(source.projectId)) {
+      throw new ConflictException("当前项目已有报价草稿");
+    }
+    const created = await this.quotationRepository.createDraftFromVersion(
+      source,
+      actor.id,
+    );
+    await this.auditRepository.append({
+      action: "QUOTATION_VERSION_CLONED",
+      actorUserId: actor.id,
+      afterState: { version: created.versionNumber },
+      beforeState: { version: source.versionNumber },
+      occurredAt: new Date(),
+      result: "SUCCESS",
+      targetId: created.id,
+      targetType: "HALF_PACKAGE_QUOTATION",
+    });
+    return toView(created);
+  }
+
+  async compareVersions(
+    actor: SessionUser,
+    fromId: string,
+    toId: string,
+  ): Promise<{
+    differences: readonly HalfPackageVersionDifference[];
+    fromVersion: number;
+    toVersion: number;
+  }> {
+    const from = await this.authorizedVersion(actor, fromId);
+    const to = await this.authorizedVersion(actor, toId);
+    if (from.projectId !== to.projectId) {
+      throw new BadRequestException("只能对比同一项目的报价版本");
+    }
+    const differences = compareQuotationVersions(from, to);
+    await this.auditRepository.append({
+      action: "QUOTATION_VERSION_COMPARED",
+      actorUserId: actor.id,
+      metadata: { fromVersion: from.versionNumber, toVersion: to.versionNumber },
+      occurredAt: new Date(),
+      result: "SUCCESS",
+      targetId: to.id,
+      targetType: "HALF_PACKAGE_QUOTATION",
+    });
+    return {
+      differences,
+      fromVersion: from.versionNumber,
+      toVersion: to.versionNumber,
+    };
+  }
+
+  async createExport(
+    actor: SessionUser,
+    quotationId: string,
+    format: QuotationExportFormat,
+  ): Promise<QuotationExport> {
+    const quotation = await this.authorizedVersion(actor, quotationId);
+    if (quotation.status !== "APPROVED" && quotation.status !== "SUPERSEDED") {
+      throw new ConflictException("仅已审批报价可导出客户版文件");
+    }
+    const generated = await this.exporter.generate(quotation, format);
+    const created = await this.quotationRepository.createExport({
+      ...generated,
+      createdAt: new Date(),
+      createdByUserId: actor.id,
+      format,
+      id: randomUUID(),
+      quotationId: quotation.id,
+      sha256: createHash("sha256").update(generated.payload).digest("hex"),
+    });
+    await this.auditRepository.append({
+      action: "QUOTATION_EXPORTED",
+      actorUserId: actor.id,
+      metadata: { format, sha256: created.sha256 },
+      occurredAt: new Date(),
+      result: "SUCCESS",
+      targetId: created.id,
+      targetType: "HALF_PACKAGE_QUOTATION",
+    });
+    return created;
+  }
+
+  async getExport(
+    actor: SessionUser,
+    exportId: string,
+  ): Promise<QuotationExport> {
+    const result = await this.quotationRepository.findExport(exportId);
+    if (!result) {
+      throw new NotFoundException("导出文件不存在");
+    }
+    await this.authorizedVersion(actor, result.quotationId);
+    return result;
+  }
+
   private async authorizedProject(
     actor: SessionUser,
     projectId: string,
@@ -223,6 +502,35 @@ export class QuotationService {
     }
     this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
     return project;
+  }
+
+  private async submissionCheck(
+    draft: QuotationDraft,
+  ): Promise<HalfPackageSubmissionCheck> {
+    const template = await this.quotationRepository.findTemplate(
+      draft.templateVersionId,
+      draft.ruleVersionId,
+    );
+    if (!template) {
+      throw new ConflictException("报价固定引用的主材库版本不存在");
+    }
+    return submissionCheck(
+      draft,
+      template.items.length,
+      new Set(template.items.map((item) => item.sectionCode)).size,
+    );
+  }
+
+  private async authorizedVersion(
+    actor: SessionUser,
+    quotationId: string,
+  ): Promise<QuotationDraft> {
+    const quotation = await this.quotationRepository.findById(quotationId);
+    if (!quotation) {
+      throw new NotFoundException("半包报价版本不存在");
+    }
+    await this.authorizedProject(actor, quotation.projectId);
+    return quotation;
   }
 
   private async addMissingProjectScopes(
@@ -445,15 +753,23 @@ function buildDraft(
     id: randomUUID(),
     managementFee: "0.0000",
     managementRate: "0.1000",
+    parentVersionId: null,
     projectId: project.id,
     projectName: project.name,
     revision: 0,
     ruleVersionId: template.ruleVersionId,
     scopes,
     status: "DRAFT",
+    submittedAt: null,
+    submittedByUserId: null,
+    decidedAt: null,
+    decidedByUserId: null,
+    decisionAction: null,
+    decisionReason: null,
     templateVersionId: template.id,
     templateVersionNumber: template.versionNumber,
     total: "0.0000",
+    versionNumber: 1,
   };
 }
 
@@ -613,7 +929,7 @@ function sectionCodesForSpace(
     case "BATHROOM":
       return ["KITCHEN_BATHROOM"];
     case "BALCONY":
-      return ["BALCONY"];
+      return ["LIVING_DINING"];
   }
 }
 
@@ -673,8 +989,10 @@ function toView(draft: QuotationDraft): QuotationView {
       subtotal: scope.subtotal,
     })),
     status: draft.status,
+    submittedAt: draft.submittedAt?.toISOString() ?? null,
     templateVersion: draft.templateVersionNumber,
     total: draft.total,
+    versionNumber: draft.versionNumber,
   };
 }
 
@@ -724,6 +1042,82 @@ function toCostMargin(draft: QuotationDraft): HalfPackageCostMargin {
     })),
     status: draft.status,
   };
+}
+
+function submissionCheck(
+  draft: QuotationDraft,
+  templateItemCount: number,
+  templateSectionCount: number,
+): HalfPackageSubmissionCheck {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  const allLines = draft.scopes.flatMap((scope) =>
+    scope.lines.map((line) => ({ line, scopeName: scope.name })),
+  );
+  for (const { line, scopeName } of allLines) {
+    if (line.selected && line.calculatedQuantity === null) {
+      blockers.push(`${scopeName} / ${line.itemName} 缺少数量`);
+    }
+    if (line.selected && !line.remarks) {
+      warnings.push(`${scopeName} / ${line.itemName} 暂无施工说明`);
+    }
+  }
+  return {
+    blockerCount: blockers.length,
+    blockers,
+    itemCount: templateItemCount,
+    sectionCount: templateSectionCount,
+    selectedItemCount: allLines.filter(({ line }) => line.selected).length,
+    warningCount: warnings.length,
+    warnings,
+  };
+}
+
+function compareQuotationVersions(
+  from: QuotationDraft,
+  to: QuotationDraft,
+): HalfPackageVersionDifference[] {
+  const differences: HalfPackageVersionDifference[] = [];
+  const fromLines = new Map(
+    from.scopes.flatMap((scope) =>
+      scope.lines.map((line) => [
+        `${scope.projectSpaceId ?? scope.name}:${line.versionItemId}`,
+        { line, scopeName: scope.name },
+      ] as const),
+    ),
+  );
+  for (const scope of to.scopes) {
+    for (const line of scope.lines) {
+      const previous = fromLines.get(
+        `${scope.projectSpaceId ?? scope.name}:${line.versionItemId}`,
+      );
+      for (const [field, before, after] of [
+        ["SELECTED", previous ? String(previous.line.selected) : null, String(line.selected)],
+        ["QUANTITY", previous?.line.calculatedQuantity ?? null, line.calculatedQuantity],
+        ["SALE_UNIT_PRICE", previous?.line.saleUnitPrice ?? null, line.saleUnitPrice],
+      ] as const) {
+        if (before !== after) {
+          differences.push({
+            after,
+            before,
+            field,
+            itemName: line.itemName,
+            scopeName: scope.name,
+          });
+        }
+      }
+    }
+  }
+  if (from.total !== to.total) {
+    differences.push({
+      after: to.total,
+      before: from.total,
+      field: "TOTAL",
+      itemName: "报价合计",
+      scopeName: "项目",
+    });
+  }
+  return differences;
 }
 
 const electricalBuildingAreaItems = new Set([

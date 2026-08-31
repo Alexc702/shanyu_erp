@@ -45,9 +45,9 @@ export default async function CostMarginPage({ params }: CostMarginPageProps) {
 
   return (
     <AppShell active="cost-margin" user={session.user}>
-      <main className="cost-margin-page">
-        <header className="cost-margin-header">
-          <div>
+      <main className="grid gap-4 p-6">
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div className="grid gap-1">
             <nav className="quotation-breadcrumb" aria-label="面包屑">
               <Link href={`/projects/${projectId}`}>{costMargin.projectName}</Link>
               <span>/</span>
@@ -55,20 +55,24 @@ export default async function CostMarginPage({ params }: CostMarginPageProps) {
               <span>/</span>
               <strong>预计成本毛利</strong>
             </nav>
-            <h1>{costMargin.projectName} · 半包预计成本毛利</h1>
-            <p>仅何老板可见；一期均为预计口径，不与后续实际财务混用</p>
+            <h1 className="m-0 text-2xl font-bold tracking-tight">
+              {costMargin.projectName} · 半包预计成本毛利
+            </h1>
+            <p className="m-0 text-[13px] text-muted-foreground">
+              一期均为预计口径，不与后续实际财务混用
+            </p>
           </div>
-          <div className="cost-margin-actions">
-            <Badge variant="destructive">老板专属</Badge>
-            <Button asChild variant="outline">
-              <Link href={`/projects/${projectId}/quotation/cost-margin/details`}>
-                查看工程项成本明细
-              </Link>
-            </Button>
-          </div>
+          <Button asChild className="h-9 border-border" variant="outline">
+            <Link href={`/projects/${projectId}/quotation/cost-margin/details`}>
+              查看工程项成本明细
+            </Link>
+          </Button>
         </header>
 
-        <section className="cost-metric-grid" aria-label="半包预计毛利摘要">
+        <section
+          className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+          aria-label="半包预计毛利摘要"
+        >
           <CostMetric
             label="销售金额"
             note="已选有效工程项"
@@ -93,33 +97,57 @@ export default async function CostMarginPage({ params }: CostMarginPageProps) {
           />
         </section>
 
-        <Card className="cost-summary-card">
-          <Table className="cost-summary-table">
+        <Card className="overflow-hidden border-border py-0 shadow-none">
+          <Table className="min-w-[900px]">
+            <colgroup>
+              <col className="w-[260px]" />
+              <col className="w-[160px]" />
+              <col className="w-[160px]" />
+              <col className="w-[160px]" />
+              <col className="w-[120px]" />
+              <col />
+            </colgroup>
             <TableHeader>
-              <TableRow>
-                <TableHead>分区 / 空间</TableHead>
-                <TableHead className="text-right">销售金额</TableHead>
-                <TableHead className="text-right">预计成本</TableHead>
-                <TableHead className="text-right">预计毛利</TableHead>
-                <TableHead className="text-right">毛利率</TableHead>
-                <TableHead>状态</TableHead>
+              <TableRow className="border-border bg-muted/70 hover:bg-muted/70">
+                <TableHead className="h-11 px-4 text-xs">分区 / 空间</TableHead>
+                <TableHead className="h-11 px-4 text-left text-xs">销售金额</TableHead>
+                <TableHead className="h-11 px-4 text-left text-xs">预计成本</TableHead>
+                <TableHead className="h-11 px-4 text-left text-xs">预计毛利</TableHead>
+                <TableHead className="h-11 px-4 text-left text-xs">毛利率</TableHead>
+                <TableHead className="h-11 px-4 text-xs">状态</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {scopes.map((scope) => {
                 const status = marginStatus(scope.salesAmount, scope.grossProfit);
                 return (
-                  <TableRow key={scope.id}>
-                    <TableCell className="font-medium">
+                  <TableRow className="border-border" key={scope.id}>
+                    <TableCell className="h-[54px] px-4 font-medium">
                       {formatQuotationScopeName(scope.name)}
                     </TableCell>
-                    <TableCell className="text-right">¥ {formatQuotationMoney(scope.salesAmount)}</TableCell>
-                    <TableCell className="text-right">¥ {formatQuotationMoney(scope.expectedCost)}</TableCell>
-                    <TableCell className="text-right">¥ {formatQuotationMoney(scope.grossProfit)}</TableCell>
-                    <TableCell className="text-right">{formatMarginRate(scope.grossMarginRate)}</TableCell>
-                    <TableCell>
-                      <Badge variant={status === "负毛利" ? "destructive" : status === "未计价" ? "secondary" : "success"}>
-                        {status}
+                    <TableCell className="px-4 text-left">
+                      ¥ {displayMoney(scope.salesAmount)}
+                    </TableCell>
+                    <TableCell className="px-4 text-left">
+                      ¥ {displayMoney(scope.expectedCost)}
+                    </TableCell>
+                    <TableCell className="px-4 text-left font-semibold">
+                      ¥ {displayMoney(scope.grossProfit)}
+                    </TableCell>
+                    <TableCell className="px-4 text-left">
+                      {formatMarginRate(scope.grossMarginRate)}
+                    </TableCell>
+                    <TableCell className="px-4">
+                      <Badge
+                        variant={
+                          status === "负毛利"
+                            ? "destructive"
+                            : status === "未计价"
+                              ? "secondary"
+                              : "success"
+                        }
+                      >
+                        {status === "已计算" ? "正常" : status}
                       </Badge>
                     </TableCell>
                   </TableRow>
@@ -128,10 +156,6 @@ export default async function CostMarginPage({ params }: CostMarginPageProps) {
             </TableBody>
           </Table>
         </Card>
-
-        <p className="cost-security-note">
-          服务端按敏感字段权限返回预计成本、预计毛利；设计师页面、接口和当前销售报价响应均不返回这些数据。
-        </p>
       </main>
     </AppShell>
   );
@@ -149,12 +173,26 @@ function CostMetric({
   readonly value: string;
 }) {
   return (
-    <Card className="cost-metric-card">
-      <CardContent>
-        <span>{label}</span>
-        <strong className={emphasis ? `cost-${emphasis}` : undefined}>{value}</strong>
-        <small>{note}</small>
+    <Card className="border-border py-0 shadow-none">
+      <CardContent className="grid gap-3 p-4">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <strong
+          className={`text-[25px] leading-none tracking-tight ${
+            emphasis === "danger"
+              ? "text-destructive"
+              : emphasis === "success"
+                ? "text-success"
+                : ""
+          }`}
+        >
+          {value}
+        </strong>
+        <small className="text-[11px] text-muted-foreground">{note}</small>
       </CardContent>
     </Card>
   );
+}
+
+function displayMoney(value: string): string {
+  return formatQuotationMoney(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }

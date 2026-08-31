@@ -26,6 +26,7 @@ import {
 import {
   DuplicateSpaceNameError,
   PROJECTS_REPOSITORY,
+  SpaceAdjustmentLockedError,
   type ProjectsRepository,
 } from "./projects.repository";
 
@@ -106,6 +107,7 @@ export class ProjectsService {
     input: AddSpaceRequest,
   ): Promise<ProjectSpace> {
     const project = await this.get(actor, projectId);
+    await this.assertSpaceAdjustable(projectId);
     const normalized = normalizeSpace(input);
     if (
       normalized.type === "BALCONY" &&
@@ -157,6 +159,7 @@ export class ProjectsService {
     input: UpdateSpaceRequest,
   ): Promise<ProjectSpace> {
     const project = await this.get(actor, projectId);
+    await this.assertSpaceAdjustable(projectId);
     const current = project.spaces.find((space) => space.id === spaceId);
     if (!current) {
       throw new NotFoundException("空间不存在");
@@ -206,7 +209,15 @@ export class ProjectsService {
     if (project.spaces.length === 1) {
       throw new ConflictException("项目至少保留一个空间");
     }
-    await this.projectsRepository.deleteSpace(projectId, spaceId);
+    await this.assertSpaceAdjustable(projectId);
+    try {
+      await this.projectsRepository.deleteSpace(projectId, spaceId);
+    } catch (error) {
+      if (error instanceof SpaceAdjustmentLockedError) {
+        throw new ConflictException("当前报价不是草稿，暂不可调整空间");
+      }
+      throw error;
+    }
     await this.auditRepository.append({
       action: "SPACE_DELETED",
       actorUserId: actor.id,
@@ -215,6 +226,13 @@ export class ProjectsService {
       targetId: spaceId,
       targetType: "SPACE",
     });
+  }
+
+  private async assertSpaceAdjustable(projectId: string): Promise<void> {
+    const state = await this.projectsRepository.getSpaceAdjustmentState(projectId);
+    if (state === "LOCKED") {
+      throw new ConflictException("当前报价不是草稿，暂不可调整空间");
+    }
   }
 }
 

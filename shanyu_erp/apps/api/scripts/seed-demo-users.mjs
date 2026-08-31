@@ -23,6 +23,18 @@ const demoUsers = [
     id: "33333333-3333-4333-8333-333333333333",
     role: "WOODWORK_DESIGNER",
   },
+  {
+    account: "pm",
+    displayName: "项目经理（预留）",
+    id: "88888888-8888-4888-8888-888888888888",
+    role: "PROJECT_MANAGER",
+  },
+  {
+    account: "finance",
+    displayName: "财务（预留）",
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+    role: "FINANCE",
+  },
 ];
 
 const pool = new pg.Pool({
@@ -136,9 +148,53 @@ try {
       ],
     );
   }
+  const acceptanceProjectId = "99999999-9999-4999-8999-999999999999";
+  await client.query(
+    `INSERT INTO projects
+       (id, name, customer_name, address, building_area,
+        lead_designer_id, created_by_user_id)
+     VALUES ($1, '云栖名苑（V1验收）', '陈先生', '杭州市滨江区云栖名苑 8-2-602',
+             130.0000, $2, $3)
+     ON CONFLICT (id) DO UPDATE
+       SET name = EXCLUDED.name,
+           customer_name = EXCLUDED.customer_name,
+           address = EXCLUDED.address,
+           building_area = EXCLUDED.building_area,
+           lead_designer_id = EXCLUDED.lead_designer_id,
+           updated_at = current_timestamp`,
+    [acceptanceProjectId, leadId, ownerId],
+  );
+  const acceptanceSpaces = [
+    ["90000000-0000-4000-8000-000000000001", "LIVING_DINING", "客餐厅", "50.0000", "40.0000", "2.8000", false],
+    ["90000000-0000-4000-8000-000000000002", "BEDROOM", "主卧", "20.0000", "20.0000", "2.9100", false],
+    ["90000000-0000-4000-8000-000000000003", "BEDROOM", "次卧", "16.0000", "18.0000", "2.9100", false],
+    ["90000000-0000-4000-8000-000000000004", "CLOSET", "衣帽间", "8.0000", "12.0000", "2.9100", false],
+    ["90000000-0000-4000-8000-000000000005", "KITCHEN", "厨房", "8.0000", "12.0000", "2.4500", false],
+    ["90000000-0000-4000-8000-000000000006", "BATHROOM", "主卫", "5.8000", "12.0000", "2.4500", false],
+    ["90000000-0000-4000-8000-000000000007", "BATHROOM", "公卫", "4.6000", "10.0000", "2.4500", false],
+    ["90000000-0000-4000-8000-000000000008", "BALCONY", "生活阳台", "6.0000", "10.0000", "2.7000", false],
+  ];
+  for (const [id, type, displayName, area, perimeter, height, includesBalcony] of acceptanceSpaces) {
+    await client.query(
+      `INSERT INTO project_spaces
+         (id, project_id, type, display_name, area, perimeter, height,
+          includes_balcony, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (id) DO UPDATE
+         SET type = EXCLUDED.type,
+             display_name = EXCLUDED.display_name,
+             area = EXCLUDED.area,
+             perimeter = EXCLUDED.perimeter,
+             height = EXCLUDED.height,
+             includes_balcony = EXCLUDED.includes_balcony,
+             sort_order = EXCLUDED.sort_order,
+             updated_at = current_timestamp`,
+      [id, acceptanceProjectId, type, displayName, area, perimeter, height, includesBalcony, acceptanceSpaces.findIndex((item) => item[0] === id)],
+    );
+  }
   await client.query("COMMIT");
   console.log(
-    `已初始化演示账号：${demoUsers.map((user) => user.account).join(", ")}；演示项目：静悦府（演示）`,
+    `已初始化演示账号：${demoUsers.map((user) => user.account).join(", ")}；演示项目：静悦府（演示）、云栖名苑（V1验收）`,
   );
 } catch (error) {
   await client.query("ROLLBACK");

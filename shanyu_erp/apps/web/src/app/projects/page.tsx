@@ -24,12 +24,12 @@ export default async function ProjectsPage() {
       <main className="page-content">
         <section className="page-title-row">
           <div>
-            <p className="eyebrow">项目报价</p>
-            <h1>{session.user.role === "OWNER" ? "全部项目报价" : "我的项目报价"}</h1>
+            <p className="eyebrow">项目管理</p>
+            <h1>{session.user.role === "OWNER" ? "全部项目" : "我的项目"}</h1>
             <p>
               {session.user.role === "OWNER"
-                ? "查看全公司项目；报价状态与审批将在后续阶段接入。"
-                : `服务端仅返回 ${session.user.displayName} 负责或被授权的项目。`}
+                ? "查看全公司项目及其当前报价状态。"
+                : `查看并继续处理 ${session.user.displayName} 负责的项目。`}
             </p>
           </div>
           <Button asChild>

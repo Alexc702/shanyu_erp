@@ -17,9 +17,13 @@ export interface ProjectsRepository {
   create(input: NewProject): Promise<ProjectDetail>;
   list(leadDesignerId: string | null): Promise<ProjectSummary[]>;
   findById(projectId: string): Promise<ProjectDetail | null>;
+  getSpaceAdjustmentState(projectId: string): Promise<SpaceAdjustmentState>;
   addSpace(projectId: string, input: ProjectSpace): Promise<ProjectSpace>;
   updateSpace(projectId: string, input: ProjectSpace): Promise<ProjectSpace>;
   deleteSpace(projectId: string, spaceId: string): Promise<void>;
 }
 
 export class DuplicateSpaceNameError extends Error {}
+export class SpaceAdjustmentLockedError extends Error {}
+
+export type SpaceAdjustmentState = "DRAFT" | "LOCKED" | "NO_QUOTATION";

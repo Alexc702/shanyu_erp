@@ -11,8 +11,9 @@ export class PgAuditRepository implements AuditRepository {
   async append(record: AuditRecord): Promise<void> {
     await this.database.query(
       `INSERT INTO audit_events
-         (id, action, actor_user_id, occurred_at, result, target_type, target_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         (id, action, actor_user_id, occurred_at, result, target_type, target_id,
+          before_value, after_value, reason, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         randomUUID(),
         record.action,
@@ -21,6 +22,10 @@ export class PgAuditRepository implements AuditRepository {
         record.result,
         record.targetType,
         record.targetId,
+        record.beforeState ?? null,
+        record.afterState ?? null,
+        record.reason ?? null,
+        record.metadata ?? {},
       ],
     );
   }

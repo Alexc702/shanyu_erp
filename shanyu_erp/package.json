@@ -13,6 +13,7 @@
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @shanyu/web --filter @shanyu/api dev",
+    "dev:resume": "bash scripts/environment-check.sh resume",
     "dev:web": "pnpm --filter @shanyu/web dev",
     "dev:api": "pnpm --filter @shanyu/api dev",
     "build": "pnpm -r --if-present build",

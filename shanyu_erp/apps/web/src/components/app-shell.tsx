@@ -4,6 +4,7 @@ import {
   Bell,
   Database,
   FolderKanban,
+  FileClock,
   HardHat,
   LayoutDashboard,
   Search,
@@ -20,6 +21,8 @@ import { LogoutButton } from "./logout-button";
 
 interface AppShellProps {
   readonly active:
+    | "approvals"
+    | "audit"
     | "catalog"
     | "cost-margin"
     | "dashboard"
@@ -31,10 +34,12 @@ interface AppShellProps {
 }
 
 const pageTitles: Record<AppShellProps["active"], string> = {
+  approvals: "审批中心",
+  audit: "操作日志",
   catalog: "主材库",
   "cost-margin": "成本毛利",
   dashboard: "工作台",
-  projects: "项目报价",
+  projects: "项目管理",
   quotation: "半包报价",
   users: "用户与权限",
 };
@@ -72,10 +77,10 @@ export function AppShell({ active, children, user }: AppShellProps) {
               href="/projects"
               icon={<FolderKanban />}
             >
-              项目报价
+              项目管理
             </NavLink>
           ) : (
-            <DisabledNav icon={<FolderKanban />}>项目报价</DisabledNav>
+            <DisabledNav icon={<FolderKanban />}>项目管理</DisabledNav>
           )}
           {canAccessQuotation ? (
             <NavLink active={active === "catalog"} href="/catalog" icon={<Database />}>
@@ -84,13 +89,24 @@ export function AppShell({ active, children, user }: AppShellProps) {
           ) : (
             <DisabledNav icon={<Database />}>主材库</DisabledNav>
           )}
-          <DisabledNav icon={<BadgeCheck />}>审批中心</DisabledNav>
+          {user.role === "OWNER" ? (
+            <NavLink active={active === "approvals"} href="/approvals" icon={<BadgeCheck />}>
+              审批中心
+            </NavLink>
+          ) : (
+            <DisabledNav icon={<BadgeCheck />}>审批中心</DisabledNav>
+          )}
 
           <p className="nav-section-label">长期规划</p>
           <DisabledNav future icon={<HardHat />}>施工项目</DisabledNav>
           <DisabledNav future icon={<WalletCards />}>财务中心</DisabledNav>
 
           <span className="nav-spacer" />
+          {user.role === "OWNER" ? (
+            <NavLink active={active === "audit"} href="/audit" icon={<FileClock />}>
+              操作日志
+            </NavLink>
+          ) : null}
           {workbench.canManageUsers ? (
             <NavLink active={active === "users"} href="/users" icon={<UsersRound />}>
               用户与权限

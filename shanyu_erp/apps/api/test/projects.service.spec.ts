@@ -214,10 +214,65 @@ describe("ProjectsService", () => {
       service.deleteSpace(owner, project.id, firstSpace.id),
     ).rejects.toBeInstanceOf(ConflictException);
   });
+
+  it("only adjusts spaces while the current quotation is a draft", async () => {
+    const project = await service.create(owner, {
+      address: "地址",
+      buildingArea: "100",
+      customerName: "客户",
+      leadDesignerId: lead.id,
+      name: "项目",
+      spaces: [space("主卧", "BEDROOM"), space("次卧", "BEDROOM")],
+    });
+    repository.spaceAdjustmentState = "LOCKED";
+
+    await expect(
+      service.addSpace(owner, project.id, {
+        ...space("书房", "BEDROOM"),
+        confirmStandaloneBalcony: false,
+      }),
+    ).rejects.toThrow("当前报价不是草稿，暂不可调整空间");
+    await expect(
+      service.updateSpace(
+        owner,
+        project.id,
+        project.spaces[0]!.id,
+        space("长辈房", "BEDROOM"),
+      ),
+    ).rejects.toThrow("当前报价不是草稿，暂不可调整空间");
+    await expect(
+      service.deleteSpace(owner, project.id, project.spaces[1]!.id),
+    ).rejects.toThrow("当前报价不是草稿，暂不可调整空间");
+    expect(audits.filter((audit) => audit.targetType === "SPACE")).toHaveLength(0);
+  });
+
+  it("deletes a draft space and records the audit event", async () => {
+    const project = await service.create(owner, {
+      address: "地址",
+      buildingArea: "100",
+      customerName: "客户",
+      leadDesignerId: lead.id,
+      name: "项目",
+      spaces: [space("主卧", "BEDROOM"), space("次卧", "BEDROOM")],
+    });
+    const deletedSpace = project.spaces[1]!;
+
+    await service.deleteSpace(lead, project.id, deletedSpace.id);
+
+    expect((await repository.findById(project.id))?.spaces).toHaveLength(1);
+    expect(audits.at(-1)).toMatchObject({
+      action: "SPACE_DELETED",
+      actorUserId: lead.id,
+      result: "SUCCESS",
+      targetId: deletedSpace.id,
+      targetType: "SPACE",
+    });
+  });
 });
 
 class InMemoryProjectsRepository implements ProjectsRepository {
   private readonly projects: ProjectDetail[] = [];
+  spaceAdjustmentState: "DRAFT" | "LOCKED" | "NO_QUOTATION" = "DRAFT";
 
   async findLeadDesigner(userId: string): Promise<SessionUser | null> {
     return userId === lead.id ? lead : null;
@@ -243,6 +298,10 @@ class InMemoryProjectsRepository implements ProjectsRepository {
 
   async list(): Promise<ProjectSummary[]> {
     return this.projects;
+  }
+
+  async getSpaceAdjustmentState() {
+    return this.spaceAdjustmentState;
   }
 
   async addSpace(

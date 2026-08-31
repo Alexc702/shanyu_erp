@@ -5,13 +5,15 @@
 最后给出完整汇总。只要出现一项 `FAIL`，脚本退出码就是 `1`，
 因此可以直接接入 CI、cron 或 systemd timer。
 
-脚本不会打印 `.env` 中的值，也不会自动重启、停止或删除 Docker
-容器。本地完整自检会临时启动已构建的 Web/API，探活后立即清理。
+脚本不会打印 `.env` 中的值。常规自检不会自动重启、停止或删除
+Docker 容器；一键恢复模式会执行 `docker compose up`，但不会删除容器或
+数据卷。本地完整自检会临时启动已构建的 Web/API，探活后立即清理。
 
 ## 命令速查
 
 | 场景      | 命令                                         | 使用时机               |
 | ------- | ------------------------------------------ | ------------------ |
+| 开发环境一键恢复 | `pnpm dev:resume`                         | 重启电脑并启动 Docker Desktop 后 |
 | 本地完整自检  | `pnpm check:env`                           | 提交前；先停止 `pnpm dev` |
 | 本地运行态自检 | `pnpm check:env:runtime`                   | `pnpm dev` 正在运行时   |
 | 生产服务器自检 | `bash scripts/environment-check.sh server` | Ubuntu Linux 虚拟机内  |
@@ -26,6 +28,26 @@
 模式会因为不执行质量门禁而出现一项预期中的 `SKIP`。
 
 ## 本地环境
+
+### 重启后一键恢复
+
+完成首次准备后，电脑重启不需要重新安装依赖或创建 `.env`。先启动
+Docker Desktop，再在仓库根目录执行：
+
+```bash
+pnpm dev:resume
+```
+
+该模式会自动：
+
+1. 将本机 Volta 工具链加入脚本的 `PATH`。
+2. 启动 PostgreSQL 和 MinIO，最多等待 90 秒直到容器健康。
+3. 执行可重复的本地数据库迁移，不执行 seed。
+4. 执行完整本地自检。
+5. 仅在汇总为 `FAIL=0 SKIP=0` 时启动 `pnpm dev`。
+
+命令会继续占用当前终端以显示 Web/API 日志。按 `Ctrl+C` 停止
+Web/API；PostgreSQL 和 MinIO 会继续运行，便于下次开发。
 
 ### 首次准备
 

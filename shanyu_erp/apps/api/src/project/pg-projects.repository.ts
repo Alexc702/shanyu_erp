@@ -8,11 +8,16 @@ import type {
   UserRole,
 } from "@shanyu/contracts";
 
-import { DatabaseClient } from "../database/database.client";
+import {
+  DatabaseClient,
+  type DatabaseExecutor,
+} from "../database/database.client";
 import {
   DuplicateSpaceNameError,
+  SpaceAdjustmentLockedError,
   type NewProject,
   type ProjectsRepository,
+  type SpaceAdjustmentState,
 } from "./projects.repository";
 
 interface ProjectRow {
@@ -144,7 +149,7 @@ export class PgProjectsRepository implements ProjectsRepository {
       `SELECT id, type, display_name, area, perimeter, height,
               includes_balcony, sort_order
          FROM project_spaces
-        WHERE project_id = $1
+        WHERE project_id = $1 AND deleted_at IS NULL
         ORDER BY sort_order, id`,
       [projectId],
     );
@@ -152,6 +157,25 @@ export class PgProjectsRepository implements ProjectsRepository {
       ...toProjectSummary(row),
       spaces: spacesResult.rows.map(toProjectSpace),
     };
+  }
+
+  async getSpaceAdjustmentState(
+    projectId: string,
+  ): Promise<SpaceAdjustmentState> {
+    const result = await this.database.query<{ status: string }>(
+      `SELECT status
+         FROM half_package_quotations
+        WHERE project_id = $1
+        ORDER BY (status = 'DRAFT') DESC, version_number DESC
+        LIMIT 1`,
+      [projectId],
+    );
+    const status = result.rows[0]?.status;
+    return status === undefined
+      ? "NO_QUOTATION"
+      : status === "DRAFT"
+        ? "DRAFT"
+        : "LOCKED";
   }
 
   async addSpace(
@@ -196,26 +220,41 @@ export class PgProjectsRepository implements ProjectsRepository {
     input: ProjectSpace,
   ): Promise<ProjectSpace> {
     try {
-      const result = await this.database.query<SpaceRow>(
-        `UPDATE project_spaces
-            SET type = $3, display_name = $4, area = $5, perimeter = $6,
-                height = $7, includes_balcony = $8,
-                updated_at = current_timestamp
-          WHERE project_id = $1 AND id = $2
-          RETURNING id, type, display_name, area, perimeter, height,
-                    includes_balcony, sort_order`,
-        [
-          projectId,
-          input.id,
-          input.type,
-          input.displayName,
-          input.area,
-          input.perimeter,
-          input.height,
-          input.includesBalcony,
-        ],
-      );
-      const row = result.rows[0];
+      const row = await this.database.transaction(async (database) => {
+        const result = await database.query<SpaceRow>(
+          `UPDATE project_spaces
+              SET type = $3, display_name = $4, area = $5, perimeter = $6,
+                  height = $7, includes_balcony = $8,
+                  updated_at = current_timestamp
+            WHERE project_id = $1 AND id = $2
+              AND deleted_at IS NULL
+            RETURNING id, type, display_name, area, perimeter, height,
+                      includes_balcony, sort_order`,
+          [
+            projectId,
+            input.id,
+            input.type,
+            input.displayName,
+            input.area,
+            input.perimeter,
+            input.height,
+            input.includesBalcony,
+          ],
+        );
+        const updated = result.rows[0];
+        if (!updated) return undefined;
+        await database.query(
+          `UPDATE half_package_quotation_spaces qs
+              SET name = $3
+             FROM half_package_quotations q
+            WHERE q.id = qs.quotation_id
+              AND q.project_id = $1
+              AND q.status = 'DRAFT'
+              AND qs.project_space_id = $2`,
+          [projectId, input.id, input.displayName],
+        );
+        return updated;
+      });
       if (!row) {
         throw new Error("更新空间后未返回结果");
       }
@@ -229,23 +268,114 @@ export class PgProjectsRepository implements ProjectsRepository {
   }
 
   async deleteSpace(projectId: string, spaceId: string): Promise<void> {
-    await this.database.query(
-      "DELETE FROM project_spaces WHERE project_id = $1 AND id = $2",
-      [projectId, spaceId],
-    );
-    await this.database.query(
-      `WITH ordered AS (
-         SELECT id, row_number() OVER (ORDER BY sort_order, id) - 1 AS new_order
-           FROM project_spaces
+    await this.database.transaction(async (database) => {
+      const quotationResult = await database.query<{
+        id: string;
+        status: string;
+      }>(
+        `SELECT id, status
+           FROM half_package_quotations
           WHERE project_id = $1
-       )
-       UPDATE project_spaces ps
-          SET sort_order = ordered.new_order
-         FROM ordered
-        WHERE ps.id = ordered.id`,
-      [projectId],
-    );
+          ORDER BY (status = 'DRAFT') DESC, version_number DESC
+          LIMIT 1
+          FOR UPDATE`,
+        [projectId],
+      );
+      const quotation = quotationResult.rows[0];
+      if (quotation && quotation.status !== "DRAFT") {
+        throw new SpaceAdjustmentLockedError();
+      }
+
+      await database.query(
+        `UPDATE project_spaces
+            SET deleted_at = current_timestamp,
+                updated_at = current_timestamp
+          WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [projectId, spaceId],
+      );
+
+      if (quotation) {
+        await database.query(
+          `DELETE FROM half_package_quotation_spaces
+            WHERE quotation_id = $1 AND project_space_id = $2`,
+          [quotation.id, spaceId],
+        );
+        await reorderQuotationScopes(database, quotation.id);
+        await database.query(
+          `WITH totals AS (
+             SELECT coalesce(sum(subtotal), 0)::numeric(16,4) AS direct_cost,
+                    coalesce(sum(expected_cost), 0)::numeric(16,4) AS expected_cost
+               FROM half_package_quotation_spaces
+              WHERE quotation_id = $1
+           )
+           UPDATE half_package_quotations q
+              SET direct_cost = totals.direct_cost,
+                  expected_cost = totals.expected_cost,
+                  gross_profit = round(totals.direct_cost - totals.expected_cost, 4),
+                  gross_margin_rate = CASE
+                    WHEN totals.direct_cost = 0 THEN NULL
+                    ELSE round(
+                      (totals.direct_cost - totals.expected_cost) / totals.direct_cost,
+                      4
+                    )
+                  END,
+                  management_fee = round(totals.direct_cost * q.management_rate, 4),
+                  total = round(
+                    totals.direct_cost + round(totals.direct_cost * q.management_rate, 4),
+                    4
+                  ),
+                  revision = revision + 1,
+                  updated_at = current_timestamp
+             FROM totals
+            WHERE q.id = $1 AND q.status = 'DRAFT'`,
+          [quotation.id],
+        );
+      }
+
+      await database.query(
+        `UPDATE project_spaces
+            SET sort_order = sort_order + 10000
+          WHERE project_id = $1 AND deleted_at IS NULL`,
+        [projectId],
+      );
+      await database.query(
+        `WITH ordered AS (
+           SELECT id, row_number() OVER (ORDER BY sort_order, id) - 1 AS new_order
+             FROM project_spaces
+            WHERE project_id = $1 AND deleted_at IS NULL
+         )
+         UPDATE project_spaces ps
+            SET sort_order = ordered.new_order
+           FROM ordered
+          WHERE ps.id = ordered.id`,
+        [projectId],
+      );
+    });
   }
+}
+
+async function reorderQuotationScopes(
+  database: DatabaseExecutor,
+  quotationId: string,
+): Promise<void> {
+  await database.query(
+    `UPDATE half_package_quotation_spaces
+        SET sort_order = sort_order + 10000
+      WHERE quotation_id = $1`,
+    [quotationId],
+  );
+  await database.query(
+    `WITH ordered AS (
+       SELECT id, row_number() OVER (ORDER BY sort_order, id) - 1 AS new_order
+         FROM half_package_quotation_spaces
+        WHERE quotation_id = $1
+     )
+     UPDATE half_package_quotation_spaces qs
+        SET sort_order = ordered.new_order
+       FROM ordered
+      WHERE qs.id = ordered.id`,
+    [quotationId],
+  );
 }
 
 const projectSelect = `SELECT p.id, p.name, p.customer_name, p.address,

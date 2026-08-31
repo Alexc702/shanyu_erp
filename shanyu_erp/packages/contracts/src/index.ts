@@ -210,10 +210,22 @@ export interface HalfPackageQuotation {
   readonly projectName: string;
   readonly revision: number;
   readonly scopes: readonly HalfPackageQuotationScope[];
-  readonly status: "DRAFT";
+  readonly status: HalfPackageQuotationStatus;
+  readonly submittedAt: string | null;
   readonly templateVersion: number;
   readonly total: string;
+  readonly versionNumber: number;
 }
+
+export type HalfPackageQuotationStatus =
+  | "DRAFT"
+  | "PENDING_PRICING"
+  | "PENDING_SUPPLEMENT"
+  | "PENDING_APPROVAL"
+  | "RETURNED"
+  | "APPROVED"
+  | "SUPERSEDED"
+  | "VOID";
 
 export interface HalfPackageQuotationResponse {
   readonly quotation: HalfPackageQuotation;
@@ -223,6 +235,115 @@ export interface UpdateHalfPackageQuotationLineRequest {
   readonly expectedRevision: number;
   readonly quantity: string | null;
   readonly selected: boolean;
+}
+
+export interface SubmitHalfPackageQuotationRequest {
+  readonly expectedRevision: number;
+}
+
+export interface HalfPackageSubmissionCheck {
+  readonly blockerCount: number;
+  readonly blockers: readonly string[];
+  readonly itemCount: number;
+  readonly sectionCount: number;
+  readonly selectedItemCount: number;
+  readonly warningCount: number;
+  readonly warnings: readonly string[];
+}
+
+export interface HalfPackageSubmissionCheckResponse {
+  readonly check: HalfPackageSubmissionCheck;
+}
+
+export type HalfPackageApprovalAction =
+  | "APPROVED"
+  | "SPECIAL_APPROVED"
+  | "RETURNED";
+
+export interface DecideHalfPackageQuotationRequest {
+  readonly action: HalfPackageApprovalAction;
+  readonly reason: string | null;
+}
+
+export interface HalfPackageApprovalSummary {
+  readonly buildingArea: string;
+  readonly customerName: string;
+  readonly id: string;
+  readonly projectId: string;
+  readonly projectName: string;
+  readonly salesAmount: string;
+  readonly status: HalfPackageQuotationStatus;
+  readonly submittedAt: string | null;
+  readonly versionNumber: number;
+}
+
+export interface HalfPackageApprovalListResponse {
+  readonly quotations: readonly HalfPackageApprovalSummary[];
+}
+
+export interface HalfPackageQuotationVersionSummary {
+  readonly decisionAction: HalfPackageApprovalAction | null;
+  readonly decisionReason: string | null;
+  readonly id: string;
+  readonly status: HalfPackageQuotationStatus;
+  readonly submittedAt: string | null;
+  readonly total: string;
+  readonly versionNumber: number;
+}
+
+export interface HalfPackageQuotationVersionsResponse {
+  readonly versions: readonly HalfPackageQuotationVersionSummary[];
+}
+
+export interface HalfPackageVersionDifference {
+  readonly after: string | null;
+  readonly before: string | null;
+  readonly field: "QUANTITY" | "SALE_UNIT_PRICE" | "SELECTED" | "TOTAL";
+  readonly itemName: string;
+  readonly scopeName: string;
+}
+
+export interface HalfPackageVersionCompareResponse {
+  readonly differences: readonly HalfPackageVersionDifference[];
+  readonly fromVersion: number;
+  readonly toVersion: number;
+}
+
+export type HalfPackageExportFormat = "PDF" | "XLSX";
+
+export interface CreateHalfPackageExportRequest {
+  readonly format: HalfPackageExportFormat;
+}
+
+export interface HalfPackageExportRecord {
+  readonly downloadPath: string;
+  readonly fileName: string;
+  readonly format: HalfPackageExportFormat;
+  readonly id: string;
+  readonly sha256: string;
+}
+
+export interface HalfPackageExportResponse {
+  readonly export: HalfPackageExportRecord;
+}
+
+export interface AuditEventView {
+  readonly action: string;
+  readonly actorDisplayName: string | null;
+  readonly actorUserId: string | null;
+  readonly afterValue: Readonly<Record<string, unknown>> | null;
+  readonly beforeValue: Readonly<Record<string, unknown>> | null;
+  readonly id: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly occurredAt: string;
+  readonly reason: string | null;
+  readonly result: "SUCCESS" | "FAILURE";
+  readonly targetId: string | null;
+  readonly targetType: string;
+}
+
+export interface AuditEventListResponse {
+  readonly events: readonly AuditEventView[];
 }
 
 export interface HalfPackageCostMarginLine {
@@ -262,7 +383,7 @@ export interface HalfPackageCostMargin {
   readonly projectName: string;
   readonly salesAmount: string;
   readonly scopes: readonly HalfPackageCostMarginScope[];
-  readonly status: "DRAFT";
+  readonly status: HalfPackageQuotationStatus;
 }
 
 export interface HalfPackageCostMarginResponse {

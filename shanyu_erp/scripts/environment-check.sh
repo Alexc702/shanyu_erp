@@ -7,6 +7,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="${1:-local}"
 EXPECTED_NODE_VERSION="v24.20.0"
 EXPECTED_PNPM_VERSION="10.29.2"
+START_DEV_AFTER_CHECK=0
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -16,20 +17,51 @@ RESULT_STATUSES=()
 RESULT_LABELS=()
 API_PID=""
 WEB_PID=""
+API_LAUNCHER_PID=""
+WEB_LAUNCHER_PID=""
 
 RUN_LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/shanyu-env-check.XXXXXX")" || {
   echo "Unable to create the self-check log directory." >&2
   exit 1
 }
 
+terminate_process() {
+  local pid="$1"
+  local attempts=0
+
+  case "$pid" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  kill -0 "$pid" 2>/dev/null || return 0
+  kill "$pid" 2>/dev/null || return 1
+
+  while kill -0 "$pid" 2>/dev/null && [ "$attempts" -lt 20 ]; do
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || return 1
+  fi
+  wait "$pid" 2>/dev/null || true
+  ! kill -0 "$pid" 2>/dev/null
+}
+
 cleanup() {
   local pid
+  local pid_file
 
-  for pid in "$WEB_PID" "$API_PID"; do
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
+  for pid_file in \
+    "$RUN_LOG_DIR/web.pid" \
+    "$RUN_LOG_DIR/api.pid" \
+    "$RUN_LOG_DIR/web-launcher.pid" \
+    "$RUN_LOG_DIR/api-launcher.pid"; do
+    if [ -f "$pid_file" ]; then
+      pid="$(<"$pid_file")"
+      terminate_process "$pid" || true
     fi
+  done
+  for pid in "$WEB_PID" "$API_PID" "$WEB_LAUNCHER_PID" "$API_LAUNCHER_PID"; do
+    terminate_process "$pid" || true
   done
 
   case "$RUN_LOG_DIR" in
@@ -91,6 +123,17 @@ skip_check() {
 
   printf '\n[SKIP] %s -- %s\n' "$label" "$reason"
   record_result SKIP "$label"
+}
+
+activate_local_toolchain() {
+  local volta_dir="${VOLTA_HOME:-${HOME:-}/.volta}"
+
+  if [ -x "$volta_dir/bin/volta" ]; then
+    export VOLTA_HOME="$volta_dir"
+    export PATH="$VOLTA_HOME/bin:$PATH"
+    hash -r
+    echo "Using the local Volta toolchain from $VOLTA_HOME."
+  fi
 }
 
 check_repo_root() {
@@ -233,6 +276,10 @@ check_minio() {
   echo "MinIO live endpoint returned HTTP 2xx."
 }
 
+start_local_infrastructure() {
+  docker compose up -d --wait --wait-timeout 90
+}
+
 check_ports_free() {
   local port
   local busy=0
@@ -271,30 +318,47 @@ wait_for_url() {
   return 1
 }
 
+listening_pid() {
+  local port="$1"
+
+  lsof -nP -t -iTCP:"$port" -sTCP:LISTEN | sed -n '1p'
+}
+
 start_local_apps() {
   local api_log="$RUN_LOG_DIR/api-runtime.log"
   local web_log="$RUN_LOG_DIR/web-runtime.log"
 
   PORT=3001 WEB_ORIGIN=http://localhost:3000 \
     node "$ROOT_DIR/apps/api/dist/main.js" >"$api_log" 2>&1 &
-  API_PID=$!
+  API_LAUNCHER_PID=$!
+  printf '%s\n' "$API_LAUNCHER_PID" >"$RUN_LOG_DIR/api-launcher.pid"
 
   (
     cd "$ROOT_DIR/apps/web" || exit 1
     exec ./node_modules/.bin/next start -H 127.0.0.1 -p 3000
   ) >"$web_log" 2>&1 &
-  WEB_PID=$!
+  WEB_LAUNCHER_PID=$!
+  printf '%s\n' "$WEB_LAUNCHER_PID" >"$RUN_LOG_DIR/web-launcher.pid"
 
-  if ! wait_for_url http://127.0.0.1:3001/health "$API_PID"; then
+  if ! wait_for_url http://127.0.0.1:3001/health "$API_LAUNCHER_PID"; then
     echo "API did not become ready."
     sed 's/^/API: /' "$api_log"
     return 1
   fi
-  if ! wait_for_url http://127.0.0.1:3000 "$WEB_PID"; then
+  if ! wait_for_url http://127.0.0.1:3000 "$WEB_LAUNCHER_PID"; then
     echo "Web did not become ready."
     sed 's/^/WEB: /' "$web_log"
     return 1
   fi
+
+  API_PID="$(listening_pid 3001)" || return 1
+  WEB_PID="$(listening_pid 3000)" || return 1
+  [ -n "$API_PID" ] && [ -n "$WEB_PID" ] || {
+    echo "Unable to identify the temporary listening processes."
+    return 1
+  }
+  printf '%s\n' "$API_PID" >"$RUN_LOG_DIR/api.pid"
+  printf '%s\n' "$WEB_PID" >"$RUN_LOG_DIR/web.pid"
 
   echo "Temporary API and Web processes are ready on ports 3001 and 3000."
 }
@@ -320,15 +384,24 @@ check_web_health() {
 
 stop_local_apps() {
   local pid
+  local pid_file
 
-  for pid in "$WEB_PID" "$API_PID"; do
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || return 1
-      wait "$pid" 2>/dev/null || true
+  for pid_file in \
+    "$RUN_LOG_DIR/web.pid" \
+    "$RUN_LOG_DIR/api.pid" \
+    "$RUN_LOG_DIR/web-launcher.pid" \
+    "$RUN_LOG_DIR/api-launcher.pid"; do
+    if [ -f "$pid_file" ]; then
+      pid="$(<"$pid_file")"
+      terminate_process "$pid" || return 1
+      rm -f -- "$pid_file"
     fi
   done
   WEB_PID=""
   API_PID=""
+  WEB_LAUNCHER_PID=""
+  API_LAUNCHER_PID=""
+  check_ports_free || return 1
   echo "Temporary API and Web processes stopped."
 }
 
@@ -642,6 +715,22 @@ run_local_full() {
   fi
 }
 
+run_local_resume() {
+  local infra_started=0
+
+  if run_check "Start local PostgreSQL and MinIO" start_local_infrastructure; then
+    infra_started=1
+  fi
+
+  if [ "$infra_started" -eq 1 ]; then
+    run_check "Apply local database migrations" pnpm db:migrate || true
+  else
+    skip_check "Apply local database migrations" "local infrastructure did not start"
+  fi
+
+  run_local_full
+}
+
 run_local_runtime() {
   run_common_local_checks
   run_check "Running API /health endpoint" check_api_health || true
@@ -703,6 +792,15 @@ run_server() {
 cd "$ROOT_DIR" || exit 1
 
 case "$PROFILE" in
+  local|local-runtime|resume) activate_local_toolchain ;;
+esac
+
+case "$PROFILE" in
+  resume)
+    echo "Shanyu ERP environment self-check: resume local development"
+    run_local_resume
+    START_DEV_AFTER_CHECK=1
+    ;;
   local)
     echo "Shanyu ERP environment self-check: local full profile"
     run_local_full
@@ -716,7 +814,7 @@ case "$PROFILE" in
     run_server
     ;;
   *)
-    echo "Usage: bash scripts/environment-check.sh [local|local-runtime|server]" >&2
+    echo "Usage: bash scripts/environment-check.sh [resume|local|local-runtime|server]" >&2
     exit 2
     ;;
 esac
@@ -726,4 +824,12 @@ print_summary
 if [ "$FAIL_COUNT" -gt 0 ]; then
   exit 1
 fi
+
+if [ "$START_DEV_AFTER_CHECK" -eq 1 ]; then
+  printf '\nEnvironment is ready. Starting pnpm dev; press Ctrl+C to stop Web and API.\n\n'
+  cleanup
+  trap - EXIT INT TERM
+  exec pnpm dev
+fi
+
 exit 0
