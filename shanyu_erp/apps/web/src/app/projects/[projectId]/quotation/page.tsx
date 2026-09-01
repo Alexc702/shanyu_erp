@@ -6,6 +6,7 @@ import {
   fetchHalfPackageQuotation,
   fetchSession,
 } from "@/lib/api-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { QuotationEditor } from "./quotation-editor";
 
@@ -19,7 +20,8 @@ export default async function QuotationPage({ params }: QuotationPageProps) {
   if (!session) {
     redirect("/login");
   }
-  if (session.user.role !== "OWNER" && session.user.role !== "LEAD_DESIGNER") {
+  const hasOwnerAccess = hasOwnerPermissions(session.user.role);
+  if (!hasOwnerAccess && session.user.role !== "LEAD_DESIGNER") {
     notFound();
   }
   const { projectId } = await params;
@@ -31,7 +33,7 @@ export default async function QuotationPage({ params }: QuotationPageProps) {
   return (
     <AppShell active="quotation" user={session.user}>
       <QuotationEditor
-        canViewCosts={session.user.role === "OWNER"}
+        canViewCosts={hasOwnerAccess}
         initialQuotation={quotation}
       />
     </AppShell>

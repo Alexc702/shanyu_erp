@@ -35,6 +35,7 @@ import {
 } from "@/lib/api-client";
 import { apiUrl } from "@/lib/api-url";
 import { formatQuotationMoney } from "@/lib/quotation-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 import { serverApiUrl } from "@/lib/server-api-url";
 
 import { SpaceManager } from "./space-manager";
@@ -53,7 +54,10 @@ export default async function ProjectPage({
   const cookieHeader = (await cookies()).toString();
   const session = await fetchSession(cookieHeader);
   if (!session) redirect("/login");
-  if (session.user.role !== "OWNER" && session.user.role !== "LEAD_DESIGNER") {
+  if (
+    !hasOwnerPermissions(session.user.role) &&
+    session.user.role !== "LEAD_DESIGNER"
+  ) {
     redirect("/");
   }
 

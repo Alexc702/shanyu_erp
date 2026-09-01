@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { fetchSession, fetchUsers } from "@/lib/api-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { CreateProjectForm } from "./create-project-form";
 
@@ -13,10 +14,11 @@ export default async function NewProjectPage() {
   if (!session) {
     redirect("/login");
   }
-  if (session.user.role !== "OWNER" && session.user.role !== "LEAD_DESIGNER") {
+  const hasOwnerAccess = hasOwnerPermissions(session.user.role);
+  if (!hasOwnerAccess && session.user.role !== "LEAD_DESIGNER") {
     redirect("/");
   }
-  const users = session.user.role === "OWNER" ? await fetchUsers(cookieHeader) : [];
+  const users = hasOwnerAccess ? await fetchUsers(cookieHeader) : [];
   const leadDesigners = (users ?? []).filter((user) => user.role === "LEAD_DESIGNER");
 
   return (

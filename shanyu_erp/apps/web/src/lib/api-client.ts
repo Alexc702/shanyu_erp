@@ -240,3 +240,17 @@ export async function fetchAuditEvents(
   if (!response.ok) throw new Error(`Audit request failed with status ${response.status}`);
   return ((await response.json()) as AuditEventListResponse).events;
 }
+
+export async function fetchUserAuditEvents(
+  cookieHeader: string,
+): Promise<readonly AuditEventView[] | null> {
+  const response = await fetch(`${apiUrl}/users/audit-events`, {
+    cache: "no-store",
+    headers: { cookie: cookieHeader },
+  });
+  if (response.status === 401 || response.status === 403) return null;
+  if (!response.ok) {
+    throw new Error(`User audit request failed with status ${response.status}`);
+  }
+  return ((await response.json()) as AuditEventListResponse).events;
+}

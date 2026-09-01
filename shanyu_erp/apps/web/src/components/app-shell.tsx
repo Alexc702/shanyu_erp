@@ -16,6 +16,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { getWorkbench } from "@/lib/workbench";
+import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { LogoutButton } from "./logout-button";
 
@@ -46,7 +47,8 @@ const pageTitles: Record<AppShellProps["active"], string> = {
 
 export function AppShell({ active, children, user }: AppShellProps) {
   const workbench = getWorkbench(user.role);
-  const canAccessQuotation = user.role === "OWNER" || user.role === "LEAD_DESIGNER";
+  const hasOwnerAccess = hasOwnerPermissions(user.role);
+  const canAccessQuotation = hasOwnerAccess || user.role === "LEAD_DESIGNER";
 
   return (
     <div className="app-frame">
@@ -89,7 +91,7 @@ export function AppShell({ active, children, user }: AppShellProps) {
           ) : (
             <DisabledNav icon={<Database />}>主材库</DisabledNav>
           )}
-          {user.role === "OWNER" ? (
+          {hasOwnerAccess ? (
             <NavLink active={active === "approvals"} href="/approvals" icon={<BadgeCheck />}>
               审批中心
             </NavLink>
@@ -102,7 +104,7 @@ export function AppShell({ active, children, user }: AppShellProps) {
           <DisabledNav future icon={<WalletCards />}>财务中心</DisabledNav>
 
           <span className="nav-spacer" />
-          {user.role === "OWNER" ? (
+          {user.role === "ADMIN" ? (
             <NavLink active={active === "audit"} href="/audit" icon={<FileClock />}>
               操作日志
             </NavLink>

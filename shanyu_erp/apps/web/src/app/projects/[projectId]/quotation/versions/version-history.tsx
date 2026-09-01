@@ -40,6 +40,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { apiUrl } from "@/lib/api-url";
+import { hasOwnerPermissions } from "@/lib/permissions";
 import {
   compareQuotationVersions,
   createQuotationExport,
@@ -413,7 +414,7 @@ export function VersionHistory({
                   暂无可显示的项目日志
                 </p>
               )}
-              {user.role === "OWNER" ? (
+              {user.role === "ADMIN" ? (
                 <Button asChild className="w-full border-border" size="sm" variant="outline">
                   <Link href="/audit">
                     <ScrollText />
@@ -474,12 +475,12 @@ function CurrentVersionCard({
             <Link href={`/projects/${projectId}/quotation`}>继续编辑当前草稿</Link>
           </Button>
         ) : null}
-        {version.status === "PENDING_APPROVAL" && user.role === "OWNER" ? (
+        {version.status === "PENDING_APPROVAL" && hasOwnerPermissions(user.role) ? (
           <Button asChild className="w-full">
             <Link href={`/approvals/${version.id}`}>处理待审批版本</Link>
           </Button>
         ) : null}
-        {isApproved(version.status) && user.role === "OWNER" ? (
+        {isApproved(version.status) && hasOwnerPermissions(user.role) ? (
           <>
             <Button className="w-full" disabled variant="destructive">
               <ShieldAlert />

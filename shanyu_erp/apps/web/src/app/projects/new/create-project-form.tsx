@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiUrl } from "@/lib/api-url";
+import { hasOwnerPermissions } from "@/lib/permissions";
 import { createSpaceDraftKey } from "@/lib/space-draft-key";
 
 interface CreateProjectFormProps {
@@ -147,7 +148,7 @@ export function CreateProjectForm({
           <label>项目名称<input name="name" required /></label>
           <label>客户<input name="customerName" required /></label>
           <label>建筑面积（㎡）<input inputMode="decimal" name="buildingArea" required /></label>
-          {currentUser.role === "OWNER" ? (
+          {hasOwnerPermissions(currentUser.role) ? (
             <label>主案设计师
               <select name="leadDesignerId" required defaultValue="">
                 <option disabled value="">请选择</option>

@@ -7,6 +7,11 @@ export interface WorkbenchDefinition {
 }
 
 const workbenches: Record<UserRole, WorkbenchDefinition> = {
+  ADMIN: {
+    canManageUsers: true,
+    description: "管理全部账号、权限与系统数据。",
+    roleLabel: "管理员",
+  },
   FINANCE: {
     canManageUsers: false,
     description: "财务角色已预留，财务功能不在当前交付范围。",

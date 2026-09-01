@@ -129,7 +129,7 @@ export class CatalogService {
     if (!catalog) {
       throw new NotFoundException("当前没有已发布的半包工程项版本");
     }
-    if (actor.role === "OWNER") {
+    if (actor.role === "ADMIN" || actor.role === "OWNER") {
       return catalog;
     }
     return {

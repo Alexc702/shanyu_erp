@@ -8,33 +8,39 @@ import type { SessionUser } from "@shanyu/contracts";
 @Injectable()
 export class AccessPolicy {
   assertCanManageUsers(user: SessionUser): void {
-    this.assertOwner(user);
+    this.assertAdministratorOrOwner(user);
   }
 
   assertCanManageCatalog(user: SessionUser): void {
-    this.assertOwner(user);
+    this.assertAdministratorOrOwner(user);
   }
 
   assertCanReadCatalog(user: SessionUser): void {
-    if (user.role !== "OWNER" && user.role !== "LEAD_DESIGNER") {
+    if (
+      user.role !== "ADMIN" &&
+      user.role !== "OWNER" &&
+      user.role !== "LEAD_DESIGNER"
+    ) {
       throw new ForbiddenException("无权访问主材库");
     }
   }
 
   assertCanViewSensitivePricing(user: SessionUser): void {
-    this.assertOwner(user);
+    this.assertAdministratorOrOwner(user);
   }
 
   assertCanApproveQuotation(user: SessionUser): void {
-    this.assertOwner(user);
+    this.assertAdministratorOrOwner(user);
   }
 
   assertCanReadAudit(user: SessionUser): void {
-    this.assertOwner(user);
+    if (user.role !== "ADMIN") {
+      throw new ForbiddenException("无权查看操作日志");
+    }
   }
 
   assertCanCreateProject(user: SessionUser, leadDesignerId: string): void {
-    if (user.role === "OWNER") {
+    if (user.role === "ADMIN" || user.role === "OWNER") {
       return;
     }
     if (user.role !== "LEAD_DESIGNER" || user.id !== leadDesignerId) {
@@ -43,13 +49,18 @@ export class AccessPolicy {
   }
 
   assertCanListProjects(user: SessionUser): void {
-    if (user.role !== "OWNER" && user.role !== "LEAD_DESIGNER") {
+    if (
+      user.role !== "ADMIN" &&
+      user.role !== "OWNER" &&
+      user.role !== "LEAD_DESIGNER"
+    ) {
       throw new ForbiddenException("无权访问项目");
     }
   }
 
   assertCanAccessProject(user: SessionUser, leadDesignerId: string): void {
     if (
+      user.role === "ADMIN" ||
       user.role === "OWNER" ||
       (user.role === "LEAD_DESIGNER" && user.id === leadDesignerId)
     ) {
@@ -58,8 +69,8 @@ export class AccessPolicy {
     throw new NotFoundException("项目不存在");
   }
 
-  private assertOwner(user: SessionUser): void {
-    if (user.role !== "OWNER") {
+  private assertAdministratorOrOwner(user: SessionUser): void {
+    if (user.role !== "ADMIN" && user.role !== "OWNER") {
       throw new ForbiddenException("无权执行此操作");
     }
   }

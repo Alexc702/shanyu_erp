@@ -5,6 +5,8 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AccessPolicy } from "../src/access/access.policy";
+import { AUDIT_QUERY_REPOSITORY } from "../src/access/audit-query.repository";
+import { AuditQueryService } from "../src/access/audit-query.service";
 import {
   AUDIT_REPOSITORY,
   type AuditRecord,
@@ -21,19 +23,25 @@ import { AuthService } from "../src/access/auth.service";
 import { hashPassword } from "../src/access/password";
 import { UsersController } from "../src/access/users.controller";
 import {
+  DuplicateUserError,
+  LastActiveAdministratorError,
   USERS_REPOSITORY,
   type NewUser,
+  type UpdatedUser,
   type UsersRepository,
+  UserNotFoundError,
 } from "../src/access/users.repository";
 import { UsersService } from "../src/access/users.service";
 
 describe("user management HTTP interface", () => {
   let app: INestApplication;
   let audits: AuditRecord[];
+  let sessions: StoredSession[];
   let users: StoredUser[];
 
   beforeEach(async () => {
     users = [
+      await storedUser("admin-id", "admin", "ADMIN", "admin-password"),
       await storedUser("owner-id", "owner", "OWNER", "owner-password"),
       await storedUser(
         "lead-id",
@@ -42,7 +50,7 @@ describe("user management HTTP interface", () => {
         "lead-password",
       ),
     ];
-    const sessions: StoredSession[] = [];
+    sessions = [];
     audits = [];
 
     const authRepository: AuthRepository = {
@@ -72,12 +80,81 @@ describe("user management HTTP interface", () => {
     };
     const usersRepository: UsersRepository = {
       async create(input: NewUser) {
+        if (users.some((user) => user.account === input.account)) {
+          throw new DuplicateUserError();
+        }
         const user: StoredUser = { ...input, status: "ACTIVE" };
         users.push(user);
         return toSummary(user);
       },
+      async disable(userId) {
+        const index = users.findIndex((user) => user.id === userId);
+        const current = users[index];
+        if (!current) throw new UserNotFoundError();
+        if (
+          current.role === "ADMIN" &&
+          !users.some(
+            (user) =>
+              user.id !== userId &&
+              user.role === "ADMIN" &&
+              user.status === "ACTIVE",
+          )
+        ) {
+          throw new LastActiveAdministratorError();
+        }
+        const user: StoredUser = { ...current, status: "DISABLED" };
+        users[index] = user;
+        for (const session of sessions) {
+          if (session.userId === userId && session.revokedAt === null) {
+            session.revokedAt = new Date();
+          }
+        }
+        return toSummary(user);
+      },
+      async findById(userId) {
+        const user = users.find((item) => item.id === userId);
+        return user ? toSummary(user) : null;
+      },
       async list() {
         return users.map(toSummary);
+      },
+      async resetPassword(userId, passwordHash) {
+        const index = users.findIndex((user) => user.id === userId);
+        const current = users[index];
+        if (!current) throw new UserNotFoundError();
+        users[index] = { ...current, passwordHash };
+        for (const session of sessions) {
+          if (session.userId === userId && session.revokedAt === null) {
+            session.revokedAt = new Date();
+          }
+        }
+      },
+      async update(input: UpdatedUser) {
+        const index = users.findIndex((user) => user.id === input.id);
+        const current = users[index];
+        if (!current) throw new UserNotFoundError();
+        if (
+          current.role === "ADMIN" &&
+          input.role !== "ADMIN" &&
+          !users.some(
+            (user) =>
+              user.id !== input.id &&
+              user.role === "ADMIN" &&
+              user.status === "ACTIVE",
+          )
+        ) {
+          throw new LastActiveAdministratorError();
+        }
+        if (
+          users.some(
+            (user) => user.id !== input.id && user.account === input.account,
+          )
+        ) {
+          throw new DuplicateUserError();
+        }
+        const user: StoredUser = { ...current, ...input };
+        users[index] = user;
+        return toSummary(user);
       },
     };
     const auditRepository: AuditRepository = {
@@ -90,8 +167,10 @@ describe("user management HTTP interface", () => {
       controllers: [AuthController, UsersController],
       providers: [
         AccessPolicy,
+        AuditQueryService,
         AuthService,
         UsersService,
+        { provide: AUDIT_QUERY_REPOSITORY, useValue: { async list() { return []; } } },
         { provide: AUTH_REPOSITORY, useValue: authRepository },
         { provide: USERS_REPOSITORY, useValue: usersRepository },
         { provide: AUDIT_REPOSITORY, useValue: auditRepository },
@@ -124,7 +203,7 @@ describe("user management HTTP interface", () => {
       .send({
         account: "mori",
         displayName: "木作设计师",
-        password: "woodwork-password",
+        password: "Woodwork123",
         phone: null,
         role: "WOODWORK_DESIGNER",
       })
@@ -136,7 +215,7 @@ describe("user management HTTP interface", () => {
       role: "WOODWORK_DESIGNER",
       status: "ACTIVE",
     });
-    expect(JSON.stringify(response.body)).not.toContain("woodwork-password");
+    expect(JSON.stringify(response.body)).not.toContain("Woodwork123");
     expect(audits.at(-1)).toMatchObject({
       action: "USER_CREATED",
       actorUserId: "owner-id",
@@ -160,13 +239,136 @@ describe("user management HTTP interface", () => {
       .send({
         account: "forged",
         displayName: "伪造老板",
-        password: "forged-password",
+        password: "Forged123",
         phone: null,
         role: "OWNER",
       })
       .expect(403);
 
-    expect(users).toHaveLength(2);
+    expect(users).toHaveLength(3);
+  });
+
+  it("lets the owner edit, reset and delete another non-administrator account", async () => {
+    const ownerCookie = await login("owner", "owner-password");
+
+    await request(app.getHttpServer())
+      .patch("/users/lead-id")
+      .set("Cookie", ownerCookie)
+      .send({ account: "alex.chen", displayName: "陈 Alex", role: "LEAD_DESIGNER" })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.user).toMatchObject({
+          account: "alex.chen",
+          displayName: "陈 Alex",
+        });
+      });
+
+    await request(app.getHttpServer())
+      .put("/users/lead-id/password")
+      .set("Cookie", ownerCookie)
+      .send({ password: "NewLead123" })
+      .expect(200);
+    await login("alex.chen", "NewLead123");
+
+    await request(app.getHttpServer())
+      .delete("/users/lead-id")
+      .set("Cookie", ownerCookie)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.user.status).toBe("DISABLED");
+      });
+
+    await request(app.getHttpServer())
+      .post("/auth/login")
+      .send({ identifier: "alex.chen", password: "NewLead123", rememberMe: false })
+      .expect(401);
+    expect(audits.map((audit) => audit.action)).toEqual(
+      expect.arrayContaining([
+        "USER_UPDATED",
+        "USER_PASSWORD_RESET",
+        "USER_DELETED",
+      ]),
+    );
+    expect(JSON.stringify(audits)).not.toContain("NewLead123");
+  });
+
+  it("hides administrators from owners and refuses owner self-management", async () => {
+    const cookie = await login("owner", "owner-password");
+
+    await request(app.getHttpServer())
+      .get("/users")
+      .set("Cookie", cookie)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.users).not.toEqual(
+          expect.arrayContaining([expect.objectContaining({ role: "ADMIN" })]),
+        );
+      });
+    await request(app.getHttpServer())
+      .delete("/users/owner-id")
+      .set("Cookie", cookie)
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch("/users/admin-id")
+      .set("Cookie", cookie)
+      .send({ account: "admin", displayName: "管理员", role: "OWNER" })
+      .expect(404);
+    await request(app.getHttpServer())
+      .post("/users")
+      .set("Cookie", cookie)
+      .send({
+        account: "admin2",
+        displayName: "管理员 2",
+        password: "AdminTwo123",
+        phone: null,
+        role: "ADMIN",
+      })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post("/users")
+      .set("Cookie", cookie)
+      .send({
+        account: "finance2",
+        displayName: "财务 2",
+        password: "FinanceTwo123",
+        phone: null,
+        role: "FINANCE",
+      })
+      .expect(403);
+  });
+
+  it("lets administrators manage administrators while preserving one active administrator", async () => {
+    const cookie = await login("admin", "admin-password");
+    await request(app.getHttpServer())
+      .get("/users")
+      .set("Cookie", cookie)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.users).toEqual(
+          expect.arrayContaining([expect.objectContaining({ role: "ADMIN" })]),
+        );
+      });
+
+    await request(app.getHttpServer())
+      .delete("/users/admin-id")
+      .set("Cookie", cookie)
+      .expect(409);
+
+    const created = await request(app.getHttpServer())
+      .post("/users")
+      .set("Cookie", cookie)
+      .send({
+        account: "admin2",
+        displayName: "管理员 2",
+        password: "AdminTwo123",
+        phone: null,
+        role: "ADMIN",
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .delete(`/users/${created.body.user.id}`)
+      .set("Cookie", cookie)
+      .expect(200);
   });
 
   async function login(account: string, password: string): Promise<string> {

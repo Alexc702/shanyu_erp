@@ -4,7 +4,11 @@ import { describe, expect, it } from "vitest";
 import { getWorkbench } from "./workbench";
 
 describe("getWorkbench", () => {
-  it("gives the owner the user-management entry", () => {
+  it("gives the administrator and owner the user-management entry", () => {
+    expect(getWorkbench("ADMIN")).toMatchObject({
+      canManageUsers: true,
+      roleLabel: "管理员",
+    });
     expect(getWorkbench("OWNER")).toMatchObject({
       canManageUsers: true,
       roleLabel: "老板",

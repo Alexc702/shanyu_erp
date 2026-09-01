@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { fetchQuotationVersion, fetchQuotationVersionCostMargin, fetchSession } from "@/lib/api-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { ApprovalDetail } from "./approval-detail";
 
@@ -14,7 +15,7 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
   const cookieHeader = (await cookies()).toString();
   const session = await fetchSession(cookieHeader);
   if (!session) redirect("/login");
-  if (session.user.role !== "OWNER") notFound();
+  if (!hasOwnerPermissions(session.user.role)) notFound();
   const { quotationId } = await params;
   const [quotation, costMargin] = await Promise.all([
     fetchQuotationVersion(cookieHeader, quotationId),

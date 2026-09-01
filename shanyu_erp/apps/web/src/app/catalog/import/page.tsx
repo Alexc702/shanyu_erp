@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { fetchPublishedCatalog, fetchSession } from "@/lib/api-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { CatalogImportForm } from "./catalog-import-form";
 
@@ -13,7 +14,7 @@ export default async function CatalogImportPage() {
   if (!session) {
     redirect("/login");
   }
-  if (session.user.role !== "OWNER") {
+  if (!hasOwnerPermissions(session.user.role)) {
     redirect("/catalog");
   }
   const currentCatalog = await fetchPublishedCatalog(cookieHeader);

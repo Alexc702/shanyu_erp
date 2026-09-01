@@ -21,6 +21,7 @@ import {
   orderCostMarginScopes,
 } from "@/lib/cost-margin-view-model";
 import { formatQuotationMoney } from "@/lib/quotation-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 import { formatQuotationScopeName } from "@/lib/quotation-view-model";
 
 interface CostMarginPageProps {
@@ -33,7 +34,7 @@ export default async function CostMarginPage({ params }: CostMarginPageProps) {
   if (!session) {
     redirect("/login");
   }
-  if (session.user.role !== "OWNER") {
+  if (!hasOwnerPermissions(session.user.role)) {
     notFound();
   }
   const { projectId } = await params;

@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { fetchHalfPackageQuotation, fetchSession, fetchSubmissionCheck } from "@/lib/api-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { SubmitQuotationPanel } from "./submit-quotation-panel";
 
@@ -14,7 +15,7 @@ export default async function SubmitQuotationPage({ params }: SubmitPageProps) {
   const cookieHeader = (await cookies()).toString();
   const session = await fetchSession(cookieHeader);
   if (!session) redirect("/login");
-  if (session.user.role !== "OWNER" && session.user.role !== "LEAD_DESIGNER") notFound();
+  if (!hasOwnerPermissions(session.user.role) && session.user.role !== "LEAD_DESIGNER") notFound();
   const { projectId } = await params;
   const [quotation, check] = await Promise.all([
     fetchHalfPackageQuotation(cookieHeader, projectId),

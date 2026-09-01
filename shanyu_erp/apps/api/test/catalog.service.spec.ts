@@ -161,7 +161,7 @@ describe("CatalogService", () => {
     expect(repository.createdBatchCount).toBe(0);
   });
 
-  it("returns costs only to the owner and denies unrelated roles", async () => {
+  it("returns costs to administrators and owners and denies unrelated roles", async () => {
     const buffer = await readFile(
       resolve(process.cwd(), "../../../半包报价单_v3.xlsx"),
     );
@@ -172,9 +172,11 @@ describe("CatalogService", () => {
     await service.publishBatch(owner, batch.id);
 
     const ownerView = await service.getPublishedCatalog(owner);
+    const administratorView = await service.getPublishedCatalog(administrator);
     const leadView = await service.getPublishedCatalog(lead);
 
     expect(ownerView.items[0]).toHaveProperty("costUnitPrice");
+    expect(administratorView.items[0]).toHaveProperty("costUnitPrice");
     expect(leadView.items[0]).not.toHaveProperty("costUnitPrice");
     await expect(service.getPublishedCatalog(woodwork)).rejects.toBeInstanceOf(
       ForbiddenException,
@@ -245,6 +247,14 @@ class InMemoryCatalogRepository implements CatalogRepository {
     return this.publishedCatalog;
   }
 }
+
+const administrator: SessionUser = {
+  account: "admin",
+  displayName: "系统管理员",
+  id: "00000000-0000-4000-8000-000000000001",
+  phone: null,
+  role: "ADMIN",
+};
 
 const owner: SessionUser = {
   account: "owner",

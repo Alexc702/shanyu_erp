@@ -13,13 +13,14 @@ import {
   fetchProjects,
   fetchSession,
 } from "@/lib/api-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 import { formatQuotationMoney } from "@/lib/quotation-client";
 
 export default async function ApprovalsPage() {
   const cookieHeader = (await cookies()).toString();
   const session = await fetchSession(cookieHeader);
   if (!session) redirect("/login");
-  if (session.user.role !== "OWNER") notFound();
+  if (!hasOwnerPermissions(session.user.role)) notFound();
   const [quotations, projects] = await Promise.all([
     fetchPendingApprovals(cookieHeader),
     fetchProjects(cookieHeader),

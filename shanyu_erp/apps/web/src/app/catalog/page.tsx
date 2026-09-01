@@ -7,6 +7,7 @@ import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fetchPublishedCatalog, fetchSession } from "@/lib/api-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 import { quotationLineCategory } from "@/lib/quotation-view-model";
 
 interface CatalogPageProps {
@@ -19,11 +20,12 @@ export default async function CatalogPage({ searchParams }: CatalogPageProps) {
   if (!session) {
     redirect("/login");
   }
-  if (session.user.role !== "OWNER" && session.user.role !== "LEAD_DESIGNER") {
+  const hasOwnerAccess = hasOwnerPermissions(session.user.role);
+  if (!hasOwnerAccess && session.user.role !== "LEAD_DESIGNER") {
     redirect("/");
   }
   const catalog = await fetchPublishedCatalog(cookieHeader);
-  const canViewCost = session.user.role === "OWNER";
+  const canViewCost = hasOwnerAccess;
   const selectedCode = (await searchParams).section;
   const selectedSection =
     catalog?.sections.find((section) => section.code === selectedCode) ??
@@ -41,7 +43,7 @@ export default async function CatalogPage({ searchParams }: CatalogPageProps) {
             <h1>主材库</h1>
             <p>集中维护半包工程项的销售价、成本价与版本；V1 仅开放半包工程项。</p>
           </div>
-          {session.user.role === "OWNER" ? (
+          {hasOwnerAccess ? (
             <Button asChild><Link href="/catalog/import"><FileUp />导入 Excel</Link></Button>
           ) : null}
         </section>

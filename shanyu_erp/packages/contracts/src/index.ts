@@ -4,6 +4,7 @@ export interface HealthResponse {
 }
 
 export type UserRole =
+  | "ADMIN"
   | "OWNER"
   | "LEAD_DESIGNER"
   | "WOODWORK_DESIGNER"
@@ -40,6 +41,16 @@ export interface CreateUserRequest {
   readonly password: string;
   readonly phone: string | null;
   readonly role: UserRole;
+}
+
+export interface UpdateUserRequest {
+  readonly account: string;
+  readonly displayName: string;
+  readonly role: UserRole;
+}
+
+export interface ResetUserPasswordRequest {
+  readonly password: string;
 }
 
 export type SpaceType =

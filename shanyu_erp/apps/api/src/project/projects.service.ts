@@ -88,7 +88,7 @@ export class ProjectsService {
   async list(actor: SessionUser): Promise<ProjectSummary[]> {
     this.accessPolicy.assertCanListProjects(actor);
     return this.projectsRepository.list(
-      actor.role === "OWNER" ? null : actor.id,
+      actor.role === "ADMIN" || actor.role === "OWNER" ? null : actor.id,
     );
   }
 

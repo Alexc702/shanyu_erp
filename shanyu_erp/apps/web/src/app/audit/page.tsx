@@ -15,7 +15,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
   const cookieHeader = (await cookies()).toString();
   const session = await fetchSession(cookieHeader);
   if (!session) redirect("/login");
-  if (session.user.role !== "OWNER") notFound();
+  if (session.user.role !== "ADMIN") notFound();
   const filters = await searchParams;
   const events = await fetchAuditEvents(cookieHeader, filters);
   if (!events) notFound();

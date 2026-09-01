@@ -76,6 +76,20 @@ describe("ProjectsService", () => {
     ]);
   });
 
+  it("gives the administrator the owner project scope", async () => {
+    await service.create(administrator, {
+      address: "地址",
+      buildingArea: "100",
+      customerName: "客户",
+      leadDesignerId: lead.id,
+      name: "管理员创建项目",
+      spaces: [space("主卧", "BEDROOM")],
+    });
+
+    await expect(service.list(administrator)).resolves.toHaveLength(1);
+    expect(repository.lastListLeadDesignerId).toBeNull();
+  });
+
   it("保留衣帽间的独立空间类型", async () => {
     const project = await service.create(owner, {
       address: "地址",
@@ -272,6 +286,7 @@ describe("ProjectsService", () => {
 
 class InMemoryProjectsRepository implements ProjectsRepository {
   private readonly projects: ProjectDetail[] = [];
+  lastListLeadDesignerId: string | null | undefined;
   spaceAdjustmentState: "DRAFT" | "LOCKED" | "NO_QUOTATION" = "DRAFT";
 
   async findLeadDesigner(userId: string): Promise<SessionUser | null> {
@@ -296,7 +311,8 @@ class InMemoryProjectsRepository implements ProjectsRepository {
     return this.projects.find((project) => project.id === projectId) ?? null;
   }
 
-  async list(): Promise<ProjectSummary[]> {
+  async list(leadDesignerId: string | null): Promise<ProjectSummary[]> {
+    this.lastListLeadDesignerId = leadDesignerId;
     return this.projects;
   }
 
@@ -338,6 +354,14 @@ class InMemoryProjectsRepository implements ProjectsRepository {
     (project as { spaces: ProjectSpace[] }).spaces = remaining;
   }
 }
+
+const administrator: SessionUser = {
+  account: "admin",
+  displayName: "系统管理员",
+  id: "admin-id",
+  phone: null,
+  role: "ADMIN",
+};
 
 const owner: SessionUser = {
   account: "owner",

@@ -19,6 +19,7 @@ import {
   fetchSession,
 } from "@/lib/api-client";
 import { getWorkbench } from "@/lib/workbench";
+import { hasOwnerPermissions } from "@/lib/permissions";
 
 interface HomeProps {
   readonly searchParams: Promise<
@@ -45,9 +46,9 @@ export default async function Home({ searchParams }: HomeProps) {
   }
   const workbench = getWorkbench(session.user.role);
   const canAccessProjects =
-    session.user.role === "OWNER" || session.user.role === "LEAD_DESIGNER";
+    hasOwnerPermissions(session.user.role) || session.user.role === "LEAD_DESIGNER";
   const projects = canAccessProjects ? await fetchProjects(cookieHeader) : null;
-  const isOwner = session.user.role === "OWNER";
+  const isOwner = hasOwnerPermissions(session.user.role);
   const isLead = session.user.role === "LEAD_DESIGNER";
   const projectList = projects ?? [];
   const versionsByProject = canAccessProjects

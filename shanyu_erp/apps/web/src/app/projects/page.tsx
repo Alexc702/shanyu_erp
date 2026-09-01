@@ -7,6 +7,7 @@ import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fetchProjects, fetchSession } from "@/lib/api-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 
 export default async function ProjectsPage() {
   const cookieHeader = (await cookies()).toString();
@@ -18,6 +19,7 @@ export default async function ProjectsPage() {
   if (!projects) {
     redirect("/");
   }
+  const hasOwnerAccess = hasOwnerPermissions(session.user.role);
 
   return (
     <AppShell active="projects" user={session.user}>
@@ -25,9 +27,9 @@ export default async function ProjectsPage() {
         <section className="page-title-row">
           <div>
             <p className="eyebrow">项目管理</p>
-            <h1>{session.user.role === "OWNER" ? "全部项目" : "我的项目"}</h1>
+            <h1>{hasOwnerAccess ? "全部项目" : "我的项目"}</h1>
             <p>
-              {session.user.role === "OWNER"
+              {hasOwnerAccess
                 ? "查看全公司项目及其当前报价状态。"
                 : `查看并继续处理 ${session.user.displayName} 负责的项目。`}
             </p>

@@ -9,6 +9,7 @@ import {
   fetchQuotationVersions,
   fetchSession,
 } from "@/lib/api-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { VersionHistory } from "./version-history";
 
@@ -22,7 +23,10 @@ export default async function ProjectVersionsPage({
   const cookieHeader = (await cookies()).toString();
   const session = await fetchSession(cookieHeader);
   if (!session) redirect("/login");
-  if (session.user.role !== "OWNER" && session.user.role !== "LEAD_DESIGNER") {
+  if (
+    !hasOwnerPermissions(session.user.role) &&
+    session.user.role !== "LEAD_DESIGNER"
+  ) {
     notFound();
   }
 
@@ -30,7 +34,7 @@ export default async function ProjectVersionsPage({
   const [project, versions, auditEvents] = await Promise.all([
     fetchProject(cookieHeader, projectId),
     fetchQuotationVersions(cookieHeader, projectId),
-    session.user.role === "OWNER"
+    session.user.role === "ADMIN"
       ? fetchAuditEvents(cookieHeader)
       : Promise.resolve(null),
   ]);

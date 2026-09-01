@@ -19,6 +19,7 @@ import {
   orderCostMarginScopes,
 } from "@/lib/cost-margin-view-model";
 import { formatQuotationMoney } from "@/lib/quotation-client";
+import { hasOwnerPermissions } from "@/lib/permissions";
 import {
   formatDisplayNumber,
   formatQuotationScopeName,
@@ -39,7 +40,7 @@ export default async function CostDetailsPage({
   if (!session) {
     redirect("/login");
   }
-  if (session.user.role !== "OWNER") {
+  if (!hasOwnerPermissions(session.user.role)) {
     notFound();
   }
   const { projectId } = await params;

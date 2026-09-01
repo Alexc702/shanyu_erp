@@ -6,6 +6,12 @@ const scrypt = promisify(scryptCallback);
 const demoPassword = process.env.DEMO_USER_PASSWORD ?? "Shanyu123!";
 const demoUsers = [
   {
+    account: "admin",
+    displayName: "系统管理员",
+    id: "00000000-0000-4000-8000-000000000001",
+    role: "ADMIN",
+  },
+  {
     account: "owner",
     displayName: "何总",
     id: "11111111-1111-4111-8111-111111111111",
