@@ -406,7 +406,12 @@ stop_local_apps() {
 }
 
 server_compose() {
-  docker compose --env-file "$SERVER_ENV_FILE" -f "$SERVER_COMPOSE_FILE" "$@"
+  docker compose \
+    --project-directory "$ROOT_DIR" \
+    --env-file "$SERVER_ENV_FILE" \
+    --env-file "$SERVER_RELEASE_ENV_FILE" \
+    -f "$SERVER_COMPOSE_FILE" \
+    "$@"
 }
 
 check_linux_server() {
@@ -426,8 +431,13 @@ check_server_files() {
     echo "Production environment file is missing: $SERVER_ENV_FILE"
     return 1
   }
+  [ -f "$SERVER_RELEASE_ENV_FILE" ] || {
+    echo "Release environment file is missing: $SERVER_RELEASE_ENV_FILE"
+    return 1
+  }
   echo "Compose: $SERVER_COMPOSE_FILE"
   echo "Env:     $SERVER_ENV_FILE (values not printed)"
+  echo "Release: $SERVER_RELEASE_ENV_FILE (values not printed)"
 }
 
 check_server_env_permissions() {
@@ -445,6 +455,9 @@ check_server_env_variables() {
     POSTGRES_DB
     POSTGRES_USER
     POSTGRES_PASSWORD
+    ADMIN_ACCOUNT
+    ADMIN_DISPLAY_NAME
+    ADMIN_INITIAL_PASSWORD
     MINIO_ROOT_USER
     MINIO_ROOT_PASSWORD
   )
@@ -471,12 +484,19 @@ check_server_compose_config() {
   services="$(server_compose config --services)" || return 1
   echo "$services"
 
-  for service in web api postgres minio; do
+  for service in web api postgres; do
     echo "$services" | grep -qx "$service" || {
       echo "Required service is missing: $service"
       return 1
     }
   done
+
+  if [ "$SERVER_REQUIRE_MINIO" -eq 1 ]; then
+    echo "$services" | grep -qx minio || {
+      echo "Required service is missing: minio"
+      return 1
+    }
+  fi
 
   for service in proxy reverse-proxy caddy nginx traefik; do
     if echo "$services" | grep -qx "$service"; then
@@ -556,13 +576,26 @@ check_server_container_policies() {
 check_server_private_port() {
   local service="$1"
   local port="$2"
-  local actual
+  local binding
+  local container_id
+  local container_ids
 
-  actual="$(server_compose port "$service" "$port" 2>/dev/null || true)"
-  if [ -n "$actual" ]; then
-    echo "$service:$port is published as $actual; it must remain on the internal Compose network."
+  container_ids="$(server_compose ps -q "$service")" || return 1
+  [ -n "$container_ids" ] || {
+    echo "$service has no running container available for port inspection."
     return 1
-  fi
+  }
+  for container_id in $container_ids; do
+    binding="$(
+      docker inspect \
+        --format "{{with index .HostConfig.PortBindings \"${port}/tcp\"}}{{json .}}{{end}}" \
+        "$container_id"
+    )" || return 1
+    if [ -n "$binding" ]; then
+      echo "$service:$port has a host binding; it must remain on the internal Compose network."
+      return 1
+    fi
+  done
   echo "$service:$port is not published to the host."
 }
 
@@ -582,15 +615,17 @@ check_server_public_health() {
     echo "Set SHANYU_HEALTH_URL to the public HTTPS API health URL."
     return 1
   }
-  case "$SHANYU_HEALTH_URL" in
-    https://*) ;;
-    *)
-      echo "SHANYU_HEALTH_URL must use HTTPS."
-      return 1
-      ;;
-  esac
+  if [ "$SERVER_REQUIRE_HTTPS" -eq 1 ]; then
+    case "$SHANYU_HEALTH_URL" in
+      https://*) ;;
+      *)
+        echo "SHANYU_HEALTH_URL must use HTTPS."
+        return 1
+        ;;
+    esac
+  fi
   curl --fail --silent --show-error --max-time 10 \
-    "$SHANYU_HEALTH_URL" >/dev/null
+    "$SHANYU_HEALTH_URL" >/dev/null || return 1
   echo "$SHANYU_HEALTH_URL returned HTTP 2xx."
 }
 
@@ -604,6 +639,8 @@ check_server_disk() {
 check_server_backup() {
   local max_hours="${SHANYU_BACKUP_MAX_AGE_HOURS:-26}"
   local max_minutes
+  local candidate
+  local environment
   local recent_file
 
   [ -n "${SHANYU_BACKUP_DIR:-}" ] || {
@@ -622,12 +659,30 @@ check_server_backup() {
   esac
 
   max_minutes=$((max_hours * 60))
-  recent_file="$(find "$SHANYU_BACKUP_DIR" -type f -mmin "-$max_minutes" -print -quit)" || return 1
+  environment="$(sed -n 's/^SHANYU_DEPLOYMENT_ENVIRONMENT=//p' "$SERVER_ENV_FILE" | tail -n 1)"
+  recent_file=""
+  while IFS= read -r candidate; do
+    if [ ! -s "$candidate" ] || [ ! -s "$candidate.meta" ] || [ ! -s "$candidate.sha256" ]; then
+      continue
+    fi
+    if [ "$environment" = "production" ] && [ ! -s "$candidate.cos" ]; then
+      continue
+    fi
+    recent_file="$candidate"
+    break
+  done < <(
+    find "$SHANYU_BACKUP_DIR" -maxdepth 1 -type f \
+      -name 'shanyu-erp-*.dump' -mmin "-$max_minutes" -print
+  )
   [ -n "$recent_file" ] || {
-    echo "No backup artifact newer than $max_hours hours was found."
+    if [ "$environment" = "production" ]; then
+      echo "No complete COS-verified backup newer than $max_hours hours was found."
+    else
+      echo "No complete local backup newer than $max_hours hours was found."
+    fi
     return 1
   }
-  echo "A backup artifact newer than $max_hours hours exists; file name is intentionally not printed."
+  echo "A complete backup newer than $max_hours hours exists; file name is intentionally not printed."
 }
 
 print_summary() {
@@ -744,6 +799,7 @@ run_server() {
 
   SERVER_COMPOSE_FILE="${SHANYU_COMPOSE_FILE:-$ROOT_DIR/compose.prod.yaml}"
   SERVER_ENV_FILE="${SHANYU_ENV_FILE:-$ROOT_DIR/.env.production}"
+  SERVER_RELEASE_ENV_FILE="${SHANYU_RELEASE_ENV_FILE:-$ROOT_DIR/.release.env}"
 
   run_check "Repository structure" check_repo_root || true
   run_check "Linux production VM" check_linux_server || true
@@ -773,10 +829,14 @@ run_server() {
     run_check "Web is private" check_server_private_port web 3000 || true
     run_check "API is private" check_server_private_port api 3001 || true
     run_check "PostgreSQL is private" check_server_private_port postgres 5432 || true
-    run_check "MinIO API is private" check_server_private_port minio 9000 || true
-    run_check "MinIO Console is private" check_server_private_port minio 9001 || true
     run_check "Production PostgreSQL readiness" check_server_postgres || true
-    run_check "Production MinIO live endpoint" check_server_minio || true
+    if [ "$SERVER_REQUIRE_MINIO" -eq 1 ]; then
+      run_check "MinIO API is private" check_server_private_port minio 9000 || true
+      run_check "MinIO Console is private" check_server_private_port minio 9001 || true
+      run_check "Production MinIO live endpoint" check_server_minio || true
+    else
+      skip_check "Production MinIO checks" "object storage is disabled for the constrained test server"
+    fi
   else
     skip_check "Production container states" "valid production Compose configuration unavailable"
     skip_check "Restart and log-rotation policies" "valid production Compose configuration unavailable"
@@ -785,7 +845,7 @@ run_server() {
     skip_check "Production MinIO live endpoint" "valid production Compose configuration unavailable"
   fi
 
-  run_check "Public HTTPS health endpoint" check_server_public_health || true
+  run_check "Public health endpoint" check_server_public_health || true
   run_check "Recent backup artifact" check_server_backup || true
 }
 
@@ -811,10 +871,18 @@ case "$PROFILE" in
     ;;
   server)
     echo "Shanyu ERP environment self-check: production server profile"
+    SERVER_REQUIRE_MINIO=1
+    SERVER_REQUIRE_HTTPS=1
+    run_server
+    ;;
+  server-test)
+    echo "Shanyu ERP environment self-check: constrained test server profile"
+    SERVER_REQUIRE_MINIO=0
+    SERVER_REQUIRE_HTTPS=0
     run_server
     ;;
   *)
-    echo "Usage: bash scripts/environment-check.sh [resume|local|local-runtime|server]" >&2
+    echo "Usage: bash scripts/environment-check.sh [resume|local|local-runtime|server|server-test]" >&2
     exit 2
     ;;
 esac

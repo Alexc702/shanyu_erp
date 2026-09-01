@@ -19,7 +19,8 @@
     "build": "pnpm -r --if-present build",
     "lint": "pnpm -r --if-present lint",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm -r --if-present test && pnpm test:deployment",
+    "test:deployment": "bash scripts/deployment/tests/publish-input-validation.test.sh && bash scripts/deployment/tests/server-backup-cos.test.sh && bash scripts/deployment/tests/server-environment-check.test.sh && bash scripts/deployment/tests/server-admin-bootstrap.test.sh && bash scripts/deployment/tests/verify-deployment-from-mac.test.sh",
     "test:e2e": "pnpm db:migrate && pnpm db:seed && playwright test",
     "db:migrate": "node --env-file-if-exists=.env scripts/run-migrations.mjs up",
     "db:rollback": "node --env-file-if-exists=.env scripts/run-migrations.mjs down",
@@ -27,6 +28,7 @@
     "check:env": "bash scripts/environment-check.sh local",
     "check:env:runtime": "bash scripts/environment-check.sh local-runtime",
     "check:env:server": "bash scripts/environment-check.sh server",
+    "check:env:server-test": "bash scripts/environment-check.sh server-test",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down"
   },

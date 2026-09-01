@@ -19,8 +19,7 @@ import type {
   UserSummary,
 } from "@shanyu/contracts";
 
-export const apiUrl =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+import { serverApiUrl as apiUrl } from "./server-api-url";
 
 export async function fetchSession(
   cookieHeader: string,

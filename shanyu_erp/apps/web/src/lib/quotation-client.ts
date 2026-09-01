@@ -8,7 +8,7 @@ import type {
   UpdateHalfPackageQuotationLineRequest,
 } from "@shanyu/contracts";
 
-import { apiUrl } from "./api-client";
+import { apiUrl } from "./api-url";
 
 type Fetcher = (
   input: string | URL | Request,

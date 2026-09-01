@@ -11,7 +11,11 @@ import {
 import type { LoginRequest, LoginResponse } from "@shanyu/contracts";
 
 import { AuthService } from "./auth.service";
-import { readSessionToken, sessionCookieName } from "./session-cookie";
+import {
+  isSessionCookieSecure,
+  readSessionToken,
+  sessionCookieName,
+} from "./session-cookie";
 
 interface CookieResponse {
   clearCookie(name: string, options: SessionCookieOptions): void;
@@ -54,7 +58,7 @@ export class AuthController {
       httpOnly: true,
       path: "/",
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSessionCookieSecure(),
     });
 
     return { user: login.user };
@@ -79,7 +83,7 @@ export class AuthController {
       httpOnly: true,
       path: "/",
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSessionCookieSecure(),
     });
   }
 }

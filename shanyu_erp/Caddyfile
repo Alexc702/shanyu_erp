@@ -1,0 +1,18 @@
+{$CADDY_SITE_ADDRESS} {
+	encode zstd gzip
+
+	header {
+		-Server
+		Referrer-Policy "same-origin"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+
+	handle_path /api/* {
+		reverse_proxy api:3001
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

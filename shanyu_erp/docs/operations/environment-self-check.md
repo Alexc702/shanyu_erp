@@ -154,17 +154,19 @@ bash scripts/environment-check.sh server
 服务器预期结果：
 
 - 操作系统为 Linux，Docker Engine 可连接。
-- 生产环境文件权限为 `600` 或 `640`，所有基础变量存在且非空。
+- 生产环境文件权限为 `600` 或 `640`，数据库、MinIO 和三个 `ADMIN_*`
+  初始化变量存在且非空。
 - Compose 至少定义反向代理、Web、API、PostgreSQL 和 MinIO。
 - 所有容器处于 `running (healthy)`，并配置自动重启策略。
 - 所有容器使用 Docker `local` 日志驱动，或为其他驱动显式设置 `max-size` 轮转上限。
 - Web `3000`、API `3001`、PostgreSQL `5432`、MinIO `9000/9001`
   未发布到宿主机，只在 Compose 内部网络中使用。
 - 公网健康地址使用 HTTPS 并返回 HTTP 2xx。
-- 磁盘使用率低于 90%，且默认 26 小时内存在备份产物。
+- 磁盘使用率低于 90%。测试环境默认 26 小时内必须存在完整的
+  `.dump + .meta + .sha256`；生产环境还必须存在对应的 `.dump.cos` 回读成功标记。
 
-> 当前仓库尚未创建 `compose.prod.yaml`。在生产部署文件完成前，
-> 服务器模式会如实报告失败并跳过依赖该文件的检查。
+`compose.prod.yaml`、`.env.production` 或 `.release.env` 任一缺失时，服务器模式
+会如实报告失败并跳过依赖这些文件的检查。
 
 ## 定时任务
 

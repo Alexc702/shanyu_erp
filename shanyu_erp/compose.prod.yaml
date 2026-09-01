@@ -1,0 +1,144 @@
+name: shanyu-erp
+
+x-service-policy: &service-policy
+  init: true
+  restart: unless-stopped
+  logging:
+    driver: local
+    options:
+      max-file: "3"
+      max-size: "10m"
+
+services:
+  caddy:
+    <<: *service-policy
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS}
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 128m
+
+  web:
+    <<: *service-policy
+    image: ${WEB_IMAGE:?WEB_IMAGE is required}
+    environment:
+      API_INTERNAL_URL: http://api:3001
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=320
+      PORT: "3000"
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 384m
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    <<: *service-policy
+    image: ${API_IMAGE:?API_IMAGE is required}
+    environment:
+      API_BIND_HOST: 0.0.0.0
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=384
+      ADMIN_ACCOUNT: ${ADMIN_ACCOUNT}
+      ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME}
+      PORT: "3001"
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE}
+      WEB_ORIGIN: ${WEB_ORIGIN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "3001"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    <<: *service-policy
+    image: ${POSTGRES_IMAGE:-postgres:18-alpine}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER}
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 512m
+
+  minio:
+    <<: *service-policy
+    profiles: ["object-storage"]
+    image: ${MINIO_IMAGE:-quay.io/minio/minio}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    expose:
+      - "9000"
+      - "9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - http://127.0.0.1:9000/minio/health/live
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 768m
+
+volumes:
+  caddy_config:
+  caddy_data:
+  minio_data:
+  postgres_data:

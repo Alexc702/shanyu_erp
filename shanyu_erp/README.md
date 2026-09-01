@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-- 阶段：V1 阶段 1–7 已完成开发和自我验收，当前等待用户执行最终验收与 Git commit。
+- 阶段：V1 阶段 1–7 已完成开发、验收和 Git 提交，当前进入云端部署验收。
 - 当前交付切片：一期“半包报价 + 主材库”；主材库在 V1 只实现半包标准工程项，不实现主材 SKU。
 - 代码：已包含 PostgreSQL 迁移、本地演示账号/项目、登录/退出/会话、服务端权限与审计、角色工作台、老板用户管理、项目与空间维护，主材库中半包 8 分区/161 项 V3 导入校验、版本发布和成本权限隔离，按空间编辑、数量规则、四位小数服务端计价、提交审批、退回修订、版本对比、不可变快照，以及客户版 PDF/XLSX 导出。
 - 执行计划：[V1 半包报价可执行开发计划](./docs/product/v1-half-package-development-plan.md)。
@@ -94,6 +94,11 @@ pnpm build
 和 MinIO 均在该虚拟机内通过 Docker Engine 与 Compose 运行。生产环境不使用
 Docker Desktop，也不在 Windows 宿主机中分别安装 Node.js、PostgreSQL 和 MinIO。
 
-当前 `compose.yaml` 只服务于本地开发。正式上线前将另行建立
-`compose.prod.yaml`，并完成域名、HTTPS、密钥、异机备份、日志轮转和恢复演练配置。
-详细决定见 [ADR-0001](./docs/adr/0001-local-development-and-windows-server-production.md)。
+`compose.yaml` 只服务于本地开发；`compose.prod.yaml` 定义 Linux 服务器完整应用栈。
+测试服务器允许显式的 IP + HTTP 配置；正式上线仍必须完成域名、HTTPS、
+异机备份、日志巡检和恢复演练。原始运行决定见
+[ADR-0001](./docs/adr/0001-local-development-and-windows-server-production.md)。
+
+当前可移植 Linux Docker 部署方式、测试服务器限制、升级与回滚命令见
+[部署手册](./docs/operations/deployment.md) 和
+[ADR-0003](./docs/adr/0003-portable-linux-compose-deployment.md)。
