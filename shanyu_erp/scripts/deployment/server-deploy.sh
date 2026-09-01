@@ -37,10 +37,11 @@ fi
 compose run --rm --no-deps api node scripts/run-migrations.mjs up
 
 ADMIN_PASSWORD="$(env_value ADMIN_INITIAL_PASSWORD)"
-export ADMIN_PASSWORD
-compose run --rm --no-deps \
-  -e ADMIN_PASSWORD \
-  api node scripts/bootstrap-admin.mjs
+printf '%s\n' "$ADMIN_PASSWORD" | \
+  compose run --rm -T --no-deps api sh -lc \
+    'IFS= read -r ADMIN_PASSWORD
+     export ADMIN_PASSWORD
+     exec node scripts/bootstrap-admin.mjs'
 unset ADMIN_PASSWORD
 
 compose up -d --wait --wait-timeout 180

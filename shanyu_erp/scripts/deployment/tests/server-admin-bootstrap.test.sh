@@ -344,6 +344,11 @@ cat >"$deploy_bin/curl" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
+cat >"$deploy_bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+unset ADMIN_PASSWORD
+exec "$@"
+EOF
 cat >"$deploy_bin/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -351,8 +356,19 @@ printf '%s\n' "$*" >>"$FAKE_DEPLOY_DOCKER_LOG"
 if [[ "$*" == *"exec -T postgres"* ]]; then
   printf '1\n'
 fi
+if [[ "$*" == *"bootstrap-admin.mjs"* ]]; then
+  IFS= read -r bootstrap_password
+  if [ "$bootstrap_password" != 'Shanyu123!' ]; then
+    echo "Deployment did not pass the configured ADMIN password over stdin." >&2
+    exit 1
+  fi
+fi
 EOF
-chmod +x "$deploy_bin/stat" "$deploy_bin/curl" "$deploy_bin/docker"
+chmod +x \
+  "$deploy_bin/stat" \
+  "$deploy_bin/curl" \
+  "$deploy_bin/sudo" \
+  "$deploy_bin/docker"
 
 FAKE_DEPLOY_DOCKER_LOG="$deploy_log" \
 FAKE_DEPLOY_BACKUP_LOG="$backup_log" \
@@ -374,6 +390,7 @@ if grep -q "role = 'ADMIN'" "$deploy_log"; then
   exit 1
 fi
 echo "PASS deployment always delegates idempotent ADMIN initialization"
+echo "PASS deployment passes the ADMIN password through sudo over stdin"
 
 if [ "$(sed -n '1p' "$backup_log")" != "1" ]; then
   echo "Deployment did not require a successful backup before migrating an existing database." >&2
