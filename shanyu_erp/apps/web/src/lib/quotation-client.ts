@@ -1,5 +1,5 @@
 import type {
-  HalfPackageApprovalAction,
+  HalfPackageApprovalDecision,
   HalfPackageExportFormat,
   HalfPackageExportResponse,
   HalfPackageVersionCompareResponse,
@@ -73,7 +73,7 @@ export async function submitQuotation(
 
 export async function decideQuotation(
   quotationId: string,
-  action: HalfPackageApprovalAction,
+  action: HalfPackageApprovalDecision,
   reason: string | null,
   fetcher: Fetcher = fetch,
 ): Promise<HalfPackageQuotation> {

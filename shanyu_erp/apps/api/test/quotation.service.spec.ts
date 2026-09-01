@@ -4,7 +4,11 @@ import {
   ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
-import type { ProjectDetail, SessionUser } from "@shanyu/contracts";
+import type {
+  HalfPackageApprovalDecision,
+  ProjectDetail,
+  SessionUser,
+} from "@shanyu/contracts";
 import ExcelJS from "exceljs";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -419,6 +423,21 @@ describe("QuotationService", () => {
     expect(audits.at(-1)).toMatchObject({ action: "QUOTATION_SUBMITTED" });
   });
 
+  it("lists pending approvals with the current business margin snapshot", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    await service.submit(lead, project.id, draft.revision);
+
+    await expect(service.listPendingApprovals(owner)).resolves.toEqual([
+      expect.objectContaining({
+        expectedCost: "10582.2000",
+        grossMarginRate: "0.0000",
+        grossProfit: "0.0000",
+        salesAmount: "10582.2000",
+        thirdPartyPurchaseAmount: null,
+      }),
+    ]);
+  });
+
   it("allows only the owner to approve and exports an approved customer workbook", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const submitted = await service.submit(lead, project.id, draft.revision);
@@ -485,24 +504,18 @@ describe("QuotationService", () => {
     });
   });
 
-  it("requires a reason for special approval and records the decision", async () => {
+  it("does not offer special approval as a new approval action", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const submitted = await service.submit(lead, project.id, draft.revision);
-    await expect(
-      service.decide(owner, submitted.id, "SPECIAL_APPROVED", ""),
-    ).rejects.toBeInstanceOf(BadRequestException);
 
-    const approved = await service.decide(
-      owner,
-      submitted.id,
-      "SPECIAL_APPROVED",
-      "风险已确认",
-    );
-    expect(approved.status).toBe("APPROVED");
-    expect(audits.at(-1)).toMatchObject({
-      action: "QUOTATION_SPECIAL_APPROVED",
-      reason: "风险已确认",
-    });
+    await expect(
+      service.decide(
+        owner,
+        submitted.id,
+        "SPECIAL_APPROVED" as HalfPackageApprovalDecision,
+        "风险已确认",
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 

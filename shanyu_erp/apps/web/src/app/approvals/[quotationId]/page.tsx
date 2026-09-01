@@ -2,7 +2,12 @@ import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
-import { fetchQuotationVersion, fetchQuotationVersionCostMargin, fetchSession } from "@/lib/api-client";
+import {
+  fetchProject,
+  fetchQuotationVersion,
+  fetchQuotationVersionCostMargin,
+  fetchSession,
+} from "@/lib/api-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { ApprovalDetail } from "./approval-detail";
@@ -22,5 +27,15 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
     fetchQuotationVersionCostMargin(cookieHeader, quotationId),
   ]);
   if (!quotation || !costMargin) notFound();
-  return <AppShell active="approvals" user={session.user}><ApprovalDetail costMargin={costMargin} initialQuotation={quotation} /></AppShell>;
+  const project = await fetchProject(cookieHeader, quotation.projectId);
+  if (!project) notFound();
+  return (
+    <AppShell active="approvals" user={session.user}>
+      <ApprovalDetail
+        costMargin={costMargin}
+        initialQuotation={quotation}
+        project={project}
+      />
+    </AppShell>
+  );
 }

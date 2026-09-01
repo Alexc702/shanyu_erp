@@ -14,7 +14,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { fetchHalfPackageCostMargin, fetchSession } from "@/lib/api-client";
+import {
+  fetchHalfPackageCostMargin,
+  fetchQuotationVersionCostMargin,
+  fetchSession,
+} from "@/lib/api-client";
 import {
   formatMarginRate,
   marginStatus,
@@ -26,9 +30,13 @@ import { formatQuotationScopeName } from "@/lib/quotation-view-model";
 
 interface CostMarginPageProps {
   readonly params: Promise<{ projectId: string }>;
+  readonly searchParams: Promise<{ quotationId?: string }>;
 }
 
-export default async function CostMarginPage({ params }: CostMarginPageProps) {
+export default async function CostMarginPage({
+  params,
+  searchParams,
+}: CostMarginPageProps) {
   const cookieHeader = (await cookies()).toString();
   const session = await fetchSession(cookieHeader);
   if (!session) {
@@ -38,11 +46,17 @@ export default async function CostMarginPage({ params }: CostMarginPageProps) {
     notFound();
   }
   const { projectId } = await params;
-  const costMargin = await fetchHalfPackageCostMargin(cookieHeader, projectId);
-  if (!costMargin) {
+  const { quotationId } = await searchParams;
+  const costMargin = quotationId
+    ? await fetchQuotationVersionCostMargin(cookieHeader, quotationId)
+    : await fetchHalfPackageCostMargin(cookieHeader, projectId);
+  if (!costMargin || costMargin.projectId !== projectId) {
     notFound();
   }
   const scopes = orderCostMarginScopes(costMargin.scopes);
+  const detailsHref = quotationId
+    ? `/projects/${projectId}/quotation/cost-margin/details?quotationId=${encodeURIComponent(quotationId)}`
+    : `/projects/${projectId}/quotation/cost-margin/details`;
 
   return (
     <AppShell active="cost-margin" user={session.user}>
@@ -64,7 +78,7 @@ export default async function CostMarginPage({ params }: CostMarginPageProps) {
             </p>
           </div>
           <Button asChild className="h-9 border-border" variant="outline">
-            <Link href={`/projects/${projectId}/quotation/cost-margin/details`}>
+            <Link href={detailsHref}>
               查看工程项成本明细
             </Link>
           </Button>

@@ -13,7 +13,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { fetchHalfPackageCostMargin, fetchSession } from "@/lib/api-client";
+import {
+  fetchHalfPackageCostMargin,
+  fetchQuotationVersionCostMargin,
+  fetchSession,
+} from "@/lib/api-client";
 import {
   formatMarginRate,
   orderCostMarginScopes,
@@ -28,7 +32,7 @@ import {
 
 interface CostDetailsPageProps {
   readonly params: Promise<{ projectId: string }>;
-  readonly searchParams: Promise<{ scope?: string }>;
+  readonly searchParams: Promise<{ quotationId?: string; scope?: string }>;
 }
 
 export default async function CostDetailsPage({
@@ -44,12 +48,14 @@ export default async function CostDetailsPage({
     notFound();
   }
   const { projectId } = await params;
-  const costMargin = await fetchHalfPackageCostMargin(cookieHeader, projectId);
-  if (!costMargin) {
+  const { quotationId, scope: requestedScopeId } = await searchParams;
+  const costMargin = quotationId
+    ? await fetchQuotationVersionCostMargin(cookieHeader, quotationId)
+    : await fetchHalfPackageCostMargin(cookieHeader, projectId);
+  if (!costMargin || costMargin.projectId !== projectId) {
     notFound();
   }
   const scopes = orderCostMarginScopes(costMargin.scopes);
-  const requestedScopeId = (await searchParams).scope;
   const activeScope =
     scopes.find((scope) => scope.id === requestedScopeId) ?? scopes[0];
   if (!activeScope) {
@@ -64,14 +70,16 @@ export default async function CostDetailsPage({
             <nav className="quotation-breadcrumb" aria-label="面包屑">
               <Link href={`/projects/${projectId}`}>{costMargin.projectName}</Link>
               <span>/</span>
-              <Link href={`/projects/${projectId}/quotation/cost-margin`}>预计成本毛利</Link>
+              <Link href={costMarginHref(projectId, quotationId)}>预计成本毛利</Link>
               <span>/</span>
               <strong>工程项成本明细</strong>
             </nav>
             <h1>{costMargin.projectName} · 工程项成本明细</h1>
             <p>价格与成本均为报价版本快照</p>
           </div>
-          <Badge variant="warning">V1 草稿</Badge>
+          <Badge variant="warning">
+            V{costMargin.versionNumber} {statusLabel(costMargin.status)}
+          </Badge>
         </header>
 
         <section className="cost-metric-grid" aria-label="工程项成本摘要">
@@ -87,7 +95,7 @@ export default async function CostDetailsPage({
             {scopes.map((scope) => (
               <Link
                 className={scope.id === activeScope.id ? "active" : undefined}
-                href={`?scope=${scope.id}`}
+                href={scopeHref(scope.id, quotationId)}
                 key={scope.id}
               >
                 <span>{formatQuotationScopeName(scope.name)}</span>
@@ -154,4 +162,30 @@ function CostDetailMetric({ label, value }: { readonly label: string; readonly v
       <CardContent><span>{label}</span><strong>{value}</strong></CardContent>
     </Card>
   );
+}
+
+function costMarginHref(projectId: string, quotationId?: string): string {
+  const base = `/projects/${projectId}/quotation/cost-margin`;
+  return quotationId
+    ? `${base}?quotationId=${encodeURIComponent(quotationId)}`
+    : base;
+}
+
+function scopeHref(scopeId: string, quotationId?: string): string {
+  const params = new URLSearchParams({ scope: scopeId });
+  if (quotationId) params.set("quotationId", quotationId);
+  return `?${params.toString()}`;
+}
+
+function statusLabel(status: string): string {
+  return {
+    APPROVED: "已审批",
+    DRAFT: "草稿",
+    PENDING_APPROVAL: "待审批",
+    PENDING_PRICING: "待定价",
+    PENDING_SUPPLEMENT: "待补充",
+    RETURNED: "已退回",
+    SUPERSEDED: "已替代",
+    VOID: "已作废",
+  }[status] ?? status;
 }

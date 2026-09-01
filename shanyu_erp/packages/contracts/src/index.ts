@@ -266,25 +266,30 @@ export interface HalfPackageSubmissionCheckResponse {
   readonly check: HalfPackageSubmissionCheck;
 }
 
+export type HalfPackageApprovalDecision = "APPROVED" | "RETURNED";
+
 export type HalfPackageApprovalAction =
-  | "APPROVED"
-  | "SPECIAL_APPROVED"
-  | "RETURNED";
+  | HalfPackageApprovalDecision
+  | "SPECIAL_APPROVED";
 
 export interface DecideHalfPackageQuotationRequest {
-  readonly action: HalfPackageApprovalAction;
+  readonly action: HalfPackageApprovalDecision;
   readonly reason: string | null;
 }
 
 export interface HalfPackageApprovalSummary {
   readonly buildingArea: string;
   readonly customerName: string;
+  readonly expectedCost: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
   readonly id: string;
   readonly projectId: string;
   readonly projectName: string;
   readonly salesAmount: string;
   readonly status: HalfPackageQuotationStatus;
   readonly submittedAt: string | null;
+  readonly thirdPartyPurchaseAmount: string | null;
   readonly versionNumber: number;
 }
 
@@ -395,6 +400,7 @@ export interface HalfPackageCostMargin {
   readonly salesAmount: string;
   readonly scopes: readonly HalfPackageCostMarginScope[];
   readonly status: HalfPackageQuotationStatus;
+  readonly versionNumber: number;
 }
 
 export interface HalfPackageCostMarginResponse {

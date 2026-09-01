@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type {
-  HalfPackageApprovalAction,
+  HalfPackageApprovalDecision,
   HalfPackageApprovalSummary,
   HalfPackageCostMargin,
   HalfPackageSectionCode,
@@ -297,12 +297,16 @@ export class QuotationService {
         return {
           buildingArea: project.buildingArea,
           customerName: project.customerName,
+          expectedCost: quotation.expectedCost,
+          grossMarginRate: quotation.grossMarginRate,
+          grossProfit: quotation.grossProfit,
           id: quotation.id,
           projectId: quotation.projectId,
           projectName: quotation.projectName,
-          salesAmount: quotation.total,
+          salesAmount: quotation.directCost,
           status: quotation.status,
           submittedAt: quotation.submittedAt?.toISOString() ?? null,
+          thirdPartyPurchaseAmount: null,
           versionNumber: quotation.versionNumber,
         };
       }),
@@ -327,17 +331,17 @@ export class QuotationService {
   async decide(
     actor: SessionUser,
     quotationId: string,
-    action: HalfPackageApprovalAction,
+    action: HalfPackageApprovalDecision,
     reason: string | null,
   ): Promise<QuotationView> {
     this.accessPolicy.assertCanApproveQuotation(actor);
+    if (action !== "APPROVED" && action !== "RETURNED") {
+      throw new BadRequestException("审批操作仅支持批准或打回修改");
+    }
     const current = await this.authorizedVersion(actor, quotationId);
     const normalizedReason = reason?.trim() || null;
-    if (
-      (action === "RETURNED" || action === "SPECIAL_APPROVED") &&
-      !normalizedReason
-    ) {
-      throw new BadRequestException("退回或特批必须填写审批意见");
+    if (action === "RETURNED" && !normalizedReason) {
+      throw new BadRequestException("打回修改必须填写原因");
     }
     let decided: QuotationDraft;
     try {
@@ -357,11 +361,7 @@ export class QuotationService {
       await this.quotationRepository.createDraftFromVersion(decided, actor.id);
     }
     const auditAction =
-      action === "RETURNED"
-        ? "QUOTATION_RETURNED"
-        : action === "SPECIAL_APPROVED"
-          ? "QUOTATION_SPECIAL_APPROVED"
-          : "QUOTATION_APPROVED";
+      action === "RETURNED" ? "QUOTATION_RETURNED" : "QUOTATION_APPROVED";
     await this.auditRepository.append({
       action: auditAction,
       actorUserId: actor.id,
@@ -1041,6 +1041,7 @@ function toCostMargin(draft: QuotationDraft): HalfPackageCostMargin {
       spaceType: scope.spaceType,
     })),
     status: draft.status,
+    versionNumber: draft.versionNumber,
   };
 }
 

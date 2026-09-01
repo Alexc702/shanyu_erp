@@ -303,7 +303,7 @@ export class PgQuotationRepository implements QuotationRepository {
     const result = await this.database.query<QuotationRow>(
       `${quotationSelect}
         WHERE q.status = 'PENDING_APPROVAL'
-        ORDER BY q.submitted_at, q.id`,
+        ORDER BY q.submitted_at DESC, q.id`,
     );
     return Promise.all(
       result.rows.map((row) => this.hydrateDraft(this.database, row)),

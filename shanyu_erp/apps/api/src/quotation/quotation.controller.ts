@@ -295,9 +295,7 @@ function decisionInput(body: unknown): DecideHalfPackageQuotationRequest {
   const candidate = body as Record<string, unknown> | null;
   if (
     !candidate ||
-    !["APPROVED", "SPECIAL_APPROVED", "RETURNED"].includes(
-      String(candidate.action),
-    ) ||
+    !["APPROVED", "RETURNED"].includes(String(candidate.action)) ||
     (candidate.reason !== null && typeof candidate.reason !== "string")
   ) {
     throw new BadRequestException("审批信息不完整");

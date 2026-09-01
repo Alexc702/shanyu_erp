@@ -235,8 +235,21 @@ describe("half-package quotation HTTP interface", () => {
       .set("Cookie", ownerCookie)
       .expect(200)
       .expect(({ body }) => {
-        expect(body.quotations).toHaveLength(1);
+        expect(body.quotations).toEqual([
+          expect.objectContaining({
+            expectedCost: expect.any(String),
+            grossMarginRate: null,
+            grossProfit: expect.any(String),
+            salesAmount: expect.any(String),
+            thirdPartyPurchaseAmount: null,
+          }),
+        ]);
       });
+    await request(app.getHttpServer())
+      .post(`/approvals/half-package/${quotationId}/decision`)
+      .set("Cookie", ownerCookie)
+      .send({ action: "SPECIAL_APPROVED", reason: "不再提供特批" })
+      .expect(400);
     await request(app.getHttpServer())
       .post(`/approvals/half-package/${quotationId}/decision`)
       .set("Cookie", ownerCookie)
