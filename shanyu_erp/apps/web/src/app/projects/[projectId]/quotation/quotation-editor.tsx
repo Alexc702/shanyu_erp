@@ -3,8 +3,9 @@
 import type {
   HalfPackageQuotation,
   HalfPackageQuotationLine,
+  HalfPackageQuotationScope,
 } from "@shanyu/contracts";
-import { ChevronDown, Info } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 
@@ -33,13 +34,17 @@ import {
 } from "@/lib/quotation-view-model";
 
 interface QuotationEditorProps {
+  readonly buildingArea: string;
   readonly canViewCosts: boolean;
   readonly initialQuotation: HalfPackageQuotation;
+  readonly leadDesignerName: string;
 }
 
 export function QuotationEditor({
+  buildingArea,
   canViewCosts,
   initialQuotation,
+  leadDesignerName,
 }: QuotationEditorProps) {
   const initialScopes = orderQuotationScopes(initialQuotation.scopes);
   const [quotation, setQuotation] = useState(initialQuotation);
@@ -50,9 +55,6 @@ export function QuotationEditor({
     {},
   );
   const [savingLineId, setSavingLineId] = useState<string | null>(null);
-  const [focusedLine, setFocusedLine] = useState<HalfPackageQuotationLine | null>(
-    null,
-  );
   const [message, setMessage] = useState("已从服务端恢复草稿");
   const [error, setError] = useState<string | null>(null);
   const editable = quotation.status === "DRAFT";
@@ -63,15 +65,6 @@ export function QuotationEditor({
   const activeScope =
     orderedScopes.find((scope) => scope.id === activeScopeId) ??
     orderedScopes[0];
-  const selectedCount = useMemo(
-    () =>
-      quotation.scopes.reduce(
-        (count, scope) =>
-          count + scope.lines.filter((line) => line.selected).length,
-        0,
-      ),
-    [quotation.scopes],
-  );
 
   async function saveLine(
     line: HalfPackageQuotationLine,
@@ -122,8 +115,8 @@ export function QuotationEditor({
             <Link href={`/projects/${quotation.projectId}`}>{quotation.projectName}</Link>
             <span>/</span><span>半包报价</span><span>/</span><strong>{formatQuotationScopeName(activeScope.name)}</strong>
           </nav>
-          <h1>{quotation.projectName} · 半包报价</h1>
-          <p>主材库 V{quotation.templateVersion} · 标准单价只读 · 数量和选项按行保存</p>
+          <h1>{quotationScopeTitle(activeScope)}</h1>
+          <p>{scopeRuleDescription(activeScope)}</p>
         </div>
         <div className="quotation-actions">
           <div className="quotation-save-state" aria-live="polite">
@@ -166,55 +159,68 @@ export function QuotationEditor({
 
       <div className="quotation-workbench">
         <aside className="quotation-scope-nav" aria-label="空间和通用工程">
-          <p className="eyebrow">报价范围</p>
+          <p className="eyebrow">空间 / 通用工程</p>
           {orderedScopes.map((scope) => {
-            const count = scope.lines.filter((line) => line.selected).length;
             return (
               <button
                 className={scope.id === activeScope.id ? "scope-nav-item active" : "scope-nav-item"}
                 key={scope.id}
                 onClick={() => {
                   setActiveScopeId(scope.id);
-                  setFocusedLine(null);
                 }}
                 type="button"
               >
                 <span><strong>{formatQuotationScopeName(scope.name)}</strong><small>{scope.spaceType ? "空间" : "项目通用"}</small></span>
-                <span>{count}/{scope.lines.length}</span>
+                <span>{scopeItemCountLabel(scope)}</span>
               </button>
             );
           })}
         </aside>
 
         <section className="quotation-editor-panel">
-          <div className="quotation-scope-heading">
-            <div>
-              <p className="eyebrow">当前范围</p>
-              <h2>{formatQuotationScopeName(activeScope.name)}</h2>
-              <p>{scopeRuleDescription(activeScope.spaceType)}</p>
+          <div className="quotation-parameters-card">
+            <div className="quotation-parameters-title">
+              <h2>{formatQuotationScopeName(activeScope.name)}参数</h2>
+              <span
+                className={error ? "quotation-auto-save error" : "quotation-auto-save"}
+                aria-live="polite"
+              >
+                {error ? "保存失败" : savingLineId ? "正在保存…" : "自动保存"}
+              </span>
             </div>
-            <strong>¥ {formatQuotationMoney(activeScope.subtotal)}</strong>
-          </div>
-
-          <div className="quotation-parameters">
-            {activeScope.spaceType ? (
-              <>
-                <Parameter label="面积" value={`${formatDisplayNumber(activeScope.area)} M²`} />
-                <Parameter label="周长" value={`${formatDisplayNumber(activeScope.perimeter)} m`} />
-                <Parameter label="层高" value={`${formatDisplayNumber(activeScope.height)} m`} />
-              </>
-            ) : (
-              <Parameter label="作用范围" value="项目级通用工程" />
-            )}
-            <Parameter label="工程项" value={`${activeScope.lines.length} 项全部展示`} />
+            <div className="quotation-parameters">
+              {scopeParameters(
+                activeScope,
+                buildingArea,
+                quotation.templateVersion,
+                leadDesignerName,
+              ).map((parameter) => (
+                <Parameter
+                  key={parameter.label}
+                  label={parameter.label}
+                  value={parameter.value}
+                />
+              ))}
+            </div>
           </div>
 
           <div className="quotation-table-wrap">
             <table className="quotation-table">
+              <colgroup>
+                <col className="quotation-col-select" />
+                <col className="quotation-col-category" />
+                <col className="quotation-col-item" />
+                <col className="quotation-col-unit" />
+                <col className="quotation-col-quantity" />
+                <col className="quotation-col-price" />
+                <col className="quotation-col-amount" />
+                <col className="quotation-col-remarks" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>分类</th><th>工程项</th><th>单位</th><th>数量</th>
-                  <th>销售单价</th><th>销售金额</th><th>说明</th>
+                  <th aria-label="选择" />
+                  <th>分类</th><th>工程项目</th><th>单位</th><th>数量</th>
+                  <th>单价</th><th>金额</th><th>施工说明</th>
                 </tr>
               </thead>
               <tbody>
@@ -237,11 +243,13 @@ export function QuotationEditor({
                     <Fragment key={line.id}>
                       {showGroup && group ? (
                         <tr className="quotation-group-row">
-                          <td>{quotationLineCategory(line.itemName, line.sectionName, activeScope.spaceType)}</td>
+                          <td className="quotation-group-category" colSpan={2}>
+                            {quotationLineCategory(line.itemName, line.sectionName, activeScope.spaceType)}
+                          </td>
                           <td>
                             <div className="quotation-group-description">
-                              <strong>{group}</strong>
-                              <span>型号可多选 · 已选 {groupLines.filter((item) => item.selected).length} 项</span>
+                              <strong>{optionGroupTitle(group)}</strong>
+                              <span>{optionGroupSelectionLabel(group)} · 已选 {groupLines.filter((item) => item.selected).length} 项</span>
                             </div>
                           </td>
                           <td colSpan={4}>
@@ -268,23 +276,25 @@ export function QuotationEditor({
                         line.selected,
                       ) ? (
                       <tr className={line.selected ? "selected" : ""}>
+                        <td className="quotation-selection-cell">
+                          <Checkbox
+                            aria-label={`选择 ${line.itemName}`}
+                            checked={line.selected}
+                            disabled={saving || !editable}
+                            onCheckedChange={(checked) =>
+                              saveLine(
+                                line,
+                                checked === true,
+                                automatic || checked !== true
+                                  ? null
+                                  : (draftQuantities[line.id] ?? line.quantity),
+                              )
+                            }
+                          />
+                        </td>
                         <td>{quotationLineCategory(line.itemName, line.sectionName, activeScope.spaceType)}</td>
                         <td>
                           <div className="quotation-item-name">
-                            <Checkbox
-                              aria-label={`选择 ${line.itemName}`}
-                              checked={line.selected}
-                              disabled={saving || !editable}
-                              onCheckedChange={(checked) =>
-                                saveLine(
-                                  line,
-                                  checked === true,
-                                  automatic || checked !== true
-                                    ? null
-                                    : (draftQuantities[line.id] ?? line.quantity),
-                                )
-                              }
-                            />
                             <span><strong>{line.itemName}</strong>{automatic ? <small>{quantitySourceLabel(line.quantitySource)}</small> : null}</span>
                           </div>
                         </td>
@@ -315,15 +325,7 @@ export function QuotationEditor({
                         </td>
                         <td>¥ {formatQuotationMoney(line.saleUnitPrice)}</td>
                         <td className="quotation-amount">{line.amount ? `¥ ${formatQuotationMoney(line.amount)}` : "—"}</td>
-                        <td>
-                          <button
-                            className="quotation-remarks-button"
-                            onClick={() => setFocusedLine(line)}
-                            type="button"
-                          >
-                            <Info />{line.remarks ? "查看说明" : "计价口径"}
-                          </button>
-                        </td>
+                        <td className="quotation-remarks">{line.remarks ?? "—"}</td>
                       </tr>
                       ) : null}
                     </Fragment>
@@ -336,30 +338,13 @@ export function QuotationEditor({
 
         <aside className="quotation-summary">
           <section>
-            <p className="eyebrow">当前范围</p>
-            <strong>¥ {formatQuotationMoney(activeScope.subtotal)}</strong>
-            <small>{activeScope.lines.filter((line) => line.selected).length} / {activeScope.lines.length} 项已选择</small>
+            <p className="quotation-summary-title">当前分区</p>
+            <strong>已计价 ¥ {formatQuotationMoney(activeScope.subtotal)}</strong>
+            <small>{emptyQuantityCount(activeScope)} 项数量为空＝{emptyQuantityNote(activeScope)}</small>
           </section>
           <section>
-            <p className="eyebrow">半包实时总价</p>
-            <dl>
-              <div><dt>直接费</dt><dd>¥ {formatQuotationMoney(quotation.directCost)}</dd></div>
-              <div><dt>管理费 10%</dt><dd>¥ {formatQuotationMoney(quotation.managementFee)}</dd></div>
-            </dl>
+            <p className="quotation-total-label">半包实时总价</p>
             <strong className="quotation-total">¥ {formatQuotationMoney(quotation.total)}</strong>
-            <small>{selectedCount} 项已选择 · 内部四位小数计价</small>
-          </section>
-          <section className="quotation-checks">
-            <p className="eyebrow">提交前检查</p>
-            <p>✓ 标准销售价来自已发布主材库</p>
-            <p>✓ 161 项按空间类型完整映射</p>
-            <p>✓ 地砖 / 墙砖 / 找平可多选</p>
-            <p>{editable ? "提交前请完成所有已选工程项数量" : `当前版本状态：${quotation.status}`}</p>
-          </section>
-          <section className="quotation-explanation">
-            <p className="eyebrow">施工说明</p>
-            <h3>{focusedLine?.itemName ?? "点击工程项查看口径"}</h3>
-            <p>{focusedLine?.remarks ?? "说明只展示 Excel 原始内容；没有提供的局部参数不会被臆造。"}</p>
           </section>
         </aside>
       </div>
@@ -415,10 +400,140 @@ function Parameter({ label, value }: { readonly label: string; readonly value: s
   return <div><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function scopeRuleDescription(spaceType: HalfPackageQuotation["scopes"][number]["spaceType"]): string {
-  return spaceType
-    ? "展示本空间对应的全部工程项，未选项不计价。"
-    : "项目级通用工程按已确认规则计算，复杂口径保持手工填写。";
+function scopeRuleDescription(scope: HalfPackageQuotationScope): string {
+  const sectionName = primarySectionName(scope);
+  if (sectionName.includes("砌墙工程")) {
+    return "数量默认留空，由主案设计师按实际工程填写";
+  }
+  if (sectionName.includes("客餐厅工程")) {
+    return hasIncludedBalconyItems(scope)
+      ? "地砖、墙砖、找平均可多选；每一行独立填写数量并计价，包阳台项单独归属客餐厅"
+      : "地砖、墙砖、找平均可多选；每一行独立填写数量并计价";
+  }
+  if (sectionName.includes("卧室工程")) {
+    return "所有卧室共用同一模板；地砖、墙砖、找平均可多选并分别计量";
+  }
+  if (sectionName.includes("厨卫工程")) {
+    return "厨房、主卫、公卫共用半包工程项目模板；不需要的项目保持数量为空";
+  }
+  if (sectionName.includes("阳台工程")) {
+    return "独立阳台与客餐厅包阳台分别归属、计量、汇总和导出";
+  }
+  if (sectionName.includes("油漆工程")) {
+    return "3 项数量均直接读取项目建筑面积";
+  }
+  if (sectionName.includes("水电工程")) {
+    return "面积型项目读取建筑面积；其余项目数量留空，由主案设计师按方案填写";
+  }
+  return "第 1 项按实际车数手填；第 2、3 项按项目建筑面积自动填写";
+}
+
+function quotationScopeTitle(scope: HalfPackageQuotationScope): string {
+  const sectionName = primarySectionName(scope);
+  if (!scope.spaceType) return sectionName;
+  if (scope.spaceType === "LIVING_DINING") {
+    return hasIncludedBalconyItems(scope)
+      ? `${sectionName}（包阳台）`
+      : sectionName;
+  }
+  if (scope.spaceType === "CLOSET") return "三、衣帽间工程";
+  if (sectionName.includes("厨卫工程")) {
+    return `八、${formatQuotationScopeName(scope.name)}工程`;
+  }
+  if (sectionName.includes("阳台工程")) {
+    return `七、${formatQuotationScopeName(scope.name)}工程`;
+  }
+  return sectionName;
+}
+
+function scopeParameters(
+  scope: HalfPackageQuotationScope,
+  buildingArea: string,
+  templateVersion: number,
+  leadDesignerName: string,
+): readonly { readonly label: string; readonly value: string }[] {
+  if (scope.spaceType) {
+    const parameters = [
+      { label: "空间名称", value: formatQuotationScopeName(scope.name) },
+      { label: "面积", value: `${formatDisplayNumber(scope.area)}㎡` },
+      { label: "周长", value: `${formatDisplayNumber(scope.perimeter)}m` },
+      { label: "层高", value: `${formatDisplayNumber(scope.height)}m` },
+    ];
+    return hasIncludedBalconyItems(scope)
+      ? [...parameters, { label: "包阳台", value: "已勾选" }]
+      : parameters;
+  }
+
+  const sectionName = primarySectionName(scope);
+  const common = [
+    { label: "作用范围", value: "项目级通用工程" },
+    { label: "建筑面积", value: `${formatDisplayNumber(buildingArea)}㎡` },
+  ];
+  if (sectionName.includes("油漆工程")) {
+    return [
+      ...common,
+      { label: "数量来源", value: "全部自动" },
+      { label: "变更规则", value: "面积变化时提示差异" },
+    ];
+  }
+  if (sectionName.includes("水电工程")) {
+    return [
+      ...common,
+      { label: "自动项", value: "第1–6、9项" },
+      { label: "其余数量", value: `${leadDesignerName} 手填` },
+    ];
+  }
+  if (sectionName.includes("其他工程")) {
+    return [
+      ...common,
+      { label: "自动项", value: "第2、3项" },
+      { label: "手填项", value: "垃圾外运车数" },
+    ];
+  }
+  return [
+    ...common,
+    { label: "数量规则", value: "全部手填" },
+    { label: "模板版本", value: `半包 V${templateVersion}` },
+  ];
+}
+
+function primarySectionName(scope: HalfPackageQuotationScope): string {
+  return scope.lines[0]?.sectionName ?? scope.name;
+}
+
+function hasIncludedBalconyItems(scope: HalfPackageQuotationScope): boolean {
+  return scope.lines.some((line) => line.sectionName.includes("阳台工程"));
+}
+
+function scopeItemCountLabel(scope: HalfPackageQuotationScope): string {
+  const counts = new Map<string, number>();
+  for (const line of scope.lines) {
+    counts.set(line.sectionName, (counts.get(line.sectionName) ?? 0) + 1);
+  }
+  return [...counts.values()].join("+");
+}
+
+function emptyQuantityCount(scope: HalfPackageQuotationScope): number {
+  return scope.lines.filter((line) => line.quantity === null).length;
+}
+
+function emptyQuantityNote(scope: HalfPackageQuotationScope): string {
+  const sectionName = primarySectionName(scope);
+  return sectionName.includes("砌墙工程") || hasIncludedBalconyItems(scope)
+    ? "本项目暂不需要"
+    : "暂不需要";
+}
+
+function optionGroupTitle(
+  group: NonNullable<ReturnType<typeof quotationOptionGroup>>,
+): string {
+  return group === "找平做法" ? "地面找平" : group;
+}
+
+function optionGroupSelectionLabel(
+  group: NonNullable<ReturnType<typeof quotationOptionGroup>>,
+): string {
+  return group === "找平做法" ? "做法可多选" : "型号可多选";
 }
 
 function quantitySourceLabel(source: HalfPackageQuotationLine["quantitySource"]): string {

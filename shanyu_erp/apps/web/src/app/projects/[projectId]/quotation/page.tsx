@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import {
   fetchHalfPackageQuotation,
+  fetchProject,
   fetchSession,
 } from "@/lib/api-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
@@ -25,16 +26,21 @@ export default async function QuotationPage({ params }: QuotationPageProps) {
     notFound();
   }
   const { projectId } = await params;
-  const quotation = await fetchHalfPackageQuotation(cookieHeader, projectId);
-  if (!quotation) {
+  const [quotation, project] = await Promise.all([
+    fetchHalfPackageQuotation(cookieHeader, projectId),
+    fetchProject(cookieHeader, projectId),
+  ]);
+  if (!quotation || !project) {
     notFound();
   }
 
   return (
     <AppShell active="quotation" user={session.user}>
       <QuotationEditor
+        buildingArea={project.buildingArea}
         canViewCosts={hasOwnerAccess}
         initialQuotation={quotation}
+        leadDesignerName={project.leadDesigner.displayName}
       />
     </AppShell>
   );

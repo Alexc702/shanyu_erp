@@ -172,7 +172,7 @@ export function VersionHistory({
       <div className="type-support flex items-center gap-2 rounded-lg bg-info-soft px-3 py-2.5">
         <Info className="size-4 shrink-0 text-primary" />
         <span>
-          版本由新建项目、保存草稿、提交审批及审批状态变化自动生成；版本号不可复用、删除，也不提供“复制为新版本”。
+          版本由新建项目、保存草稿、提交审批及审批状态变化自动生成。
         </span>
       </div>
 
@@ -284,13 +284,6 @@ export function VersionHistory({
               </TableBody>
             </Table>
           </Card>
-
-          <div className="type-support flex items-center gap-2 rounded-lg bg-warning-soft px-3 py-2">
-            <ShieldAlert className="size-3.5 shrink-0 text-warning" />
-            <span>
-              同一项目任一时刻只有一个当前有效版本，且最多一个待审批版本；提交、撤回、批准、退回和打回均需校验当前状态。
-            </span>
-          </div>
 
           <div className="type-support grid gap-1.5 rounded-lg bg-muted px-3 py-2.5 text-muted-foreground">
             <strong className="flex items-center gap-1.5 text-foreground">
