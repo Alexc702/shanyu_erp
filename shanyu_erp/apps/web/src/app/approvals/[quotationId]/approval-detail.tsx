@@ -30,7 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { apiUrl } from "@/lib/api-client";
+import { apiUrl } from "@/lib/api-url";
 import {
   createQuotationExport,
   decideQuotation,
@@ -119,20 +119,20 @@ export function ApprovalDetail({
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="grid gap-1">
           <Link
-            className="mb-1 w-fit text-[13px] font-medium text-primary hover:underline"
+            className="type-action mb-1 w-fit text-primary hover:underline"
             href="/approvals"
           >
             ← 返回审批列表
           </Link>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="m-0 text-2xl font-bold tracking-tight">
+            <h1 className="type-page-title m-0 tracking-tight">
               {quotation.projectName} · V{quotation.versionNumber}
             </h1>
             <Badge variant={pending ? "default" : "success"}>
               {statusLabel(quotation.status)}
             </Badge>
           </div>
-          <p className="m-0 text-[13px] text-muted-foreground">
+          <p className="type-body m-0 text-muted-foreground">
             提交于 {formatDateTime(quotation.submittedAt)} · 模板 半包 V
             {quotation.templateVersion} · 快照只读
           </p>
@@ -183,7 +183,7 @@ export function ApprovalDetail({
 
       {error ? (
         <p
-          className="m-0 rounded-md bg-destructive-soft px-3 py-2 text-sm text-destructive"
+          className="type-body m-0 rounded-md bg-destructive-soft px-3 py-2 text-destructive"
           role="alert"
         >
           {error}
@@ -215,7 +215,7 @@ export function ApprovalDetail({
 
           <Card className="border-border py-0 shadow-none">
             <CardContent className="p-4">
-              <h2 className="mb-3 text-lg font-semibold">半包分区与异常</h2>
+              <h2 className="type-section-title mb-3">半包分区与异常</h2>
               <div className="divide-y divide-border">
                 <ValidationRow
                   detail="无缺价或缺成本"
@@ -245,17 +245,17 @@ export function ApprovalDetail({
 
         <Card className="border-border py-0 shadow-none">
           <CardContent className="grid gap-3 p-4">
-            <h2 className="text-lg font-semibold">审批检查</h2>
-            <div className="grid gap-2 text-[13px]">
+            <h2 className="type-section-title">审批检查</h2>
+            <div className="type-table-body grid gap-2">
               <CheckLine>无阻断项</CheckLine>
               <CheckLine>成本与毛利可计算</CheckLine>
               <CheckLine>客户导出不含成本</CheckLine>
             </div>
-            <p className="m-0 rounded-md bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
+            <p className="type-support m-0 rounded-md bg-warning-soft px-3 py-2 text-warning">
               特批必须填写原因并写入版本审计日志。
             </p>
             <label
-              className="text-xs font-semibold"
+              className="type-action"
               htmlFor="approval-special-reason"
             >
               审批意见 / 特批原因
@@ -288,7 +288,7 @@ export function ApprovalDetail({
       <Dialog onOpenChange={setReturnOpen} open={returnOpen}>
         <DialogContent className="max-w-[550px] border-border">
           <DialogHeader className="gap-2">
-            <DialogTitle className="text-xl">
+            <DialogTitle>
               退回报价 V{quotation.versionNumber}
             </DialogTitle>
             <DialogDescription>
@@ -296,7 +296,7 @@ export function ApprovalDetail({
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
-            <label className="text-xs font-semibold" htmlFor="return-reason">
+            <label className="type-form-label" htmlFor="return-reason">
               退回原因 *
             </label>
             <Textarea
@@ -307,7 +307,7 @@ export function ApprovalDetail({
               value={returnReason}
             />
           </div>
-          <p className="m-0 rounded-md bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
+          <p className="type-support m-0 rounded-md bg-warning-soft px-3 py-2 text-warning">
             原因、操作者、时间和版本将写入审计日志。
           </p>
           <DialogFooter>
@@ -342,7 +342,7 @@ function SnapshotMetric({
 }) {
   return (
     <div className="grid gap-2 rounded-md bg-muted/70 p-3">
-      <span className="text-[11px] font-medium text-muted-foreground">
+      <span className="type-support text-muted-foreground">
         {label}
       </span>
       <strong className="text-xl leading-none tracking-tight">{value}</strong>
@@ -362,7 +362,7 @@ function ValidationRow({
   readonly warning?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(150px,220px)] items-center gap-3 py-3 text-[13px]">
+    <div className="type-table-body grid grid-cols-[minmax(0,1fr)_auto_minmax(150px,220px)] items-center gap-3 py-3">
       <strong>{label}</strong>
       <Badge variant={warning ? "warning" : "success"}>{status}</Badge>
       <span className="text-muted-foreground">{detail}</span>

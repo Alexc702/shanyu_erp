@@ -19,7 +19,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { apiUrl } from "@/lib/api-client";
+import { apiUrl } from "@/lib/api-url";
+import { createSpaceDraftKey } from "@/lib/space-draft-key";
 
 interface CreateProjectFormProps {
   readonly currentUser: SessionUser;
@@ -246,7 +247,7 @@ function draftSpace(type: SpaceType, displayName: string): SpaceDraft {
     displayName,
     height: "",
     includesBalcony: false,
-    key: crypto.randomUUID(),
+    key: createSpaceDraftKey(),
     perimeter: "",
     type,
   };

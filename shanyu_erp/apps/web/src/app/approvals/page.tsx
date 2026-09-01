@@ -28,13 +28,13 @@ export default async function ApprovalsPage() {
 
   return (
     <AppShell active="approvals" user={session.user}>
-      <main className="workflow-page !gap-4 !p-6">
-        <header className="workflow-header !items-center">
+      <main className="compact-workflow-page workflow-page">
+        <header className="centered-workflow-header workflow-header">
           <div className="grid gap-1">
-            <h1 className="!m-0 !text-2xl">报价审批</h1>
-            <p className="!text-[13px]">查看全部待定价、待审批及异常版本</p>
+            <h1 className="type-page-title">报价审批</h1>
+            <p className="type-body">查看全部待定价、待审批及异常版本</p>
           </div>
-          <Badge className="px-2 py-1 text-xs" variant="warning">
+          <Badge className="px-2 py-1" variant="warning">
             {quotations.length} 项待处理
           </Badge>
         </header>
@@ -72,7 +72,7 @@ export default async function ApprovalsPage() {
               );
             })}
             {quotations.length === 0 ? (
-              <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+              <div className="type-body flex h-40 items-center justify-center text-muted-foreground">
                 当前没有待审批报价
               </div>
             ) : null}
@@ -94,16 +94,16 @@ function ApprovalRow({
   return (
     <div className="grid grid-cols-[250px_110px_300px_140px_minmax(120px,1fr)] items-center gap-3 border-b border-border p-4 last:border-b-0">
       <div className="grid gap-1">
-        <strong className="text-sm">{quotation.projectName}</strong>
-        <span className="text-xs text-muted-foreground">
+        <strong className="type-entity">{quotation.projectName}</strong>
+        <span className="type-support text-muted-foreground">
           {leadDesignerName} · V{quotation.versionNumber}
         </span>
       </div>
       <Badge variant={status.variant}>{status.label}</Badge>
-      <span className="text-[13px] font-medium text-success">无阻断</span>
-      <strong className="text-sm">¥{displayMoney(quotation.salesAmount)}</strong>
+      <span className="type-action text-success">无阻断</span>
+      <strong className="type-entity">¥{displayMoney(quotation.salesAmount)}</strong>
       <Link
-        className="text-[13px] font-semibold text-primary hover:underline"
+        className="type-action text-primary hover:underline"
         href={`/approvals/${quotation.id}`}
       >
         查看详情 →

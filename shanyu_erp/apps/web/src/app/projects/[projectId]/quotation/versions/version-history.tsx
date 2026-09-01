@@ -39,7 +39,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { apiUrl } from "@/lib/api-client";
+import { apiUrl } from "@/lib/api-url";
 import {
   compareQuotationVersions,
   createQuotationExport,
@@ -124,7 +124,7 @@ export function VersionHistory({
     <main className="grid gap-3 p-5 xl:p-7">
       <header className="grid gap-2">
         <Link
-          className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          className="type-action inline-flex w-fit items-center gap-1.5 text-muted-foreground hover:text-foreground"
           href={`/projects/${project.id}`}
         >
           <ArrowLeft className="size-3.5" />
@@ -134,13 +134,13 @@ export function VersionHistory({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="grid gap-1">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="m-0 text-2xl font-bold tracking-tight">项目版本管理</h1>
+              <h1 className="type-page-title m-0 tracking-tight">项目版本管理</h1>
               <Badge variant="success">{projectStage(currentVersion.status)}</Badge>
               <Badge variant={statusVariant(currentVersion.status)}>
                 报价阶段 · {statusLabel(currentVersion.status)}
               </Badge>
             </div>
-            <p className="m-0 text-xs text-muted-foreground">
+            <p className="type-support m-0 text-muted-foreground">
               {project.name} · {project.customerName} · 主案 {project.leadDesigner.displayName} ·
               当前有效版本 V{currentVersion.versionNumber}
             </p>
@@ -168,7 +168,7 @@ export function VersionHistory({
         </div>
       </header>
 
-      <div className="flex items-center gap-2 rounded-lg bg-info-soft px-3 py-2.5 text-xs leading-5">
+      <div className="type-support flex items-center gap-2 rounded-lg bg-info-soft px-3 py-2.5">
         <Info className="size-4 shrink-0 text-primary" />
         <span>
           版本由新建项目、保存草稿、提交审批及审批状态变化自动生成；版本号不可复用、删除，也不提供“复制为新版本”。
@@ -177,7 +177,7 @@ export function VersionHistory({
 
       {error ? (
         <p
-          className="m-0 rounded-lg bg-destructive-soft px-3 py-2 text-sm text-destructive"
+          className="type-body m-0 rounded-lg bg-destructive-soft px-3 py-2 text-destructive"
           role="alert"
         >
           {error}
@@ -189,10 +189,10 @@ export function VersionHistory({
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="grid gap-0.5">
               <div className="flex items-center gap-2">
-                <h2 className="m-0 text-base font-bold">全部版本</h2>
+                <h2 className="type-section-title m-0">全部版本</h2>
                 <Badge variant="secondary">共 {versions.length} 个版本</Badge>
               </div>
-              <p className="m-0 text-[11px] text-muted-foreground">
+              <p className="type-support m-0 text-muted-foreground">
                 按生成时间倒序；点击任一版本查看只读快照。
               </p>
             </div>
@@ -284,14 +284,14 @@ export function VersionHistory({
             </Table>
           </Card>
 
-          <div className="flex items-center gap-2 rounded-lg bg-warning-soft px-3 py-2 text-[11px] leading-4">
+          <div className="type-support flex items-center gap-2 rounded-lg bg-warning-soft px-3 py-2">
             <ShieldAlert className="size-3.5 shrink-0 text-warning" />
             <span>
               同一项目任一时刻只有一个当前有效版本，且最多一个待审批版本；提交、撤回、批准、退回和打回均需校验当前状态。
             </span>
           </div>
 
-          <div className="grid gap-1.5 rounded-lg bg-muted px-3 py-2.5 text-[11px] leading-4 text-muted-foreground">
+          <div className="type-support grid gap-1.5 rounded-lg bg-muted px-3 py-2.5 text-muted-foreground">
             <strong className="flex items-center gap-1.5 text-foreground">
               <LockKeyhole className="size-3.5" />
               角色与状态决定可用操作
@@ -309,13 +309,13 @@ export function VersionHistory({
             >
               <CardContent className="grid gap-3 p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="m-0 text-base font-bold">版本差异</h2>
+                  <h2 className="type-section-title m-0">版本差异</h2>
                   <Badge variant="secondary">
                     {comparisonLabel} · {differences.length} 项
                   </Badge>
                 </div>
                 {differences.length === 0 ? (
-                  <p className="m-0 text-sm text-muted-foreground">两个版本无业务差异。</p>
+                  <p className="type-body m-0 text-muted-foreground">两个版本无业务差异。</p>
                 ) : (
                   <Table>
                     <TableHeader>
@@ -357,17 +357,17 @@ export function VersionHistory({
           <Card className="border-border py-0 shadow-none">
             <CardContent className="grid gap-3 p-4">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="m-0 text-base font-bold">客户文件与导出</h2>
+                <h2 className="type-section-title m-0">客户文件与导出</h2>
                 <Badge variant={exportable ? "success" : "secondary"}>
                   {exportable ? "可导出" : "尚未批准"}
                 </Badge>
               </div>
-              <strong className="text-sm">客户版 PDF / XLSX</strong>
-              <p className="m-0 text-[11px] leading-4 text-muted-foreground">
+              <strong className="type-entity">客户版 PDF / XLSX</strong>
+              <p className="type-support m-0 text-muted-foreground">
                 项目 {project.name} · 报价 V{currentVersion.versionNumber} · 模板 V
                 {currentTemplateVersion ?? "—"}
               </p>
-              <div className="flex items-start gap-2 rounded-md bg-info-soft px-2.5 py-2 text-[11px] leading-4">
+              <div className="type-support flex items-start gap-2 rounded-md bg-info-soft px-2.5 py-2">
                 <Info className="mt-0.5 size-3.5 shrink-0 text-primary" />
                 <span>客户文件不包含成本、返点、毛利或内部审批信息。</span>
               </div>
@@ -382,8 +382,8 @@ export function VersionHistory({
           <Card className="border-border py-0 shadow-none">
             <CardContent className="grid gap-3 p-4">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="m-0 text-base font-bold">最近操作日志</h2>
-                <span className="text-[11px] text-muted-foreground">不可修改</span>
+                <h2 className="type-section-title m-0">最近操作日志</h2>
+                <span className="type-support text-muted-foreground">不可修改</span>
               </div>
               {projectEvents.length ? (
                 <div className="divide-y divide-border">
@@ -393,15 +393,15 @@ export function VersionHistory({
                         <Clock3 className="size-3.5" />
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="flex justify-between gap-2 text-xs">
+                        <div className="type-table-body flex justify-between gap-2">
                           <strong className="truncate">
                             {event.actorDisplayName ?? "系统"} · {auditActionLabel(event.action)}
                           </strong>
-                          <time className="shrink-0 text-[10px] text-muted-foreground">
+                          <time className="type-support shrink-0 text-muted-foreground">
                             {formatShortTime(event.occurredAt)}
                           </time>
                         </div>
-                        <p className="m-0 mt-0.5 text-[10px] text-muted-foreground">
+                        <p className="type-support m-0 mt-0.5 text-muted-foreground">
                           {auditVersionFlow(event)}
                         </p>
                       </div>
@@ -409,7 +409,7 @@ export function VersionHistory({
                   ))}
                 </div>
               ) : (
-                <p className="m-0 rounded-md bg-muted px-3 py-4 text-center text-xs text-muted-foreground">
+                <p className="type-support m-0 rounded-md bg-muted px-3 py-4 text-center text-muted-foreground">
                   暂无可显示的项目日志
                 </p>
               )}
@@ -446,11 +446,11 @@ function CurrentVersionCard({
     <Card className="border-border py-0 shadow-none">
       <CardContent className="grid gap-3 p-4">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="m-0 text-base font-bold">当前有效版本</h2>
+          <h2 className="type-section-title m-0">当前有效版本</h2>
           <Badge variant="secondary">{user.displayName}视角</Badge>
         </div>
         <div className="flex items-center gap-2">
-          <strong className="text-3xl leading-none">V{version.versionNumber}</strong>
+          <strong className="type-key-amount">V{version.versionNumber}</strong>
           <Badge variant={statusVariant(version.status)}>{statusLabel(version.status)}</Badge>
         </div>
         <InfoRow
@@ -485,7 +485,7 @@ function CurrentVersionCard({
               <ShieldAlert />
               打回并说明原因
             </Button>
-            <p className="m-0 text-[10px] leading-4 text-muted-foreground">
+            <p className="type-support m-0 text-muted-foreground">
               打回后应自动生成新的“已退回”版本；当前快照永久保留。
             </p>
           </>
@@ -547,7 +547,7 @@ function VersionSelect({
   return (
     <select
       aria-label={ariaLabel}
-      className="h-8 rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+      className="type-table-body h-9 rounded-md border border-border bg-background px-2 outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
       onChange={(event) => onChange(event.target.value)}
       value={value}
     >
@@ -562,7 +562,7 @@ function VersionSelect({
 
 function InfoRow({ label, value }: { readonly label: string; readonly value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border pb-2 text-xs">
+    <div className="type-table-body flex items-center justify-between gap-3 border-b border-border pb-2">
       <span className="text-muted-foreground">{label}</span>
       <strong className="text-right">{value}</strong>
     </div>

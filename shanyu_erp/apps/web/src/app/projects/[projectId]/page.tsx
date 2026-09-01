@@ -26,7 +26,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  apiUrl,
   fetchHalfPackageQuotation,
   fetchProject,
   fetchPublishedCatalog,
@@ -34,7 +33,9 @@ import {
   fetchQuotationVersions,
   fetchSession,
 } from "@/lib/api-client";
+import { apiUrl } from "@/lib/api-url";
 import { formatQuotationMoney } from "@/lib/quotation-client";
+import { serverApiUrl } from "@/lib/server-api-url";
 
 import { SpaceManager } from "./space-manager";
 
@@ -96,14 +97,14 @@ export default async function ProjectPage({
         <section className="flex flex-wrap items-center justify-between gap-4">
           <div className="grid gap-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="m-0 text-2xl font-bold tracking-tight">
+              <h1 className="type-page-title m-0 tracking-tight">
                 {project.name} · {project.customerName}
               </h1>
               <Badge variant={approved ? "success" : "secondary"}>
                 {quoteStatusLabel(quotation.status)}
               </Badge>
             </div>
-            <p className="m-0 text-[13px] text-muted-foreground">
+            <p className="type-body m-0 text-muted-foreground">
               {Number(project.buildingArea).toFixed(2)}㎡ · 主案 {project.leadDesigner.displayName} · 木作设计师未指派 · 当前 V{quotation.versionNumber}
             </p>
           </div>
@@ -154,7 +155,7 @@ export default async function ProjectPage({
                 (label, index) => (
                   <div className="flex items-center gap-2" key={label}>
                     <span
-                      className={`grid size-7 place-items-center rounded-full text-xs font-semibold ${
+                      className={`type-status grid size-7 place-items-center rounded-full ${
                         index <= currentStep
                           ? "bg-primary text-primary-foreground"
                           : "bg-muted text-muted-foreground"
@@ -163,7 +164,7 @@ export default async function ProjectPage({
                       {index + 1}
                     </span>
                     <span
-                      className={`text-[13px] font-semibold ${
+                      className={`type-table-head ${
                         index === currentStep
                           ? "text-primary"
                           : "text-muted-foreground"
@@ -184,8 +185,8 @@ export default async function ProjectPage({
               <CardContent className="grid gap-3 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="grid gap-1">
-                    <h2 className="text-lg font-bold">半包工程</h2>
-                    <p className="m-0 text-xs text-muted-foreground">
+                    <h2 className="type-section-title">半包工程</h2>
+                    <p className="type-support m-0 text-muted-foreground">
                       {quotation.scopes.length} 个报价分区 · {standardItemCount} 个标准项 · 当前完成 {completion}%
                     </p>
                   </div>
@@ -201,11 +202,11 @@ export default async function ProjectPage({
                   />
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <strong className="text-base">
+                  <strong className="type-entity">
                     销售金额 ¥{displayMoney(quotation.total)}
                   </strong>
                   <Link
-                    className="text-[13px] font-semibold text-primary hover:underline"
+                    className="type-action text-primary hover:underline"
                     href={
                       approved
                         ? `/projects/${project.id}/quotation/versions`
@@ -220,7 +221,7 @@ export default async function ProjectPage({
 
             <Card className="border-border py-0 shadow-none">
               <CardContent className="grid gap-3 p-4">
-                <h2 className="text-base font-bold">V2 报价扩展（本轮不展开）</h2>
+                <h2 className="type-section-title">V2 报价扩展（本轮不展开）</h2>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                   {[
                     "主材报价",
@@ -233,8 +234,8 @@ export default async function ProjectPage({
                       className="grid gap-1.5 rounded-lg bg-muted p-3 opacity-70"
                       key={label}
                     >
-                      <strong className="text-[13px]">{label}</strong>
-                      <span className="text-[11px] text-muted-foreground">
+                      <strong className="type-table-head">{label}</strong>
+                      <span className="type-support text-muted-foreground">
                         V2 · 待正式模板
                       </span>
                     </div>
@@ -246,7 +247,7 @@ export default async function ProjectPage({
 
           <Card className="border-border py-0 shadow-none">
             <CardContent className="grid gap-3 p-4">
-              <h2 className="text-lg font-bold">项目与空间</h2>
+              <h2 className="type-section-title">项目与空间</h2>
               <ProjectInfoRow
                 label="建筑面积"
                 value={`${Number(project.buildingArea).toFixed(2)}㎡`}
@@ -271,10 +272,10 @@ export default async function ProjectPage({
                 label="报价模板"
                 value={`山屿标准半包 V${quotation.templateVersion}`}
               />
-              <p className="m-0 text-xs font-medium leading-5 text-warning">
+              <p className="type-support m-0 text-warning">
                 空间名称或参数可在空间调整中修改；影响自动项时以服务端重算结果为准。
               </p>
-              <p className="m-0 text-[11px] text-muted-foreground">
+              <p className="type-support m-0 text-muted-foreground">
                 共 {versions?.length ?? 1} 个报价版本
               </p>
             </CardContent>
@@ -295,7 +296,7 @@ function ExportMenu({ quotationId }: { readonly quotationId: string }) {
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="grid w-52 gap-2 p-2">
-        <p className="px-2 pt-1 text-xs font-semibold">客户版报价文件</p>
+        <p className="type-table-head px-2 pt-1">客户版报价文件</p>
         <form action={exportApprovedQuotation.bind(null, quotationId, "PDF")}>
           <Button className="w-full justify-start" type="submit" variant="ghost">
             <FileText />
@@ -308,7 +309,7 @@ function ExportMenu({ quotationId }: { readonly quotationId: string }) {
             导出 Excel
           </Button>
         </form>
-        <p className="flex items-center gap-1.5 border-t border-border px-2 pt-2 text-[11px] text-muted-foreground">
+        <p className="type-support flex items-center gap-1.5 border-t border-border px-2 pt-2 text-muted-foreground">
           <Download className="size-3" />
           文件仅包含客户报价内容
         </p>
@@ -324,7 +325,7 @@ async function exportApprovedQuotation(
   "use server";
   const cookieHeader = (await cookies()).toString();
   const response = await fetch(
-    `${apiUrl}/approvals/half-package/${quotationId}/exports`,
+    `${serverApiUrl}/approvals/half-package/${quotationId}/exports`,
     {
       body: JSON.stringify({ format }),
       cache: "no-store",
@@ -351,7 +352,7 @@ function ProjectInfoRow({
   readonly value: string;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-border py-2 text-xs">
+    <div className="type-support flex items-start justify-between gap-4 border-b border-border py-2">
       <span className="shrink-0 font-medium text-muted-foreground">{label}</span>
       <strong className="text-right">{value}</strong>
     </div>

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { apiUrl } from "@/lib/api-client";
+import { apiUrl } from "@/lib/api-url";
 
 export function LoginForm() {
   const router = useRouter();

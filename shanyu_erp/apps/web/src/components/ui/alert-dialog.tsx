@@ -68,7 +68,7 @@ export function AlertDialogTitle({
 }: ComponentProps<typeof AlertDialogPrimitive.Title>) {
   return (
     <AlertDialogPrimitive.Title
-      className={cn("text-lg font-semibold", className)}
+      className={cn("type-section-title", className)}
       {...props}
     />
   );
@@ -80,7 +80,7 @@ export function AlertDialogDescription({
 }: ComponentProps<typeof AlertDialogPrimitive.Description>) {
   return (
     <AlertDialogPrimitive.Description
-      className={cn("text-sm leading-6 text-muted-foreground", className)}
+      className={cn("type-body text-muted-foreground", className)}
       {...props}
     />
   );

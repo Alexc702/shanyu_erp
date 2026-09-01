@@ -73,13 +73,13 @@ export function SubmitQuotationPanel({
   }
 
   return (
-    <main className="workflow-page !gap-4 !p-6">
-      <header className="workflow-header !items-center">
+    <main className="compact-workflow-page submit-quotation-page workflow-page">
+      <header className="centered-workflow-header workflow-header">
         <div className="grid gap-1">
-          <h1 className="!m-0 !text-2xl">提交半包报价</h1>
-          <p className="!text-[13px]">按空间核对本次提交明细；仅展示数量不为空的工程项</p>
+          <h1 className="type-page-title">提交半包报价</h1>
+          <p className="type-body">按空间核对本次提交明细；仅展示数量不为空的工程项</p>
         </div>
-        <Badge className="bg-primary-soft px-2 py-1 text-xs text-primary" variant="secondary">
+        <Badge className="bg-primary-soft px-2 py-1 text-primary" variant="secondary">
           {quotation.projectName} · V{quotation.versionNumber} 草稿
         </Badge>
       </header>
@@ -95,16 +95,16 @@ export function SubmitQuotationPanel({
         <MetricCard label="报价版本" value={`V${quotation.versionNumber} 草稿`} />
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="submit-quotation-layout">
         <section className="grid min-w-0 content-start gap-3">
           <div className="flex items-end justify-between gap-3 px-0.5 pb-0.5">
             <div className="grid gap-[3px]">
-              <h2 className="text-base font-bold">按空间确认报价明细</h2>
-              <p className="text-xs text-muted-foreground">
+              <h2 className="type-section-title">按空间确认报价明细</h2>
+              <p className="type-support text-muted-foreground">
                 展开显示全部空间；仅列出数量不为空的工程项
               </p>
             </div>
-            <Badge className="px-2.5 py-1 text-xs" variant="secondary">
+            <Badge className="px-2.5 py-1" variant="secondary">
               共 {spaces.length} 个空间
             </Badge>
           </div>
@@ -114,7 +114,7 @@ export function SubmitQuotationPanel({
           ))}
         </section>
 
-        <aside className="grid gap-3 lg:sticky lg:top-20">
+        <aside className="submit-quotation-sidebar grid gap-3">
           {canSubmit ? (
             <PassedCheckCard
               check={check}
@@ -157,8 +157,8 @@ function MetricCard({
   return (
     <Card className="border-border shadow-none">
       <CardContent className="grid gap-1.5 p-3.5 text-left">
-        <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
-        <strong className={emphasized ? "text-xl text-primary" : "text-xl"}>{value}</strong>
+        <span className="type-table-body text-muted-foreground">{label}</span>
+        <strong className={emphasized ? "text-xl font-semibold text-primary" : "text-xl font-semibold"}>{value}</strong>
       </CardContent>
     </Card>
   );
@@ -174,21 +174,21 @@ function SpaceSummaryCard({ scope }: { readonly scope: HalfPackageQuotationScope
             <House className="size-4 text-primary" />
           </span>
           <div className="grid min-w-0 gap-0.5">
-            <strong className="truncate text-sm">{scope.name}</strong>
-            <span className="text-[11px] text-muted-foreground">
+            <strong className="type-entity truncate">{scope.name}</strong>
+            <span className="type-support text-muted-foreground">
               {pricedLines.length > 0 ? `${pricedLines.length} 项已计价` : "暂无计价项"}
             </span>
           </div>
         </div>
         <div className="grid shrink-0 gap-0.5 text-right">
-          <span className="text-[11px] text-muted-foreground">空间半包总价</span>
-          <strong className="text-lg">¥{displayMoney(scope.subtotal)}</strong>
+          <span className="type-support text-muted-foreground">空间半包总价</span>
+          <strong className="type-section-title">¥{displayMoney(scope.subtotal)}</strong>
         </div>
       </div>
 
       {pricedLines.length > 0 ? (
         <div className="border-t border-border">
-          <Table className="min-w-[520px] table-fixed text-[13px]">
+          <Table className="type-table-body min-w-[520px] table-fixed">
             <colgroup>
               <col />
               <col className="w-[140px]" />
@@ -196,9 +196,9 @@ function SpaceSummaryCard({ scope }: { readonly scope: HalfPackageQuotationScope
             </colgroup>
             <TableHeader>
               <TableRow className="h-[34px] border-border bg-muted hover:bg-muted">
-                <TableHead className="h-[34px] px-4 text-xs font-semibold">工程项目</TableHead>
-                <TableHead className="h-[34px] px-3 text-xs font-semibold">数量</TableHead>
-                <TableHead className="h-[34px] px-4 text-right text-xs font-semibold">单价</TableHead>
+                <TableHead className="type-table-head h-[34px] px-4">工程项目</TableHead>
+                <TableHead className="type-table-head h-[34px] px-3">数量</TableHead>
+                <TableHead className="type-table-head h-[34px] px-4 text-right">单价</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -219,7 +219,7 @@ function SpaceSummaryCard({ scope }: { readonly scope: HalfPackageQuotationScope
           </Table>
         </div>
       ) : (
-        <div className="flex h-[58px] items-center justify-center gap-2 border-t border-border text-xs text-muted-foreground">
+        <div className="type-support flex h-[58px] items-center justify-center gap-2 border-t border-border text-muted-foreground">
           <CircleMinus className="size-[15px]" />
           <span>本空间暂无数量不为空的工程项</span>
         </div>
@@ -241,7 +241,7 @@ function PassedCheckCard({
     <Card className="border-border shadow-none">
       <CardContent className="grid gap-3.5 p-4">
         <div className="flex items-center justify-between gap-3">
-          <strong className="text-[15px]">提交前检查</strong>
+          <strong className="type-section-title">提交前检查</strong>
           <Badge variant="success">
             <CheckCircle2 className="size-3" />
             已通过
@@ -252,8 +252,8 @@ function PassedCheckCard({
             <Check className="size-[18px]" />
           </span>
           <div className="grid min-w-0 gap-0.5">
-            <strong className="text-[13px]">可以提交审批</strong>
-            <span className="text-[11px] text-muted-foreground">
+            <strong className="type-entity">可以提交审批</strong>
+            <span className="type-support text-muted-foreground">
               {spaceCount} 个空间已完成校验，未发现阻断问题
             </span>
           </div>
@@ -268,7 +268,7 @@ function PassedCheckCard({
           <ValidationRow label="无待定价或异常工程项" last status="无阻断" />
         </div>
         {check.warningCount > 0 ? (
-          <div className="rounded-lg bg-warning-soft p-2.5 text-[11px] leading-4 text-warning">
+          <div className="type-support rounded-lg bg-warning-soft p-2.5 text-warning">
             {check.warningCount} 项无施工说明，不阻断提交。
           </div>
         ) : null}
@@ -293,7 +293,7 @@ function BlockedCheckCard({
     <Card className="border-border shadow-none">
       <CardContent className="grid gap-3.5 p-4">
         <div className="flex items-center justify-between gap-3">
-          <strong className="text-[15px]">提交前检查</strong>
+          <strong className="type-section-title">提交前检查</strong>
           <Badge variant="destructive">
             <AlertCircle className="size-3" />
             {blockers.length} 项阻断
@@ -304,8 +304,8 @@ function BlockedCheckCard({
             <X className="size-[18px]" />
           </span>
           <div className="grid min-w-0 gap-0.5">
-            <strong className="text-[13px]">暂不可提交</strong>
-            <span className="text-[10px] leading-4">
+            <strong className="type-entity">暂不可提交</strong>
+            <span className="type-support">
               还有 {blockers.length} 项阻断问题，请处理完成后重新检查。
             </span>
           </div>
@@ -342,7 +342,7 @@ function BlockedCheckCard({
               key={`${item}-${index}`}
             >
               <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-              <span className="text-[10px] font-medium leading-4 text-destructive">
+              <span className="type-status text-destructive">
                 {formatBlockerText(item)}
               </span>
             </div>
@@ -376,15 +376,15 @@ function PassedSubmitCard({
   return (
     <Card className="border-border shadow-none">
       <CardContent className="grid gap-3 p-4 text-left">
-        <strong className="text-[15px]">本次提交</strong>
+        <strong className="type-section-title">本次提交</strong>
         <div className="grid gap-1">
-          <span className="text-[11px] text-muted-foreground">半包销售金额</span>
-          <strong className="text-[28px] leading-none">¥{displayMoney(total)}</strong>
+          <span className="type-support text-muted-foreground">半包销售金额</span>
+          <strong className="type-key-amount">¥{displayMoney(total)}</strong>
         </div>
-        <p className="text-[11px] leading-[1.45] text-muted-foreground">
+        <p className="type-support text-muted-foreground">
           提交至何老板审批；审批通过后可导出客户版 PDF / XLSX。
         </p>
-        {error ? <p className="text-xs text-destructive" role="alert">{error}</p> : null}
+        {error ? <p className="type-support text-destructive" role="alert">{error}</p> : null}
         <Button className="w-full" disabled={submitting} onClick={onSubmit}>
           <Send />
           {submitting ? "正在提交…" : "确认提交审批"}
@@ -404,14 +404,14 @@ function BlockedSubmitCard({
   return (
     <Card className="border-border shadow-none">
       <CardContent className="grid gap-3 p-4 text-left">
-        <strong className="text-[15px]">本次提交</strong>
+        <strong className="type-section-title">本次提交</strong>
         <div className="grid gap-1">
-          <span className="text-[11px] text-muted-foreground">半包销售金额</span>
-          <strong className="text-2xl">¥{displayMoney(total)}</strong>
+          <span className="type-support text-muted-foreground">半包销售金额</span>
+          <strong className="type-key-amount">¥{displayMoney(total)}</strong>
         </div>
         <div className="flex items-center gap-2 rounded-[7px] bg-destructive-soft p-2.5 text-destructive">
           <LockKeyhole className="size-3.5 shrink-0" />
-          <span className="text-[10px] font-semibold leading-4">
+          <span className="type-status">
             当前存在 {blockerCount} 项阻断问题，暂不能提交审批。
           </span>
         </div>
@@ -439,7 +439,7 @@ function ValidationGroupHeader({
     <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-2">
         {icon}
-        <strong className="text-xs">{label}</strong>
+        <strong className="type-status">{label}</strong>
       </div>
       <Badge variant={variant}>{count}</Badge>
     </div>
@@ -458,8 +458,8 @@ function ValidationRow({
   return (
     <div className={`flex items-center gap-2 py-2.5 ${last ? "" : "border-b border-border"}`}>
       <CheckCircle2 className="size-4 shrink-0 text-success" />
-      <span className="min-w-0 flex-1 text-[11px]">{label}</span>
-      <span className="text-[10px] font-semibold text-success">{status}</span>
+      <span className="type-table-body min-w-0 flex-1">{label}</span>
+      <span className="type-status text-success">{status}</span>
     </div>
   );
 }
@@ -468,7 +468,7 @@ function InfoNotice({ children }: { readonly children: ReactNode }) {
   return (
     <div className="flex gap-2 rounded-lg bg-primary-soft p-2.5 text-foreground">
       <Info className="mt-0.5 size-4 shrink-0 text-primary" />
-      <p className="text-[11px] leading-4">{children}</p>
+      <p className="type-support">{children}</p>
     </div>
   );
 }

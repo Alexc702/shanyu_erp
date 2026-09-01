@@ -194,11 +194,11 @@ function LeadWorkbench({
     <main className="grid gap-4 p-6">
       <section className="flex flex-wrap items-center justify-between gap-4">
         <div className="grid gap-1">
-          <p className="m-0 text-xs font-medium text-muted-foreground">工作台</p>
-          <h1 className="m-0 text-2xl font-bold tracking-tight">
+          <p className="type-support m-0 text-muted-foreground">工作台</p>
+          <h1 className="type-page-title m-0 tracking-tight">
             上午好，{displayName}
           </h1>
-          <p className="m-0 text-[13px] text-muted-foreground">
+          <p className="type-body m-0 text-muted-foreground">
             查看并继续处理本人负责或获授权的项目
           </p>
         </div>
@@ -218,9 +218,9 @@ function LeadWorkbench({
           ["已批准", grouped.approved.length, "已锁定版本"],
         ].map(([label, value, hint]) => (
           <Card className="grid gap-3 border-border p-4 shadow-none" key={label}>
-            <span className="text-xs text-muted-foreground">{label}</span>
+            <span className="type-table-body text-muted-foreground">{label}</span>
             <strong className="text-2xl leading-none">{value}</strong>
-            <small className="text-[11px] text-muted-foreground">{hint}</small>
+            <small className="type-table-body text-muted-foreground">{hint}</small>
           </Card>
         ))}
       </section>
@@ -228,12 +228,12 @@ function LeadWorkbench({
       <section className="grid min-h-0 gap-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="grid gap-1">
-            <h2 className="m-0 text-[17px] font-bold">我的项目</h2>
-            <p className="m-0 text-xs text-muted-foreground">
+            <h2 className="type-section-title m-0">我的项目</h2>
+            <p className="type-support m-0 text-muted-foreground">
               按项目创建时间由近及远；每个状态显示最近 5 个，点击项目名称或“打开项目”进入项目
             </p>
           </div>
-          <span className="text-xs font-semibold text-muted-foreground">
+          <span className="type-support text-muted-foreground">
             共 {projectCount} 个项目
           </span>
         </div>
@@ -292,8 +292,8 @@ function StatusProjectCard({
     <Card className="flex min-h-[470px] flex-col overflow-hidden border-border py-0 shadow-none">
       <header className="flex items-center justify-between gap-3 px-4 py-3.5">
         <div className="grid gap-0.5">
-          <h3 className="text-base font-bold">{title}</h3>
-          <p className="m-0 text-[11px] text-muted-foreground">{description}</p>
+          <h3 className="type-section-title">{title}</h3>
+          <p className="type-support m-0 text-muted-foreground">{description}</p>
         </div>
         <Badge className="px-2.5 py-1" variant={badgeVariant}>
           {items.length} 个
@@ -310,21 +310,21 @@ function StatusProjectCard({
             >
               <div className="min-w-0 space-y-1">
                 <Link
-                  className="block truncate text-[13px] font-semibold text-primary hover:underline"
+                  className="type-entity block truncate text-primary hover:underline"
                   href={projectHref(item)}
                 >
                   {item.project.name}
                 </Link>
-                <p className="m-0 truncate text-[11px] text-muted-foreground">
+                <p className="type-support m-0 truncate text-muted-foreground">
                   {item.project.customerName} · V{item.versionNumber}
                 </p>
               </div>
               <div className="grid shrink-0 justify-items-end gap-1">
-                <time className="text-[10px] text-muted-foreground">
+                <time className="type-support text-muted-foreground">
                   {formatActivityTime(item.activityAt)}
                 </time>
                 <Link
-                  className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-primary hover:underline"
+                  className="type-action inline-flex items-center gap-0.5 text-primary hover:underline"
                   href={projectHref(item)}
                 >
                   打开项目
@@ -334,14 +334,14 @@ function StatusProjectCard({
             </article>
           ))
         ) : (
-          <div className="grid h-full min-h-40 place-items-center px-4 text-xs text-muted-foreground">
+          <div className="type-support grid h-full min-h-40 place-items-center px-4 text-muted-foreground">
             暂无{title}项目
           </div>
         )}
       </div>
 
       <footer className="flex h-12 items-center justify-between border-t border-border px-3.5">
-        <span className="text-[11px] text-muted-foreground">
+        <span className="type-support text-muted-foreground">
           每页 5 条 · {page} / {totalPages}
         </span>
         <div className="flex gap-1.5">

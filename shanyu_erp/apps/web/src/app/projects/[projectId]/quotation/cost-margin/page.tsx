@@ -55,10 +55,10 @@ export default async function CostMarginPage({ params }: CostMarginPageProps) {
               <span>/</span>
               <strong>预计成本毛利</strong>
             </nav>
-            <h1 className="m-0 text-2xl font-bold tracking-tight">
+            <h1 className="type-page-title m-0 tracking-tight">
               {costMargin.projectName} · 半包预计成本毛利
             </h1>
-            <p className="m-0 text-[13px] text-muted-foreground">
+            <p className="type-body m-0 text-muted-foreground">
               一期均为预计口径，不与后续实际财务混用
             </p>
           </div>
@@ -109,12 +109,12 @@ export default async function CostMarginPage({ params }: CostMarginPageProps) {
             </colgroup>
             <TableHeader>
               <TableRow className="border-border bg-muted/70 hover:bg-muted/70">
-                <TableHead className="h-11 px-4 text-xs">分区 / 空间</TableHead>
-                <TableHead className="h-11 px-4 text-left text-xs">销售金额</TableHead>
-                <TableHead className="h-11 px-4 text-left text-xs">预计成本</TableHead>
-                <TableHead className="h-11 px-4 text-left text-xs">预计毛利</TableHead>
-                <TableHead className="h-11 px-4 text-left text-xs">毛利率</TableHead>
-                <TableHead className="h-11 px-4 text-xs">状态</TableHead>
+                <TableHead className="h-11 px-4">分区 / 空间</TableHead>
+                <TableHead className="h-11 px-4 text-left">销售金额</TableHead>
+                <TableHead className="h-11 px-4 text-left">预计成本</TableHead>
+                <TableHead className="h-11 px-4 text-left">预计毛利</TableHead>
+                <TableHead className="h-11 px-4 text-left">毛利率</TableHead>
+                <TableHead className="h-11 px-4">状态</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -175,9 +175,9 @@ function CostMetric({
   return (
     <Card className="border-border py-0 shadow-none">
       <CardContent className="grid gap-3 p-4">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <span className="type-table-body text-muted-foreground">{label}</span>
         <strong
-          className={`text-[25px] leading-none tracking-tight ${
+          className={`type-key-amount tracking-tight ${
             emphasis === "danger"
               ? "text-destructive"
               : emphasis === "success"
@@ -187,7 +187,7 @@ function CostMetric({
         >
           {value}
         </strong>
-        <small className="text-[11px] text-muted-foreground">{note}</small>
+        <small className="type-support text-muted-foreground">{note}</small>
       </CardContent>
     </Card>
   );

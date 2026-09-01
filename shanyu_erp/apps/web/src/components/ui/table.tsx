@@ -6,7 +6,7 @@ export function Table({ className, ...props }: ComponentProps<"table">) {
   return (
     <div className="relative w-full overflow-x-auto" data-slot="table-container">
       <table
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn("type-table-body w-full caption-bottom", className)}
         data-slot="table"
         {...props}
       />
@@ -51,7 +51,7 @@ export function TableHead({ className, ...props }: ComponentProps<"th">) {
   return (
     <th
       className={cn(
-        "h-10 px-3 text-left align-middle font-medium whitespace-nowrap text-muted-foreground",
+        "type-table-head h-10 px-3 text-left align-middle whitespace-nowrap text-muted-foreground",
         className,
       )}
       data-slot="table-head"

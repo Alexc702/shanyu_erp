@@ -5,13 +5,13 @@ import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 
 export const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "type-button inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     defaultVariants: { size: "default", variant: "default" },
     variants: {
       size: {
         default: "h-9 px-4 py-2",
-        sm: "h-8 gap-1.5 px-3 text-xs",
+        sm: "type-action h-8 gap-1.5 px-3",
         lg: "h-10 px-6",
         icon: "size-9",
       },

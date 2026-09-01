@@ -4,7 +4,7 @@ import { useState } from "react";
 import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { apiUrl } from "@/lib/api-client";
+import { apiUrl } from "@/lib/api-url";
 
 export function LogoutButton() {
   const router = useRouter();
