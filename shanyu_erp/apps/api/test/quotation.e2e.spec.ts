@@ -258,16 +258,52 @@ describe("half-package quotation HTTP interface", () => {
       .set("Cookie", ownerCookie)
       .send({ action: "APPROVED", reason: null })
       .expect(201);
-    await request(app.getHttpServer())
-      .post(`/approvals/half-package/${quotationId}/exports`)
-      .set("Cookie", ownerCookie)
-      .send({ format: "XLSX" })
-      .expect(201)
-      .expect(({ body }) => {
-        expect(body.export.fileName).toContain("半包报价");
-        expect(body.export.sha256).toHaveLength(64);
-      });
-  });
+    for (const expected of [
+      {
+        contentType: "application/pdf",
+        format: "PDF",
+        signature: "%PDF",
+      },
+      {
+        contentType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        format: "XLSX",
+        signature: "PK",
+      },
+    ] as const) {
+      const createdExport = await request(app.getHttpServer())
+        .post(`/approvals/half-package/${quotationId}/exports`)
+        .set("Cookie", ownerCookie)
+        .send({ format: expected.format })
+        .expect(201);
+      const exported = createdExport.body.export as {
+        downloadPath: string;
+        fileName: string;
+        sha256: string;
+      };
+      expect(exported.fileName).toContain("半包报价");
+      expect(exported.sha256).toHaveLength(64);
+
+      const downloaded = await request(app.getHttpServer())
+        .get(exported.downloadPath)
+        .set("Cookie", ownerCookie)
+        .buffer(true)
+        .parse(bufferResponse)
+        .expect(200)
+        .expect("Content-Type", expected.contentType);
+      expect(downloaded.headers["content-disposition"]).toContain(
+        encodeURIComponent(exported.fileName),
+      );
+      expect(Buffer.isBuffer(downloaded.body)).toBe(true);
+      expect(downloaded.body.subarray(0, expected.signature.length).toString()).toBe(
+        expected.signature,
+      );
+
+      await request(app.getHttpServer())
+        .get(exported.downloadPath)
+        .expect(401);
+    }
+  }, 15_000);
 
   async function login(account: string, password: string): Promise<string> {
     const response = await request(app.getHttpServer())
@@ -578,4 +614,14 @@ async function storedUser(
     passwordHash: await hashPassword(password),
     status: "ACTIVE",
   };
+}
+
+function bufferResponse(
+  response: request.Response,
+  callback: (error: Error | null, body?: Buffer) => void,
+): void {
+  const chunks: Buffer[] = [];
+  response.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+  response.on("end", () => callback(null, Buffer.concat(chunks)));
+  response.on("error", callback);
 }

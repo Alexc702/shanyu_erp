@@ -1,18 +1,9 @@
 import type {
-  HalfPackageExportFormat,
-  HalfPackageExportResponse,
   ProjectSpace,
   SpaceType,
 } from "@shanyu/contracts";
 import { cookies } from "next/headers";
-import {
-  Download,
-  FileSpreadsheet,
-  FileText,
-  History,
-  Printer,
-  Send,
-} from "lucide-react";
+import { History, Send } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -21,11 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   fetchHalfPackageQuotation,
   fetchProject,
   fetchPublishedCatalog,
@@ -33,11 +19,10 @@ import {
   fetchQuotationVersions,
   fetchSession,
 } from "@/lib/api-client";
-import { apiUrl } from "@/lib/api-url";
 import { formatQuotationMoney } from "@/lib/quotation-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
-import { serverApiUrl } from "@/lib/server-api-url";
 
+import { ExportMenu } from "./export-menu";
 import { SpaceManager } from "./space-manager";
 
 interface ProjectPageProps {
@@ -288,64 +273,6 @@ export default async function ProjectPage({
       </main>
     </AppShell>
   );
-}
-
-function ExportMenu({ quotationId }: { readonly quotationId: string }) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button>
-          <Printer />
-          打印/导出
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="grid w-52 gap-2 p-2">
-        <p className="type-table-head px-2 pt-1">客户版报价文件</p>
-        <form action={exportApprovedQuotation.bind(null, quotationId, "PDF")}>
-          <Button className="w-full justify-start" type="submit" variant="ghost">
-            <FileText />
-            导出 PDF
-          </Button>
-        </form>
-        <form action={exportApprovedQuotation.bind(null, quotationId, "XLSX")}>
-          <Button className="w-full justify-start" type="submit" variant="ghost">
-            <FileSpreadsheet />
-            导出 Excel
-          </Button>
-        </form>
-        <p className="type-support flex items-center gap-1.5 border-t border-border px-2 pt-2 text-muted-foreground">
-          <Download className="size-3" />
-          文件仅包含客户报价内容
-        </p>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-async function exportApprovedQuotation(
-  quotationId: string,
-  format: HalfPackageExportFormat,
-): Promise<never> {
-  "use server";
-  const cookieHeader = (await cookies()).toString();
-  const response = await fetch(
-    `${serverApiUrl}/approvals/half-package/${quotationId}/exports`,
-    {
-      body: JSON.stringify({ format }),
-      cache: "no-store",
-      headers: {
-        "content-type": "application/json",
-        cookie: cookieHeader,
-      },
-      method: "POST",
-    },
-  );
-  if (response.status === 401) redirect("/login");
-  if (!response.ok) {
-    throw new Error(`导出失败（${response.status}）`);
-  }
-  const record = ((await response.json()) as HalfPackageExportResponse).export;
-  redirect(`${apiUrl}${record.downloadPath}`);
 }
 
 function ProjectInfoRow({

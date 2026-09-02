@@ -2,6 +2,7 @@ import type { HalfPackageQuotation } from "@shanyu/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createQuotationExport,
   formatQuotationMoney,
   quotationLineUpdateForQuantity,
   saveQuotationLine,
@@ -81,6 +82,50 @@ describe("quotation client", () => {
         fetcher,
       ),
     ).rejects.toThrow("报价已被更新");
+  });
+
+  it.each(["PDF", "XLSX"] as const)(
+    "creates a %s export with the authenticated browser session",
+    async (format) => {
+      const exported = {
+        downloadPath: `/quotation-exports/export-${format.toLowerCase()}`,
+        fileName: `客户报价.${format === "PDF" ? "pdf" : "xlsx"}`,
+        format,
+        id: `export-${format.toLowerCase()}`,
+        sha256: "a".repeat(64),
+      };
+      const fetcher = vi.fn<Fetcher>(async () =>
+        new Response(JSON.stringify({ export: exported }), {
+          headers: { "content-type": "application/json" },
+          status: 201,
+        }),
+      );
+
+      await expect(
+        createQuotationExport("quotation-id", format, fetcher),
+      ).resolves.toEqual(exported);
+
+      expect(fetcher).toHaveBeenCalledOnce();
+      const options = fetcher.mock.calls[0]?.[1];
+      expect(options).toMatchObject({
+        credentials: "include",
+        method: "POST",
+      });
+      expect(JSON.parse(String(options?.body))).toEqual({ format });
+    },
+  );
+
+  it("returns the server error message for a rejected export", async () => {
+    const fetcher = vi.fn<Fetcher>(async () =>
+      new Response(JSON.stringify({ message: "报价尚未批准" }), {
+        headers: { "content-type": "application/json" },
+        status: 409,
+      }),
+    );
+
+    await expect(
+      createQuotationExport("quotation-id", "PDF", fetcher),
+    ).rejects.toThrow("报价尚未批准");
   });
 });
 
