@@ -123,14 +123,16 @@ export class QuotationService {
       buildDraft(actor.id, project, template),
     );
     const created = await this.quotationRepository.createDraft(draft);
-    await this.auditRepository.append({
-      action: "QUOTATION_DRAFT_CREATED",
-      actorUserId: actor.id,
-      occurredAt: new Date(),
-      result: "SUCCESS",
-      targetId: created.id,
-      targetType: "HALF_PACKAGE_QUOTATION",
-    });
+    if (created.id === draft.id) {
+      await this.auditRepository.append({
+        action: "QUOTATION_DRAFT_CREATED",
+        actorUserId: actor.id,
+        occurredAt: new Date(),
+        result: "SUCCESS",
+        targetId: created.id,
+        targetType: "HALF_PACKAGE_QUOTATION",
+      });
+    }
     return toView(created);
   }
 

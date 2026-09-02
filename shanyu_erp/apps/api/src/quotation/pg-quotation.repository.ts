@@ -312,14 +312,29 @@ export class PgQuotationRepository implements QuotationRepository {
 
   async createDraft(input: NewQuotationDraft): Promise<QuotationDraft> {
     await this.database.transaction(async (database) => {
-      await database.query(
+      await database.query("SELECT id FROM projects WHERE id = $1 FOR UPDATE", [
+        input.projectId,
+      ]);
+      const existing = await database.query(
+        `SELECT id
+           FROM half_package_quotations
+          WHERE project_id = $1 AND status = 'DRAFT'`,
+        [input.projectId],
+      );
+      if (existing.rowCount !== 0) {
+        return;
+      }
+      const inserted = await database.query(
         `INSERT INTO half_package_quotations
            (id, project_id, version_number, status, template_version_id,
             cost_template_version_id, quantity_rule_version_id, building_area,
             management_rate, direct_cost, expected_cost, gross_profit,
             gross_margin_rate, management_fee, total, revision, created_by_user_id)
          VALUES ($1, $2, $3, 'DRAFT', $4, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, $15, $16)`,
+                 $12, $13, $14, $15, $16)
+         ON CONFLICT ON CONSTRAINT half_package_quotations_version
+         DO NOTHING
+         RETURNING id`,
         [
           input.id,
           input.projectId,
@@ -339,6 +354,9 @@ export class PgQuotationRepository implements QuotationRepository {
           input.createdByUserId,
         ],
       );
+      if (inserted.rowCount !== 1) {
+        return;
+      }
       if (input.parentVersionId) {
         await database.query(
           `UPDATE half_package_quotations

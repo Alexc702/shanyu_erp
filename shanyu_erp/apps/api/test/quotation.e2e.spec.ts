@@ -1,9 +1,11 @@
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import type { ProjectDetail, SessionUser } from "@shanyu/contracts";
+import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { AppModule } from "../src/app.module";
 import { AccessPolicy } from "../src/access/access.policy";
 import {
   AUDIT_REPOSITORY,
@@ -18,6 +20,7 @@ import {
 } from "../src/access/auth.repository";
 import { AuthService } from "../src/access/auth.service";
 import { hashPassword } from "../src/access/password";
+import { DatabaseClient } from "../src/database/database.client";
 import { HalfPackageCalculator } from "../src/quotation/half-package-calculator";
 import {
   QuotationApprovalController,
@@ -277,6 +280,111 @@ describe("half-package quotation HTTP interface", () => {
     }
     return cookie;
   }
+});
+
+describe("half-package quotation PostgreSQL concurrency", () => {
+  it(
+    "creates exactly one complete V1 when ten first requests arrive concurrently",
+    async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [AppModule],
+      }).compile();
+      const realApp = moduleRef.createNestApplication();
+      await realApp.init();
+
+      const database = realApp.get(DatabaseClient);
+      const userId = randomUUID();
+      const account = `quote-race-${userId.slice(0, 8)}`;
+      const password = "quotation-concurrency-password";
+      let projectId: string | null = null;
+
+      try {
+        await database.query(
+          `INSERT INTO users (id, account, display_name, role, status)
+           VALUES ($1, $2, '并发测试主案', 'LEAD_DESIGNER', 'ACTIVE')`,
+          [userId, account],
+        );
+        await database.query(
+          `INSERT INTO user_credentials (user_id, password_hash)
+           VALUES ($1, $2)`,
+          [userId, await hashPassword(password)],
+        );
+
+        const loginResponse = await request(realApp.getHttpServer())
+          .post("/auth/login")
+          .send({ identifier: account, password, rememberMe: false })
+          .expect(200);
+        const cookie = loginResponse.headers["set-cookie"]?.[0];
+        if (!cookie) throw new Error("并发测试登录后缺少会话 Cookie");
+
+        const createdProject = await request(realApp.getHttpServer())
+          .post("/projects")
+          .set("Cookie", cookie)
+          .send({
+            address: "并发测试地址",
+            buildingArea: "100.0000",
+            customerName: "并发测试客户",
+            leadDesignerId: userId,
+            name: `并发测试-${userId.slice(0, 6)}`,
+            spaces: [
+              {
+                area: "20.0000",
+                displayName: "主卧",
+                height: "2.8000",
+                includesBalcony: false,
+                perimeter: "18.0000",
+                type: "BEDROOM",
+              },
+            ],
+          })
+          .expect(201);
+        projectId = createdProject.body.project.id as string;
+
+        const responses = await Promise.all(
+          Array.from({ length: 10 }, () =>
+            request(realApp.getHttpServer())
+              .get(`/projects/${projectId}/half-package-quotation`)
+              .set("Cookie", cookie),
+          ),
+        );
+
+        expect(responses.map((response) => response.status)).toEqual(
+          Array.from({ length: 10 }, () => 200),
+        );
+        const quotations = responses.map(
+          (response) => response.body.quotation as { id: string; scopes: unknown[] },
+        );
+        expect(new Set(quotations.map((quotation) => quotation.id)).size).toBe(1);
+        expect(quotations[0]?.scopes.length).toBeGreaterThan(0);
+        for (const quotation of quotations.slice(1)) {
+          expect(quotation.scopes).toEqual(quotations[0]?.scopes);
+        }
+
+        await request(realApp.getHttpServer())
+          .get(`/projects/${projectId}/half-package-quotation/versions`)
+          .set("Cookie", cookie)
+          .expect(200)
+          .expect(({ body }) => {
+            expect(body.versions).toHaveLength(1);
+            expect(body.versions[0]).toMatchObject({ versionNumber: 1 });
+          });
+      } finally {
+        if (projectId) {
+          await database.query(
+            "DELETE FROM half_package_quotations WHERE project_id = $1",
+            [projectId],
+          );
+          await database.query("DELETE FROM projects WHERE id = $1", [projectId]);
+        }
+        await database.query("DELETE FROM audit_events WHERE actor_user_id = $1", [
+          userId,
+        ]);
+        await database.query("DELETE FROM users WHERE id = $1", [userId]);
+        await realApp.close();
+      }
+    },
+    30_000,
+  );
 });
 
 class StaticQuotationRepository implements QuotationRepository {

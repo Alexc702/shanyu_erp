@@ -107,6 +107,19 @@ describe("QuotationService", () => {
     expect(repository.createdCount).toBe(1);
   });
 
+  it("returns the same draft when its first requests arrive concurrently", async () => {
+    const [leadResult, ownerResult] = await Promise.all([
+      service.getOrCreateDraft(lead, project.id),
+      service.getOrCreateDraft(owner, project.id),
+    ]);
+
+    expect(ownerResult.id).toBe(leadResult.id);
+    expect(ownerResult.scopes).toEqual(leadResult.scopes);
+    expect(ownerResult.scopes).not.toHaveLength(0);
+    expect(repository.createdCount).toBe(1);
+    expect(audits).toHaveLength(1);
+  });
+
   it("maps every supported space type to all of its applicable template sections", async () => {
     repository.project = {
       ...project,
@@ -567,6 +580,9 @@ class InMemoryQuotationRepository implements QuotationRepository {
   }
 
   async createDraft(input: NewQuotationDraft): Promise<QuotationDraft> {
+    if (this.draft) {
+      return structuredClone(this.draft);
+    }
     this.createdCount += 1;
     this.draft = structuredClone(input);
     return structuredClone(input);
