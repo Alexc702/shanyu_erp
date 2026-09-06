@@ -10,6 +10,12 @@ import type {
   SessionUser,
 } from "@shanyu/contracts";
 import ExcelJS from "exceljs";
+import {
+  decodePDFRawStream,
+  PDFContentStream,
+  PDFDocument,
+  PDFRawStream,
+} from "pdf-lib";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { AccessPolicy } from "../src/access/access.policy";
@@ -55,29 +61,30 @@ describe("QuotationService", () => {
     const quotation = await service.getOrCreateDraft(lead, project.id);
 
     expect(quotation).toMatchObject({
-      directCost: "10582.2000",
-      managementFee: "1058.2200",
+      directCost: "20182.2000",
+      managementFee: "2018.2200",
       projectId: project.id,
       revision: 0,
       status: "DRAFT",
       templateVersion: 1,
-      total: "11640.4200",
+      total: "22200.4200",
     });
     expect(quotation.scopes.map((scope) => scope.name)).toEqual([
       "一、砌墙工程",
-      "客餐厅",
+      "客餐厅（包阳台）",
       "主卧",
       "十、油漆工程",
       "十一、水电工程",
       "十二、其他工程",
+      "管理费",
     ]);
     expect(quotation.scopes.find((scope) => scope.name === "主卧")?.lines).toMatchObject([
       {
-        amount: null,
+        amount: "2880.0000",
         itemName: "600*1200mm地砖（水泥砂浆粘贴）",
-        quantity: null,
-        quantitySource: "MANUAL",
-        selected: false,
+        quantity: "18.0000",
+        quantitySource: "SPACE_AREA",
+        selected: true,
       },
       {
         amount: "846.0000",
@@ -140,7 +147,7 @@ describe("QuotationService", () => {
 
     expect(quotation.scopes.map((scope) => scope.name)).toEqual([
       "一、砌墙工程",
-      "客餐厅",
+      "客餐厅（包阳台）",
       "主卧",
       "衣帽间",
       "主卫",
@@ -149,13 +156,14 @@ describe("QuotationService", () => {
       "十、油漆工程",
       "十一、水电工程",
       "十二、其他工程",
+      "管理费",
     ]);
     expect(Object.fromEntries(scopeCounts)).toMatchObject({
       主卧: 3,
       主卫: 1,
       厨房: 1,
-      客餐厅: 3,
-      生活阳台: 2,
+      "客餐厅（包阳台）": 3,
+      生活阳台: 1,
       衣帽间: 3,
     });
     expect(
@@ -168,8 +176,8 @@ describe("QuotationService", () => {
         })),
     ).toEqual(
       quotation.scopes
-        .find((scope) => scope.name === "客餐厅")
-        ?.lines.filter((line) => line.itemName !== "包管道（1根）")
+        .find((scope) => scope.name === "客餐厅（包阳台）")
+        ?.lines.filter((line) => line.sectionName === "七、阳台工程")
         .map(({ itemName, quantitySource, saleUnitPrice }) => ({
           itemName,
           quantitySource,
@@ -203,13 +211,14 @@ describe("QuotationService", () => {
     expect(reopened.revision).toBe(saved.revision + 1);
     expect(reopened.scopes.map((scope) => scope.name)).toEqual([
       "一、砌墙工程",
-      "客餐厅",
+      "客餐厅（包阳台）",
       "主卧",
       "十、油漆工程",
       "十一、水电工程",
       "十二、其他工程",
       "衣帽间",
       "次卧",
+      "管理费",
     ]);
     expect(
       reopened.scopes
@@ -260,7 +269,7 @@ describe("QuotationService", () => {
       quantity: "2.5000",
       selected: true,
     });
-    expect(updated.total).toBe("11810.9200");
+    expect(updated.total).toBe("22370.9200");
     expect(audits.at(-1)).toMatchObject({
       action: "QUOTATION_LINE_UPDATED",
       actorUserId: lead.id,
@@ -273,7 +282,7 @@ describe("QuotationService", () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const automaticLine = draft.scopes
       .flatMap((scope) => scope.lines)
-      .find((line) => line.quantitySource === "PROJECT_BUILDING_AREA");
+      .find((line) => line.quantitySource === "PROJECT_OUTER_FRAME_AREA");
     if (!automaticLine) {
       throw new Error("测试报价缺少自动工程项");
     }
@@ -356,10 +365,10 @@ describe("QuotationService", () => {
     const costMargin = await service.getCostMargin(owner, project.id);
     expect(costMargin).toMatchObject({
       costVersion: { id: template.id, versionNumber: 1 },
-      expectedCost: "10682.2000",
-      grossMarginRate: "0.0051",
-      grossProfit: "55.0000",
-      salesAmount: "10737.2000",
+      expectedCost: "20282.2000",
+      grossMarginRate: "0.0934",
+      grossProfit: "2088.7200",
+      salesAmount: "22370.9200",
     });
     expect(costMargin.scopes[0]?.lines[0]).toMatchObject({
       costAmount: "100.0000",
@@ -368,10 +377,7 @@ describe("QuotationService", () => {
       grossProfit: "55.0000",
       saleAmount: "155.0000",
     });
-    expect(audits.at(-1)).toMatchObject({
-      action: "QUOTATION_COST_MARGIN_VIEWED",
-      actorUserId: owner.id,
-    });
+    expect(audits.some((audit) => audit.action === "QUOTATION_COST_MARGIN_VIEWED")).toBe(false);
 
     for (const actor of [lead, unrelatedLead, woodwork]) {
       await expect(service.getCostMargin(actor, project.id)).rejects.toBeInstanceOf(
@@ -390,8 +396,8 @@ describe("QuotationService", () => {
     };
     await expect(service.getCostMargin(owner, project.id)).resolves.toMatchObject({
       costVersion: { id: template.id, versionNumber: 1 },
-      expectedCost: "10682.2000",
-      grossProfit: "55.0000",
+      expectedCost: "20282.2000",
+      grossProfit: "2088.7200",
     });
   });
 
@@ -409,7 +415,7 @@ describe("QuotationService", () => {
     expect(repository.createdCount).toBe(0);
   });
 
-  it("checks and submits a complete draft as an immutable pending snapshot", async () => {
+  it("checks and confirms a complete draft as an immutable quoted snapshot", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const check = await service.checkSubmission(lead, project.id);
 
@@ -420,7 +426,7 @@ describe("QuotationService", () => {
     });
     const submitted = await service.submit(lead, project.id, draft.revision);
     expect(submitted).toMatchObject({
-      status: "PENDING_APPROVAL",
+      status: "QUOTED",
       versionNumber: 1,
     });
     expect(submitted.submittedAt).not.toBeNull();
@@ -433,34 +439,119 @@ describe("QuotationService", () => {
         selected: true,
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
-    expect(audits.at(-1)).toMatchObject({ action: "QUOTATION_SUBMITTED" });
+    expect(audits.at(-1)).toMatchObject({ action: "QUOTATION_GENERATED" });
   });
 
   it("lists pending approvals with the current business margin snapshot", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    await service.submit(lead, project.id, draft.revision);
+    const quoted = await service.submit(lead, project.id, draft.revision);
+    await expect(service.listPendingApprovals(owner)).resolves.toEqual([]);
+    await service.updateAdjustment(lead, quoted.id, {
+      action: "SUBMIT_FOR_APPROVAL",
+      discountRate: "1.0000",
+      expectedRevision: quoted.revision,
+      reason: "客户确认不调整",
+      writeOff: "0.0000",
+    });
 
     await expect(service.listPendingApprovals(owner)).resolves.toEqual([
       expect.objectContaining({
-        expectedCost: "10582.2000",
-        grossMarginRate: "0.0000",
-        grossProfit: "0.0000",
-        salesAmount: "10582.2000",
+        expectedCost: "20182.2000",
+        grossMarginRate: "0.0909",
+        grossProfit: "2018.2200",
+        salesAmount: "22200.4200",
         thirdPartyPurchaseAmount: null,
       }),
     ]);
   });
 
-  it("allows only the owner to approve and exports an approved customer workbook", async () => {
+  it("submits a lead adjustment for approval and lets the owner confirm directly", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const quoted = await service.submit(lead, project.id, draft.revision);
+    const quotedSnapshot = structuredClone(repository.draft);
+
+    const leadAdjusted = await service.updateAdjustment(lead, quoted.id, {
+      action: "SUBMIT_FOR_APPROVAL",
+      discountRate: "0.9500",
+      expectedRevision: quoted.revision,
+      reason: "客户确认九五折并抹零",
+      writeOff: "100.0000",
+    });
+    expect(leadAdjusted).toMatchObject({
+      adjustedTotal: "20990.3990",
+      adjustmentStatus: "PENDING_APPROVAL",
+      discountRate: "0.9500",
+      revision: 1,
+      writeOff: "100.0000",
+    });
+    expect(audits.at(-1)).toMatchObject({
+      action: "QUOTATION_ADJUSTMENT_SUBMITTED",
+      actorUserId: lead.id,
+      afterState: { discountRate: "0.9500", writeOff: "100.0000" },
+      beforeState: { discountRate: "1.0000", writeOff: "0.0000" },
+      reason: "客户确认九五折并抹零",
+    });
+
+    await expect(
+      service.updateAdjustment(unrelatedLead, quoted.id, {
+        action: "SUBMIT_FOR_APPROVAL",
+        discountRate: "0.9800",
+        expectedRevision: leadAdjusted.revision,
+        reason: "无权调整",
+        writeOff: "0.0000",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    const nextDraft = await service.continueEditing(lead, leadAdjusted.id).catch(
+      (error: unknown) => error,
+    );
+    expect(nextDraft).toBeInstanceOf(ConflictException);
+
+    repository.draft = quotedSnapshot;
+    const ownerConfirmed = await service.updateAdjustment(owner, quoted.id, {
+        action: "CONFIRM",
+        discountRate: "0.9800",
+        expectedRevision: quoted.revision,
+        reason: "老板确认九八折并抹零",
+        writeOff: "20.0000",
+      });
+    expect(ownerConfirmed).toMatchObject({
+      adjustmentStatus: "CONFIRMED",
+      adjustedTotal: "21736.4116",
+      status: "APPROVED",
+    });
+    expect(audits.at(-1)).toMatchObject({
+      action: "QUOTATION_ADJUSTMENT_CONFIRMED",
+      actorUserId: owner.id,
+    });
+  });
+
+  it("exports before discount submission, blocks pending export, and exports after approval", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const submitted = await service.submit(lead, project.id, draft.revision);
     await expect(
       service.decide(lead, submitted.id, "APPROVED", null),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
+    const initialExport = await service.createExport(lead, submitted.id, "PDF");
+    expect(initialExport).toMatchObject({ format: "PDF" });
+    expect(initialExport.payload.subarray(0, 4).toString()).toBe("%PDF");
+    const pdfOperators = await decodedPdfOperators(initialExport.payload);
+    expect(pdfOperators).toMatch(/\/\S+ 11 Tf/);
+    expect(pdfOperators).toMatch(/\/\S+ 10 Tf/);
+    const pending = await service.updateAdjustment(lead, submitted.id, {
+      action: "SUBMIT_FOR_APPROVAL",
+      discountRate: "1.0000",
+      expectedRevision: submitted.revision,
+      reason: "客户确认不调整",
+      writeOff: "0.0000",
+    });
+    await expect(
+      service.createExport(lead, pending.id, "PDF"),
+    ).rejects.toBeInstanceOf(ConflictException);
+
     const approved = await service.decide(
       owner,
-      submitted.id,
+      pending.id,
       "APPROVED",
       null,
     );
@@ -474,34 +565,74 @@ describe("QuotationService", () => {
     await workbook.xlsx.load(
       customerExport.payload as unknown as Parameters<typeof workbook.xlsx.load>[0],
     );
-    expect(workbook.getWorksheet("半包报价单")?.getRow(4).values).toEqual([
-      undefined,
-      "分区/空间",
-      "工程项",
-      "单位",
-      "数量",
-      "销售单价",
-      "金额",
-      "施工说明",
+    const worksheet = workbook.getWorksheet("半包报价模板");
+    expect(worksheet?.getCell("A1").value).toBe("基础报价明细表");
+    expect(worksheet?.getCell("C2").value).toBe(project.customerName);
+    expect(worksheet?.getCell("B4").master.address).toBe("A3");
+    expect(worksheet?.getCell("D4").master.address).toBe("C3");
+    expect(worksheet?.getCell("E4").master.address).toBe("E3");
+    expect(worksheet?.getCell("F4").master.address).toBe("F3");
+    expect(worksheet?.getCell("H3").master.address).toBe("G3");
+    expect(worksheet?.getCell("I4").master.address).toBe("I3");
+    expect(["A3", "C3", "E3", "F3", "G3", "I3"].map(
+      (address) => worksheet?.getCell(address).value,
+    )).toEqual(["编号", "工程项目", "单位", "数量", "工 程 造 价", "备       注"]);
+    expect(worksheet?.getCell("C3").border.top?.style).toBe("thin");
+    expect(worksheet?.getCell("D3").border.right?.style).toBe("thin");
+    expect(worksheet?.getCell("C4").border.bottom?.style).toBe("thin");
+    expect(worksheet?.getCell("D4").border.bottom?.style).toBe("thin");
+    expect(worksheet?.getCell("A6").border.left?.style).toBe("medium");
+    expect(worksheet?.getCell("B6").border.right?.style).toBe("thin");
+    expect(worksheet?.getCell("A6").border.bottom?.style).toBe("thin");
+    expect(worksheet?.getCell("B6").border.bottom?.style).toBe("thin");
+    expect(worksheet?.getCell("E6").value).toBe("M²");
+    expect(worksheet?.getCell("I6").value).toBe(
+      "1、人工费；\n2、垃圾装袋运至小区指定点，如需要运到小区外费用另计。",
+    );
+    expect(worksheet?.getCell("I6").alignment.wrapText).toBe(true);
+    expect(worksheet?.getRow(6).height).toBeGreaterThanOrEqual(31);
+    expect(worksheet?.getRow(1).height).toBe(50);
+    expect(worksheet?.getRow(2).height).toBe(30);
+    expect(
+      Array.from({ length: 9 }, (_, index) => worksheet?.getColumn(index + 1).width),
+    ).toEqual([
+      5.625,
+      5.625,
+      20.625,
+      20.7788461538462,
+      12.625,
+      12.625,
+      12.625,
+      12.625,
+      55.625,
     ]);
+    expect(worksheet?.getImages()).toHaveLength(1);
+    expect(worksheet?.pageSetup.printArea).toMatch(/^A1:I\d+$/);
+    expect(JSON.stringify(worksheet?.getSheetValues())).toContain("【十三、工程汇总】");
+    expect(JSON.stringify(worksheet?.getSheetValues())).toContain("管理费");
     expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues()))).not.toContain("成本");
     await expect(
       service.getExport(unrelatedLead, exported.id),
     ).rejects.toBeInstanceOf(NotFoundException);
-    const pdf = await service.createExport(owner, approved.id, "PDF");
-    expect(pdf.payload.subarray(0, 4).toString()).toBe("%PDF");
-  }, 20_000);
+  }, 30_000);
 
-  it("requires a return reason and creates the next editable version", async () => {
+  it("requires a return reason and keeps pricing adjustments in the next editable version", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const submitted = await service.submit(lead, project.id, draft.revision);
+    const pending = await service.updateAdjustment(lead, submitted.id, {
+      action: "SUBMIT_FOR_APPROVAL",
+      discountRate: "0.9500",
+      expectedRevision: submitted.revision,
+      reason: "客户确认九五折并抹零",
+      writeOff: "100.0000",
+    });
     await expect(
-      service.decide(owner, submitted.id, "RETURNED", "  "),
+      service.decide(owner, pending.id, "RETURNED", "  "),
     ).rejects.toBeInstanceOf(BadRequestException);
 
     const returned = await service.decide(
       owner,
-      submitted.id,
+      pending.id,
       "RETURNED",
       "补充客餐厅数量",
     );
@@ -509,25 +640,115 @@ describe("QuotationService", () => {
     await expect(
       service.createExport(owner, returned.id, "PDF"),
     ).rejects.toBeInstanceOf(ConflictException);
-    const nextDraft = await repository.findDraft();
+    const nextDraft = await service.continueEditing(lead, returned.id);
     expect(nextDraft).toMatchObject({
-      parentVersionId: submitted.id,
+      adjustedTotal: pending.adjustedTotal,
+      adjustmentReason: "客户确认九五折并抹零",
+      discountRate: "0.9500",
       status: "DRAFT",
-      versionNumber: 2,
+      versionNumber: 3,
+      writeOff: "100.0000",
     });
+    expect(quotationContent(nextDraft)).toEqual(quotationContent(returned));
+
+    const manualLine = nextDraft.scopes[0]?.lines[0];
+    if (!manualLine) throw new Error("返修草稿缺少工程项");
+    await expect(
+      service.updateLine(lead, project.id, manualLine.id, {
+        expectedRevision: nextDraft.revision,
+        quantity: "3.0000",
+        selected: true,
+      }),
+    ).resolves.toMatchObject({
+      adjustmentReason: "客户确认九五折并抹零",
+      discountRate: "0.9500",
+      status: "DRAFT",
+      writeOff: "100.0000",
+    });
+  });
+
+  it("keeps an approved version read-only until the owner returns it", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const quoted = await service.submit(lead, project.id, draft.revision);
+    const pending = await service.updateAdjustment(lead, quoted.id, {
+      action: "SUBMIT_FOR_APPROVAL",
+      discountRate: "1.0000",
+      expectedRevision: quoted.revision,
+      reason: "客户确认不调整",
+      writeOff: "0.0000",
+    });
+    const approved = await service.decide(owner, pending.id, "APPROVED", null);
+
+    await expect(
+      service.continueEditing(lead, approved.id),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const returned = await service.decide(
+      owner,
+      approved.id,
+      "RETURNED",
+      "批准后发现漏项",
+    );
+    expect(returned).toMatchObject({ status: "RETURNED", versionNumber: 3 });
+    await expect(
+      service.continueEditing(lead, returned.id),
+    ).resolves.toMatchObject({ status: "DRAFT", versionNumber: 4 });
   });
 
   it("does not offer special approval as a new approval action", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const submitted = await service.submit(lead, project.id, draft.revision);
+    const pending = await service.updateAdjustment(lead, submitted.id, {
+      action: "SUBMIT_FOR_APPROVAL",
+      discountRate: "1.0000",
+      expectedRevision: submitted.revision,
+      reason: "客户确认不调整",
+      writeOff: "0.0000",
+    });
 
     await expect(
       service.decide(
         owner,
-        submitted.id,
+        pending.id,
         "SPECIAL_APPROVED" as HalfPackageApprovalDecision,
         "风险已确认",
       ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("requires an adjustment reason before submitting discount approval", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const quoted = await service.submit(lead, project.id, draft.revision);
+
+    await expect(
+      service.updateAdjustment(lead, quoted.id, {
+        action: "SUBMIT_FOR_APPROVAL",
+        discountRate: "0.9500",
+        expectedRevision: quoted.revision,
+        reason: "  ",
+        writeOff: "100.0000",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("lets only the owner or administrator configure the margin benchmark", async () => {
+    const quotation = await service.getOrCreateDraft(lead, project.id);
+
+    await expect(
+      service.updateMarginBenchmark(lead, project.id, quotation.id, "31"),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.updateMarginBenchmark(owner, project.id, quotation.id, "31.5"),
+    ).resolves.toMatchObject({ marginBenchmarkRate: "0.3150" });
+    await expect(
+      service.updateMarginBenchmark(
+        administrator,
+        project.id,
+        quotation.id,
+        "28",
+      ),
+    ).resolves.toMatchObject({ marginBenchmarkRate: "0.2800" });
+    await expect(
+      service.updateMarginBenchmark(owner, project.id, quotation.id, "101"),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
@@ -561,8 +782,10 @@ class InMemoryQuotationRepository implements QuotationRepository {
     return this.draft ? [structuredClone(this.draft)] : [];
   }
 
-  async listPendingApproval(): Promise<readonly QuotationDraft[]> {
-    return this.draft?.status === "PENDING_APPROVAL"
+  async listQuoted(): Promise<readonly QuotationDraft[]> {
+    return this.draft?.status === "QUOTED" &&
+      this.draft.adjustmentStatus === "PENDING_APPROVAL" &&
+      this.draft.isCurrent
       ? [structuredClone(this.draft)]
       : [];
   }
@@ -602,6 +825,40 @@ class InMemoryQuotationRepository implements QuotationRepository {
     return structuredClone(input);
   }
 
+  async saveAdjustment(
+    _quotationId: string,
+    discountRate: string,
+    writeOff: string,
+    adjustedTotal: string,
+    grossProfit: string,
+    grossMarginRate: string | null,
+    _actorUserId: string,
+    reason: string | null,
+  ): Promise<QuotationDraft> {
+    if (!this.draft) throw new QuotationRevisionConflictError();
+    this.draft = {
+      ...this.draft,
+      adjustedTotal,
+      adjustmentReason: reason,
+      adjustmentStatus: "PENDING_APPROVAL",
+      discountRate,
+      grossMarginRate,
+      grossProfit,
+      revision: this.draft.revision + 1,
+      writeOff,
+    };
+    return structuredClone(this.draft);
+  }
+
+  async updateMarginBenchmarkRate(
+    _quotationId: string,
+    marginBenchmarkRate: string,
+  ): Promise<QuotationDraft> {
+    if (!this.draft) throw new Error("missing quotation");
+    this.draft = { ...this.draft, marginBenchmarkRate };
+    return structuredClone(this.draft);
+  }
+
   async submitDraft(
     _quotationId: string,
     actorUserId: string,
@@ -609,7 +866,7 @@ class InMemoryQuotationRepository implements QuotationRepository {
     if (!this.draft) throw new QuotationRevisionConflictError();
     this.draft = {
       ...this.draft,
-      status: "PENDING_APPROVAL",
+      status: "QUOTED",
       submittedAt: new Date("2026-08-30T00:00:00Z"),
       submittedByUserId: actorUserId,
     };
@@ -621,32 +878,49 @@ class InMemoryQuotationRepository implements QuotationRepository {
     actorUserId: string,
     action: QuotationDecisionAction,
     reason: string | null,
+    adjustment?: import("../src/quotation/quotation.repository").ConfirmedQuotationAdjustment,
   ): Promise<QuotationDraft> {
     if (!this.draft) throw new QuotationRevisionConflictError();
     this.draft = {
       ...this.draft,
+      adjustedTotal: adjustment?.adjustedTotal ?? this.draft.adjustedTotal,
+      adjustmentReason: adjustment?.reason ?? this.draft.adjustmentReason,
+      adjustmentStatus: action === "RETURNED" ? "AWAITING_SUBMISSION" : "CONFIRMED",
+      discountRate: adjustment?.discountRate ?? this.draft.discountRate,
+      grossMarginRate: adjustment?.grossMarginRate ?? this.draft.grossMarginRate,
+      grossProfit: adjustment?.grossProfit ?? this.draft.grossProfit,
       decidedAt: new Date("2026-08-30T01:00:00Z"),
       decidedByUserId: actorUserId,
       decisionAction: action,
       decisionReason: reason,
+      id: `${this.draft.id}-${action.toLowerCase()}`,
+      parentVersionId: this.draft.id,
       status: action === "RETURNED" ? "RETURNED" : "APPROVED",
+      versionNumber: this.draft.versionNumber + 1,
+      writeOff: adjustment?.writeOff ?? this.draft.writeOff,
     };
     return structuredClone(this.draft);
   }
 
-  async createDraftFromVersion(
+  async continueEditing(
     source: QuotationDraft,
     actorUserId: string,
   ): Promise<QuotationDraft> {
+    const preserveAdjustment = source.status === "RETURNED";
     this.draft = {
       ...structuredClone(source),
+      adjustedTotal: preserveAdjustment ? source.adjustedTotal : source.total,
       createdByUserId: actorUserId,
       id: `${source.id}-copy`,
       parentVersionId: source.id,
+      adjustmentReason: preserveAdjustment ? source.adjustmentReason : null,
+      adjustmentStatus: "AWAITING_SUBMISSION",
+      discountRate: preserveAdjustment ? source.discountRate : "1.0000",
       status: "DRAFT",
       submittedAt: null,
       submittedByUserId: null,
       versionNumber: source.versionNumber + 1,
+      writeOff: preserveAdjustment ? source.writeOff : "0.0000",
     };
     return structuredClone(this.draft);
   }
@@ -661,12 +935,65 @@ class InMemoryQuotationRepository implements QuotationRepository {
   }
 }
 
+function quotationContent(quotation: {
+  readonly scopes: readonly {
+    readonly lines: readonly {
+      readonly amount: string | null;
+      readonly itemName: string;
+      readonly quantity: string | null;
+      readonly saleUnitPrice: string;
+      readonly selected: boolean;
+    }[];
+    readonly name: string;
+    readonly subtotal: string;
+  }[];
+}) {
+  return quotation.scopes.map((scope) => ({
+    lines: scope.lines.map((line) => ({
+      amount: line.amount,
+      itemName: line.itemName,
+      quantity: line.quantity,
+      saleUnitPrice: line.saleUnitPrice,
+      selected: line.selected,
+    })),
+    name: scope.name,
+    subtotal: scope.subtotal,
+  }));
+}
+
+async function decodedPdfOperators(payload: Buffer): Promise<string> {
+  const document = await PDFDocument.load(payload);
+  const contents = document.getPages()[0]?.node.normalizedEntries().Contents;
+  if (!contents) return "";
+  return contents
+    .asArray()
+    .map((entry) => document.context.lookup(entry))
+    .map((stream) => {
+      if (stream instanceof PDFRawStream) {
+        return Buffer.from(decodePDFRawStream(stream).decode()).toString();
+      }
+      if (stream instanceof PDFContentStream) {
+        return Buffer.from(stream.getUnencodedContents()).toString();
+      }
+      return "";
+    })
+    .join("\n");
+}
+
 const owner: SessionUser = {
   account: "owner",
   displayName: "何总",
   id: "11111111-1111-4111-8111-111111111111",
   phone: null,
   role: "OWNER",
+};
+
+const administrator: SessionUser = {
+  account: "admin",
+  displayName: "系统管理员",
+  id: "00000000-0000-4000-8000-000000000001",
+  phone: null,
+  role: "ADMIN",
 };
 
 const lead: SessionUser = {
@@ -692,12 +1019,16 @@ const woodwork: SessionUser = {
 };
 
 const project: ProjectDetail = {
-  address: "上海市静安区测试路 1 号",
-  buildingArea: "130.0000",
+  createdAt: "2026-08-30T00:00:00.000Z",
   customerName: "林先生",
   id: "44444444-4444-4444-8444-444444444444",
   leadDesigner: lead,
-  name: "静悦府（演示）",
+  outerFrameArea: "130.0000",
+  projectAddress: "上海市静安区测试路 1 号",
+  quotationAmount: null,
+  quotationId: null,
+  quotationStatus: null,
+  quotationVersion: null,
   spaces: [
     {
       area: "42.0000",
@@ -720,6 +1051,7 @@ const project: ProjectDetail = {
       type: "BEDROOM",
     },
   ],
+  updatedAt: "2026-08-30T00:00:00.000Z",
 };
 
 let templateOrder = 0;
@@ -737,6 +1069,8 @@ const template: QuotationTemplate = {
       "600*1200mm地砖（水泥砂浆粘贴）",
       "M2",
       "160.0000",
+      "160.0000",
+      "1、人工费；\n2、垃圾装袋运至小区指定点，如需要运到小区外费用另计。",
     ),
     item("living-2", "LIVING_DINING", "顶面基层处理", "M2", "47.0000"),
     item("balcony-1", "BALCONY", "包管道（1根）", "项", "280.0000"),
@@ -780,12 +1114,13 @@ function item(
   unit: string,
   saleUnitPrice: string,
   costUnitPrice = saleUnitPrice,
+  remarks: string | null = null,
 ): QuotationTemplate["items"][number] {
   return {
     costUnitPrice,
     id,
     itemName,
-    remarks: null,
+    remarks,
     saleUnitPrice,
     sectionCode,
     sectionName: sectionName(sectionCode),

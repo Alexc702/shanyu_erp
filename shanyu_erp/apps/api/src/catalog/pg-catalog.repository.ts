@@ -278,6 +278,24 @@ export class PgCatalogRepository implements CatalogRepository {
       }
 
       await database.query(
+        `UPDATE half_package_quotation_lines draft_line
+            SET remarks = latest_item.remarks
+           FROM half_package_quotation_spaces scope,
+                half_package_quotations quotation,
+                half_package_version_items original_item,
+                half_package_version_items latest_item
+          WHERE scope.id = draft_line.quotation_space_id
+            AND quotation.id = scope.quotation_id
+            AND quotation.status = 'DRAFT'
+            AND quotation.is_current
+            AND original_item.id = draft_line.version_item_id
+            AND latest_item.template_version_id = $1
+            AND latest_item.standard_item_id = original_item.standard_item_id
+            AND draft_line.remarks IS DISTINCT FROM latest_item.remarks`,
+        [newVersionId],
+      );
+
+      await database.query(
         `UPDATE catalog_import_batches
             SET status = 'PUBLISHED', published_version_id = $2
           WHERE id = $1`,

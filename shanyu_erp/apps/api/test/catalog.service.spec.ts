@@ -44,12 +44,12 @@ describe("CatalogService", () => {
 
   it("reuses the validated batch when the same workbook hash is uploaded again", async () => {
     const buffer = await readFile(
-      resolve(process.cwd(), "../../../半包报价单_v3.xlsx"),
+      resolve(process.cwd(), "../../../半包报价单_v5.xlsx"),
     );
 
     const first = await service.validateWorkbook(owner, {
       buffer,
-      fileName: "半包报价单_v3.xlsx",
+      fileName: "半包报价单_v5.xlsx",
     });
     const second = await service.validateWorkbook(owner, {
       buffer,
@@ -59,7 +59,7 @@ describe("CatalogService", () => {
     expect(first).toMatchObject({
       reused: false,
       status: "VALIDATED",
-      validation: { blockerCount: 0, itemCount: 161 },
+      validation: { blockerCount: 0, itemCount: 178 },
     });
     expect(second).toMatchObject({ id: first.id, reused: true });
     expect(repository.createdBatchCount).toBe(1);
@@ -81,17 +81,17 @@ describe("CatalogService", () => {
 
   it("publishes a validated batch once as an immutable catalog version", async () => {
     const buffer = await readFile(
-      resolve(process.cwd(), "../../../半包报价单_v3.xlsx"),
+      resolve(process.cwd(), "../../../半包报价单_v5.xlsx"),
     );
     const batch = await service.validateWorkbook(owner, {
       buffer,
-      fileName: "半包报价单_v3.xlsx",
+      fileName: "半包报价单_v5.xlsx",
     });
 
     const published = await service.publishBatch(owner, batch.id);
 
     expect(published).toMatchObject({
-      items: { length: 161 },
+      items: { length: 178 },
       sections: { length: 8 },
       versionNumber: 1,
     });
@@ -108,7 +108,7 @@ describe("CatalogService", () => {
 
   it("persists blocking differences as a failed batch that cannot publish", async () => {
     const source = await readFile(
-      resolve(process.cwd(), "../../../半包报价单_v3.xlsx"),
+      resolve(process.cwd(), "../../../半包报价单_v5.xlsx"),
     );
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(
@@ -131,7 +131,7 @@ describe("CatalogService", () => {
       validation: {
         blockerCount: 1,
         blockers: ["Excel 第 27 行缺少销售价或成本价"],
-        costPriceCount: 160,
+        costPriceCount: 177,
       },
     });
     await expect(service.publishBatch(owner, batch.id)).rejects.toBeInstanceOf(
@@ -163,11 +163,11 @@ describe("CatalogService", () => {
 
   it("returns costs to administrators and owners and denies unrelated roles", async () => {
     const buffer = await readFile(
-      resolve(process.cwd(), "../../../半包报价单_v3.xlsx"),
+      resolve(process.cwd(), "../../../半包报价单_v5.xlsx"),
     );
     const batch = await service.validateWorkbook(owner, {
       buffer,
-      fileName: "半包报价单_v3.xlsx",
+      fileName: "半包报价单_v5.xlsx",
     });
     await service.publishBatch(owner, batch.id);
 

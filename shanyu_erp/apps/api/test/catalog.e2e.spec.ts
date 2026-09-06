@@ -100,14 +100,14 @@ describe("half-package catalog HTTP interface", () => {
     await app.close();
   });
 
-  it("lets the owner validate and publish the 161-item workbook", async () => {
+  it("lets the owner validate and publish the 178-item workbook", async () => {
     const cookie = await login("owner", "owner-password");
     const workbook = await readFile(sourceWorkbookPath);
 
     const imported = await request(app.getHttpServer())
       .post("/catalog/half-package/imports")
       .set("Cookie", cookie)
-      .attach("file", workbook, "半包报价单_v3.xlsx")
+      .attach("file", workbook, "半包报价单_v5.xlsx")
       .expect(201);
 
     expect(imported.body.batch).toMatchObject({
@@ -115,9 +115,9 @@ describe("half-package catalog HTTP interface", () => {
       status: "VALIDATED",
       validation: {
         blockerCount: 0,
-        itemCount: 161,
+        itemCount: 178,
         sectionCount: 8,
-        warningSourceRows: [56, 105, 167],
+        warningSourceRows: [63, 115, 184],
       },
     });
     expect(imported.body.batch).not.toHaveProperty("items");
@@ -129,7 +129,7 @@ describe("half-package catalog HTTP interface", () => {
 
     expect(published.body.catalog).toMatchObject({
       versionNumber: 1,
-      items: { length: 161 },
+      items: { length: 178 },
       sections: { length: 8 },
     });
     expect(published.body.catalog.items[0]).toHaveProperty("costUnitPrice");
@@ -142,7 +142,7 @@ describe("half-package catalog HTTP interface", () => {
     const imported = await request(app.getHttpServer())
       .post("/catalog/half-package/imports")
       .set("Cookie", ownerCookie)
-      .attach("file", workbook, "半包报价单_v3.xlsx")
+      .attach("file", workbook, "半包报价单_v5.xlsx")
       .expect(201);
     await request(app.getHttpServer())
       .post(`/catalog/half-package/imports/${imported.body.batch.id}/publish`)
@@ -153,7 +153,7 @@ describe("half-package catalog HTTP interface", () => {
     await request(app.getHttpServer())
       .post("/catalog/half-package/imports")
       .set("Cookie", leadCookie)
-      .attach("file", workbook, "半包报价单_v3.xlsx")
+      .attach("file", workbook, "半包报价单_v5.xlsx")
       .expect(403);
 
     const response = await request(app.getHttpServer())
@@ -161,7 +161,7 @@ describe("half-package catalog HTTP interface", () => {
       .set("Cookie", leadCookie)
       .expect(200);
 
-    expect(response.body.catalog.items).toHaveLength(161);
+    expect(response.body.catalog.items).toHaveLength(178);
     expect(JSON.stringify(response.body)).not.toContain("costUnitPrice");
     expect(response.body.catalog.items[0]).toHaveProperty("saleUnitPrice");
   });
@@ -246,7 +246,7 @@ class InMemoryCatalogRepository implements CatalogRepository {
 
 const sourceWorkbookPath = resolve(
   process.cwd(),
-  "../../../半包报价单_v3.xlsx",
+  "../../../半包报价单_v5.xlsx",
 );
 
 async function storedUser(

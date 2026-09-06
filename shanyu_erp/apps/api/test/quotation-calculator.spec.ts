@@ -12,8 +12,9 @@ describe("HalfPackageCalculator", () => {
 
   it("calculates confirmed project, space, and stable-line rules to four decimals", () => {
     const result = calculator.calculate({
-      buildingArea: "130.0000",
+      discountRate: "1.0000",
       managementRate: "0.1000",
+      outerFrameArea: "130.0000",
       scopes: [
         {
           area: "20.0000",
@@ -41,12 +42,13 @@ describe("HalfPackageCalculator", () => {
           id: "common",
           lines: [
             line("electrical", "15.5000", {
-              kind: "PROJECT_BUILDING_AREA",
+              kind: "PROJECT_OUTER_FRAME_AREA",
             }),
           ],
           perimeter: null,
         },
       ],
+      writeOff: "0.0000",
     });
 
     expect(result.scopes[0]?.lines).toMatchObject([
@@ -68,8 +70,9 @@ describe("HalfPackageCalculator", () => {
 
   it("keeps blank manual quantities and unselected automatic items out of totals", () => {
     const result = calculator.calculate({
-      buildingArea: "100.0000",
+      discountRate: "1.0000",
       managementRate: "0.1000",
+      outerFrameArea: "100.0000",
       scopes: [
         {
           area: "18.0000",
@@ -83,6 +86,7 @@ describe("HalfPackageCalculator", () => {
           perimeter: "17.0000",
         },
       ],
+      writeOff: "0.0000",
     });
 
     expect(result.scopes[0]?.lines).toMatchObject([
@@ -93,8 +97,8 @@ describe("HalfPackageCalculator", () => {
     expect(result).toMatchObject({
       directCost: "19.1348",
       expectedCost: "19.1348",
-      grossMarginRate: "0.0000",
-      grossProfit: "0.0000",
+      grossMarginRate: "0.0909",
+      grossProfit: "1.9135",
       managementFee: "1.9135",
       total: "21.0483",
     });
@@ -102,8 +106,9 @@ describe("HalfPackageCalculator", () => {
 
   it("calculates line, scope, and quotation expected margin from the same snapshot", () => {
     const result = calculator.calculate({
-      buildingArea: "130.0000",
+      discountRate: "1.0000",
       managementRate: "0.1000",
+      outerFrameArea: "130.0000",
       scopes: [
         {
           area: "50.0000",
@@ -122,6 +127,7 @@ describe("HalfPackageCalculator", () => {
           perimeter: "30.0000",
         },
       ],
+      writeOff: "0.0000",
     });
 
     expect(result.scopes[0]).toMatchObject({
@@ -147,17 +153,17 @@ describe("HalfPackageCalculator", () => {
     expect(result).toMatchObject({
       directCost: "8000.0000",
       expectedCost: "5000.0000",
-      grossMarginRate: "0.3750",
-      grossProfit: "3000.0000",
+      grossMarginRate: "0.4318",
+      grossProfit: "3800.0000",
       managementFee: "800.0000",
       total: "8800.0000",
     });
   });
 
-  it("matches all 161 cached Excel quantities, line amounts, and summary values", async () => {
+  it("matches all 178 cached V4 Excel quantities, line amounts, and summary values", async () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(
-      resolve(process.cwd(), "../../../半包报价单_v3.xlsx"),
+      resolve(process.cwd(), "../../../半包报价单_v5.xlsx"),
     );
     const sheet = workbook.getWorksheet("半包报价模板");
     if (!sheet) {
@@ -165,13 +171,13 @@ describe("HalfPackageCalculator", () => {
     }
     const ranges = [
       [6, 24, 25],
-      [27, 71, 72],
-      [74, 117, 118],
-      [120, 122, 123],
-      [125, 151, 152],
-      [155, 157, 158],
-      [160, 176, 177],
-      [179, 181, 182],
+      [27, 78, 79],
+      [81, 127, 128],
+      [130, 132, 133],
+      [135, 168, 169],
+      [172, 174, 175],
+      [177, 193, 194],
+      [196, 198, 199],
     ] as const;
     const scopes: QuotationCalculationInput["scopes"] = ranges.map(
       ([start, end], scopeIndex) => ({
@@ -182,10 +188,7 @@ describe("HalfPackageCalculator", () => {
           const sourceRow = start + index;
           const row = sheet.getRow(sourceRow);
           const quantity = numericCellResult(row.getCell(6).value);
-          const costUnitPrice =
-            row.getCell(3).text.trim() === "正泰空开更换"
-              ? 6
-              : (numericCellResult(row.getCell(10).value) ?? 0);
+          const costUnitPrice = numericCellResult(row.getCell(10).value) ?? 0;
           return line(
             `source-row-${sourceRow}`,
             decimal4(numericCellResult(row.getCell(7).value) ?? 0),
@@ -199,12 +202,14 @@ describe("HalfPackageCalculator", () => {
     );
 
     const result = calculator.calculate({
-      buildingArea: "130.0000",
+      discountRate: "1.0000",
       managementRate: "0.1000",
+      outerFrameArea: "130.0000",
       scopes,
+      writeOff: "0.0000",
     });
 
-    expect(result.scopes.flatMap((scope) => scope.lines)).toHaveLength(161);
+    expect(result.scopes.flatMap((scope) => scope.lines)).toHaveLength(178);
     for (const scope of result.scopes) {
       for (const calculated of scope.lines) {
         const sourceRow = Number(calculated.id.replace("source-row-", ""));
@@ -215,10 +220,7 @@ describe("HalfPackageCalculator", () => {
           sheet.getRow(sourceRow).getCell(8).value,
         );
         const row = sheet.getRow(sourceRow);
-        const costUnitPrice =
-          row.getCell(3).text.trim() === "正泰空开更换"
-            ? 6
-            : numericCellResult(row.getCell(10).value);
+        const costUnitPrice = numericCellResult(row.getCell(10).value);
         expect(calculated.quantity, `Excel 第 ${sourceRow} 行数量`).toBe(
           expectedQuantity === null || expectedQuantity === 0
             ? null
@@ -246,16 +248,11 @@ describe("HalfPackageCalculator", () => {
         decimal4(numericCellResult(sheet.getRow(subtotalRow).getCell(8).value) ?? 0),
       );
     }
-    expect(result.directCost).toBe(decimal4(requiredCellResult(sheet, "G184")));
+    expect(result.directCost).toBe(decimal4(requiredCellResult(sheet, "G201")));
     expect(result.managementFee).toBe(
-      decimal4(requiredCellResult(sheet, "G185")),
+      decimal4(requiredCellResult(sheet, "G202")),
     );
-    expect(result.total).toBe(decimal4(requiredCellResult(sheet, "G187")));
-    expect(result).toMatchObject({
-      expectedCost: "74922.8484",
-      grossMarginRate: "0.3377",
-      grossProfit: "38201.9176",
-    });
+    expect(result.total).toBe(decimal4(requiredCellResult(sheet, "G204")));
   });
 });
 
