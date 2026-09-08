@@ -254,10 +254,12 @@ export class QuotationApprovalController {
       actor,
       quotationId,
       input.format,
+      input.audience ?? "CLIENT",
     );
     return {
       export: {
         downloadPath: `/quotation-exports/${created.id}`,
+        audience: created.audience,
         fileName: created.fileName,
         format: created.format,
         id: created.id,
@@ -376,8 +378,15 @@ function decisionInput(body: unknown): DecideHalfPackageQuotationRequest {
 
 function exportInput(body: unknown): CreateHalfPackageExportRequest {
   const candidate = body as Record<string, unknown> | null;
-  if (!candidate || !["PDF", "XLSX"].includes(String(candidate.format))) {
+  if (
+    !candidate ||
+    !["PDF", "XLSX"].includes(String(candidate.format)) ||
+    !(candidate.audience === undefined || candidate.audience === "CLIENT" || candidate.audience === "INTERNAL")
+  ) {
     throw new BadRequestException("导出格式仅支持 PDF 或 XLSX");
   }
-  return { format: candidate.format as CreateHalfPackageExportRequest["format"] };
+  return {
+    audience: candidate.audience as CreateHalfPackageExportRequest["audience"],
+    format: candidate.format as CreateHalfPackageExportRequest["format"],
+  };
 }

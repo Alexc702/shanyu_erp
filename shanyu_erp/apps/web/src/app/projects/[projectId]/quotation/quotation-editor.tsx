@@ -153,8 +153,8 @@ export function QuotationEditor({
           ) : null}
           {editable ? (
             <Button asChild size="sm">
-              <Link href={`/projects/${quotation.projectId}/quotation/submit`}>
-                确认生成报价单
+              <Link href={`/projects/${quotation.projectId}/quotation/main-materials`}>
+                下一步：主材选型
               </Link>
             </Button>
           ) : (

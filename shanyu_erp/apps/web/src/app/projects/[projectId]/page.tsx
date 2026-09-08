@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   fetchHalfPackageQuotation,
+  fetchMainMaterialQuotation,
   fetchProject,
   fetchPublishedCatalog,
   fetchQuotationVersion,
@@ -63,6 +64,9 @@ export default async function ProjectPage({
     fetchPublishedCatalog(cookieHeader),
   ]);
   if (!quotation || quotation.projectId !== projectId) notFound();
+  const mainMaterial = quotationId
+    ? null
+    : await fetchMainMaterialQuotation(cookieHeader, projectId);
 
   const selectedItemCount = quotation.scopes.reduce(
     (total, scope) =>
@@ -126,7 +130,8 @@ export default async function ProjectPage({
             </Button>
             {exportVisible ? (
               <ExportMenu
-                fileNameStem={`${project.projectAddress}_半包报价单_V${quotation.versionNumber}`}
+                allowInternal={hasOwnerPermissions(session.user.role)}
+                fileNameStem={`${project.projectAddress}_项目报价单_V${quotation.versionNumber}`}
                 quotationId={quotation.id}
               />
             ) : null}
@@ -282,25 +287,14 @@ export default async function ProjectPage({
 
             <Card className="border-border py-0 shadow-none">
               <CardContent className="grid gap-3 p-4">
-                <h2 className="type-section-title">V2 报价扩展（本轮不展开）</h2>
+                <h2 className="type-section-title">项目报价模块</h2>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                  {[
-                    "主材报价",
-                    "铂屿木作定制",
-                    "第三方代购",
-                    "定制项目",
-                    "全案汇总",
-                  ].map((label) => (
-                    <div
-                      className="grid gap-1.5 rounded-lg bg-muted p-3 opacity-70"
-                      key={label}
-                    >
-                      <strong className="type-table-head">{label}</strong>
-                      <span className="type-support text-muted-foreground">
-                        V2 · 待正式模板
-                      </span>
-                    </div>
-                  ))}
+                  <Link className="grid gap-1.5 rounded-lg border border-primary/25 bg-primary-soft p-3 transition hover:border-primary" href={`/projects/${project.id}/quotation/main-materials`}>
+                    <div className="flex items-center justify-between gap-2"><strong className="type-table-head">主材报价</strong><Badge variant={mainMaterial?.lines.some((line) => line.origin === "AUTO_TILE" && !line.item) ? "warning" : "success"}>{mainMaterial?.status === "DRAFT" ? "选型中" : "已报价"}</Badge></div>
+                    <span className="text-base font-semibold text-primary">¥{Number(mainMaterial?.summary.total ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span className="type-support text-muted-foreground">{mainMaterial?.lines.filter((line) => line.item).length ?? 0} 项已选 · 查看明细 →</span>
+                  </Link>
+                  {["铂屿木作定制", "第三方代购", "定制项目", "设计费"].map((label) => <div className="grid gap-1.5 rounded-lg bg-muted p-3 opacity-70" key={label}><strong className="type-table-head">{label}</strong><span className="type-support text-muted-foreground">后续阶段</span></div>)}
                 </div>
               </CardContent>
             </Card>

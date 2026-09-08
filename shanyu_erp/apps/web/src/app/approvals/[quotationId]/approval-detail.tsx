@@ -4,6 +4,7 @@ import type {
   HalfPackageApprovalDecision,
   HalfPackageCostMargin,
   HalfPackageQuotation,
+  MainMaterialQuotationView,
   ProjectDetail,
 } from "@shanyu/contracts";
 import { ArrowLeft, Check, RotateCcw, X } from "lucide-react";
@@ -48,10 +49,12 @@ interface ModuleRow {
 export function ApprovalDetail({
   costMargin,
   initialQuotation,
+  mainMaterial,
   project,
 }: {
   readonly costMargin: HalfPackageCostMargin;
   readonly initialQuotation: HalfPackageQuotation;
+  readonly mainMaterial: MainMaterialQuotationView;
   readonly project: ProjectDetail;
 }) {
   const router = useRouter();
@@ -64,6 +67,13 @@ export function ApprovalDetail({
     quotation.status === "QUOTED" &&
     quotation.adjustmentStatus === "PENDING_APPROVAL";
   const canReturn = pending || quotation.status === "APPROVED";
+  const projectSales = quotation.adjustedTotal;
+  const projectCost = addDecimal4(
+    costMargin.expectedCost,
+    mainMaterial.summary.expectedCost ?? "0.0000",
+  );
+  const projectProfit = subtractDecimal4(projectSales, projectCost);
+  const projectMarginRate = decimalRate(projectProfit, projectSales);
   const modules: readonly ModuleRow[] = [
     {
       cost: costMargin.expectedCost,
@@ -73,6 +83,16 @@ export function ApprovalDetail({
       note: "09 总览 → 09B 工程项明细",
       profitOrRebate: costMargin.grossProfit,
       sales: costMargin.salesAmount,
+      status: "COMPLETED",
+    },
+    {
+      cost: mainMaterial.summary.expectedCost ?? null,
+      detailsHref: `/projects/${project.id}/quotation/main-materials/cost?quotationId=${quotation.id}`,
+      marginRate: mainMaterial.summary.grossMarginRate ?? null,
+      name: "主材报价",
+      note: `主材库 V${mainMaterial.catalogVersion.versionNumber} · 已选 ${mainMaterial.lines.filter((line) => line.item).length} 项`,
+      profitOrRebate: mainMaterial.summary.grossProfit ?? null,
+      sales: mainMaterial.summary.total,
       status: "COMPLETED",
     },
     disabledModule("铂屿木作定制"),
@@ -197,24 +217,24 @@ export function ApprovalDetail({
           <BusinessMetric
             label="项目报价 / 对客收入"
             note="不含第三方代购"
-            value={`¥${displayMoney(costMargin.salesAmount)}`}
+            value={`¥${displayMoney(projectSales)}`}
           />
           <BusinessMetric
             label="预计成本"
             note={`当前${statusLabel(quotation.status)}版本`}
-            value={`¥${displayMoney(costMargin.expectedCost)}`}
+            value={`¥${displayMoney(projectCost)}`}
           />
           <BusinessMetric
-            emphasis={moneyTone(costMargin.grossProfit)}
+            emphasis={moneyTone(projectProfit)}
             label="预计毛利"
             note="项目报价 − 预计成本"
-            value={`¥${displayMoney(costMargin.grossProfit)}`}
+            value={`¥${displayMoney(projectProfit)}`}
           />
           <BusinessMetric
-            emphasis={moneyTone(costMargin.grossProfit)}
+            emphasis={moneyTone(projectProfit)}
             label="综合毛利率"
             note="预计毛利 ÷ 项目报价"
-            value={formatMarginRate(costMargin.grossMarginRate)}
+            value={formatMarginRate(projectMarginRate)}
           />
         </div>
       </section>
@@ -466,6 +486,41 @@ function formatArea(value: string): string {
 
 function moneyTone(value: string): string {
   return value.startsWith("-") ? "text-destructive" : "text-success";
+}
+
+function addDecimal4(left: string, right: string): string {
+  return fixed4(decimal4Units(left) + decimal4Units(right));
+}
+
+function subtractDecimal4(left: string, right: string): string {
+  return fixed4(decimal4Units(left) - decimal4Units(right));
+}
+
+function decimalRate(numerator: string, denominator: string): string | null {
+  const denominatorUnits = decimal4Units(denominator);
+  if (denominatorUnits === BigInt(0)) return null;
+  return fixed4(divideRounded(decimal4Units(numerator) * BigInt(10_000), denominatorUnits));
+}
+
+function decimal4Units(value: string): bigint {
+  const match = /^(-?)(\d+)(?:\.(\d{1,4}))?$/.exec(value.trim());
+  if (!match) throw new Error("金额格式不正确");
+  const units = BigInt(match[2] ?? "0") * BigInt(10_000) + BigInt((match[3] ?? "").padEnd(4, "0"));
+  return match[1] === "-" ? -units : units;
+}
+
+function divideRounded(numerator: bigint, denominator: bigint): bigint {
+  const negative = (numerator < BigInt(0)) !== (denominator < BigInt(0));
+  const left = numerator < BigInt(0) ? -numerator : numerator;
+  const right = denominator < BigInt(0) ? -denominator : denominator;
+  const quotient = (left + right / BigInt(2)) / right;
+  return negative ? -quotient : quotient;
+}
+
+function fixed4(units: bigint): string {
+  const sign = units < BigInt(0) ? "-" : "";
+  const absolute = units < BigInt(0) ? -units : units;
+  return `${sign}${absolute / BigInt(10_000)}.${String(absolute % BigInt(10_000)).padStart(4, "0")}`;
 }
 
 function statusLabel(status: HalfPackageQuotation["status"]): string {

@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import type {
   HalfPackageApprovalDecision,
@@ -40,6 +41,11 @@ import {
   type QuotationTemplateItem,
 } from "./quotation.repository";
 import { QuotationExporter } from "./quotation-exporter";
+import {
+  MAIN_MATERIAL_REPOSITORY,
+  type MainMaterialQuotation,
+  type MainMaterialRepository,
+} from "../main-material/main-material.repository";
 
 export interface UpdateQuotationLineInput {
   readonly expectedRevision: number;
@@ -82,6 +88,9 @@ export interface QuotationView {
   readonly isCurrent: boolean;
   readonly managementFee: string;
   readonly managementRate: string;
+  readonly halfPackageTotal: string;
+  readonly mainMaterialTotal: string;
+  readonly projectTotal: string;
   readonly projectId: string;
   readonly projectAddress: string;
   readonly revision: number;
@@ -104,6 +113,9 @@ export class QuotationService {
     private readonly auditRepository: AuditRepository,
     private readonly calculator: HalfPackageCalculator,
     private readonly exporter: QuotationExporter = new QuotationExporter(),
+    @Optional()
+    @Inject(MAIN_MATERIAL_REPOSITORY)
+    private readonly mainMaterialRepository: MainMaterialRepository = emptyMainMaterialRepository,
   ) {}
 
   async getOrCreateDraft(
@@ -250,11 +262,29 @@ export class QuotationService {
     projectId: string,
   ): Promise<HalfPackageSubmissionCheck> {
     await this.authorizedProject(actor, projectId);
+    await this.mainMaterialRepository.initializeAndSyncDraft(projectId);
     const draft = await this.quotationRepository.findDraft(projectId);
     if (!draft) {
       throw new NotFoundException("半包报价草稿不存在");
     }
-    return this.submissionCheck(draft);
+    const baseCheck = await this.submissionCheck(draft);
+    const mainMaterial = await this.mainMaterialRepository.getQuotationById(draft.id);
+    const missingMainMaterial = mainMaterial?.lines.filter(
+      (line) => line.origin === "AUTO_TILE" && !line.itemVersionId,
+    ) ?? [];
+    const check = missingMainMaterial.length
+      ? {
+          ...baseCheck,
+          blockerCount: baseCheck.blockerCount + missingMainMaterial.length,
+          blockers: [
+            ...baseCheck.blockers,
+            ...missingMainMaterial.map(
+              (line) => `${line.scopeName}的${line.demandName}尚未选择主材型号`,
+            ),
+          ],
+        }
+      : baseCheck;
+    return check;
   }
 
   async submit(
@@ -263,11 +293,35 @@ export class QuotationService {
     expectedRevision: number,
   ): Promise<QuotationView> {
     await this.authorizedProject(actor, projectId);
+    const beforeSync = await this.quotationRepository.findDraft(projectId);
+    if (!beforeSync) {
+      throw new NotFoundException("半包报价草稿不存在");
+    }
+    if (beforeSync.revision !== expectedRevision) {
+      throw new ConflictException("报价已变化，请重新检查后生成");
+    }
+    await this.mainMaterialRepository.initializeAndSyncDraft(projectId);
     const draft = await this.quotationRepository.findDraft(projectId);
     if (!draft) {
       throw new NotFoundException("半包报价草稿不存在");
     }
-    const check = await this.submissionCheck(draft);
+    const baseCheck = await this.submissionCheck(draft);
+    const mainMaterial = await this.mainMaterialRepository.getQuotationById(draft.id);
+    const missingMainMaterial = mainMaterial?.lines.filter(
+      (line) => line.origin === "AUTO_TILE" && !line.itemVersionId,
+    ) ?? [];
+    const check = missingMainMaterial.length
+      ? {
+          ...baseCheck,
+          blockerCount: baseCheck.blockerCount + missingMainMaterial.length,
+          blockers: [
+            ...baseCheck.blockers,
+            ...missingMainMaterial.map(
+              (line) => `${line.scopeName}的${line.demandName}尚未选择主材型号`,
+            ),
+          ],
+        }
+      : baseCheck;
     if (check.blockerCount > 0) {
       throw new BadRequestException(
         `生成前仍有 ${check.blockerCount} 个阻断项：${check.blockers.join("；")}`,
@@ -278,7 +332,7 @@ export class QuotationService {
       submitted = await this.quotationRepository.submitDraft(
         draft.id,
         actor.id,
-        expectedRevision,
+        draft.revision,
       );
     } catch (error) {
       if (error instanceof QuotationRevisionConflictError) {
@@ -314,7 +368,10 @@ export class QuotationService {
         }
         return {
           customerName: project.customerName,
-          expectedCost: quotation.expectedCost,
+          expectedCost: addDecimal4(
+            quotation.expectedCost,
+            quotation.mainMaterialExpectedCost ?? "0.0000",
+          ),
           grossMarginRate: quotation.grossMarginRate,
           grossProfit: quotation.grossProfit,
           id: quotation.id,
@@ -512,14 +569,16 @@ export class QuotationService {
     if (!normalizedReason) {
       throw new BadRequestException("提交折扣审批必须填写调整原因");
     }
-    const total = decimal4(quotation.total);
-    const discountRate = decimal4(input.discountRate);
-    const writeOff = decimal4(input.writeOff);
-    const adjustedTotal = Math.max(0, total * discountRate - writeOff).toFixed(4);
-    const grossProfit = (Number(adjustedTotal) - Number(quotation.expectedCost)).toFixed(4);
-    const grossMarginRate = Number(adjustedTotal) === 0
-      ? null
-      : (Number(grossProfit) / Number(adjustedTotal)).toFixed(4);
+    const adjustedTotal = adjustedProjectTotal(
+      projectBaseTotal(quotation),
+      input.discountRate,
+      input.writeOff,
+    );
+    const grossProfit = subtractDecimal4(
+      subtractDecimal4(adjustedTotal, quotation.expectedCost),
+      quotation.mainMaterialExpectedCost ?? "0.0000",
+    );
+    const grossMarginRate = decimalRate(grossProfit, adjustedTotal);
     let saved: QuotationDraft;
     try {
       saved = input.action === "CONFIRM"
@@ -592,10 +651,18 @@ export class QuotationService {
     if (from.projectId !== to.projectId) {
       throw new BadRequestException("只能对比同一项目的报价版本");
     }
+    const includeCosts = actor.role === "ADMIN" || actor.role === "OWNER";
     const differences = compareQuotationVersions(
       from,
       to,
-      actor.role === "ADMIN" || actor.role === "OWNER",
+      includeCosts,
+    );
+    differences.push(
+      ...compareMainMaterialVersions(
+        await this.mainMaterialRepository.getQuotationById(from.id),
+        await this.mainMaterialRepository.getQuotationById(to.id),
+        includeCosts,
+      ),
     );
     return {
       differences,
@@ -608,7 +675,14 @@ export class QuotationService {
     actor: SessionUser,
     quotationId: string,
     format: QuotationExportFormat,
+    audience: "CLIENT" | "INTERNAL" = "CLIENT",
   ): Promise<QuotationExport> {
+    if (audience === "INTERNAL" && !(actor.role === "ADMIN" || actor.role === "OWNER")) {
+      throw new NotFoundException("导出文件不存在");
+    }
+    if (audience === "INTERNAL" && format !== "XLSX") {
+      throw new BadRequestException("内部版仅支持 XLSX");
+    }
     const quotation = await this.authorizedVersion(actor, quotationId);
     const exportable =
       quotation.isCurrent &&
@@ -625,11 +699,14 @@ export class QuotationService {
       quotation,
       format,
       project.customerName,
+      await this.mainMaterialRepository.getQuotationById(quotation.id),
+      audience,
     );
     const created = await this.quotationRepository.createExport({
       ...generated,
       createdAt: new Date(),
       createdByUserId: actor.id,
+      audience,
       format,
       id: randomUUID(),
       quotationId: quotation.id,
@@ -638,7 +715,7 @@ export class QuotationService {
     await this.auditRepository.append({
       action: "QUOTATION_EXPORTED",
       actorUserId: actor.id,
-      metadata: { format, sha256: created.sha256 },
+      metadata: { audience, format, sha256: created.sha256 },
       occurredAt: new Date(),
       result: "SUCCESS",
       targetId: created.id,
@@ -656,6 +733,9 @@ export class QuotationService {
       throw new NotFoundException("导出文件不存在");
     }
     await this.authorizedVersion(actor, result.quotationId);
+    if (result.audience === "INTERNAL" && !(actor.role === "ADMIN" || actor.role === "OWNER")) {
+      throw new NotFoundException("导出文件不存在");
+    }
     return result;
   }
 
@@ -794,13 +874,24 @@ export class QuotationService {
     const calculatedScopes = new Map(
       result.scopes.map((scope) => [scope.id, scope] as const),
     );
+    const projectTotal = addDecimal4(result.total, draft.mainMaterialTotal ?? "0.0000");
+    const adjustedTotal = adjustedProjectTotal(
+      projectTotal,
+      draft.discountRate,
+      draft.writeOff,
+    );
+    const projectExpectedCost = addDecimal4(
+      result.expectedCost,
+      draft.mainMaterialExpectedCost ?? "0.0000",
+    );
+    const grossProfit = subtractDecimal4(adjustedTotal, projectExpectedCost);
     return {
       ...draft,
-      adjustedTotal: result.adjustedTotal,
+      adjustedTotal,
       directCost: result.directCost,
       expectedCost: result.expectedCost,
-      grossMarginRate: result.grossMarginRate,
-      grossProfit: result.grossProfit,
+      grossMarginRate: decimalRate(grossProfit, adjustedTotal),
+      grossProfit,
       managementFee: result.managementFee,
       scopes: draft.scopes.map((scope) => {
         const calculatedScope = calculatedScopes.get(scope.id);
@@ -836,6 +927,11 @@ export class QuotationService {
     };
   }
 }
+
+const emptyMainMaterialRepository = {
+  async getQuotationById() { return null; },
+  async initializeAndSyncDraft() { return null; },
+} as unknown as MainMaterialRepository;
 
 function buildDraft(
   actorUserId: string,
@@ -922,6 +1018,11 @@ function buildDraft(
     isCurrent: true,
     managementFee: "0.0000",
     managementRate: "0.1000",
+    mainMaterialCatalogVersionId: null,
+    mainMaterialDirectCost: "0.0000",
+    mainMaterialExpectedCost: "0.0000",
+    mainMaterialManagementFee: "0.0000",
+    mainMaterialTotal: "0.0000",
     marginBenchmarkRate: "0.3000",
     parentVersionId: null,
     projectId: project.id,
@@ -1190,6 +1291,9 @@ function toView(draft: QuotationDraft): QuotationView {
     isCurrent: draft.isCurrent,
     managementFee: draft.managementFee,
     managementRate: draft.managementRate,
+    halfPackageTotal: draft.total,
+    mainMaterialTotal: draft.mainMaterialTotal ?? "0.0000",
+    projectTotal: projectBaseTotal(draft),
     projectId: draft.projectId,
     projectAddress: draft.projectAddress,
     revision: draft.revision,
@@ -1244,26 +1348,27 @@ function toView(draft: QuotationDraft): QuotationView {
     status: draft.status,
     submittedAt: draft.submittedAt?.toISOString() ?? null,
     templateVersion: draft.templateVersionNumber,
-    total: draft.total,
+    total: projectBaseTotal(draft),
     versionNumber: draft.versionNumber,
     writeOff: draft.writeOff,
   };
 }
 
 function toCostMargin(draft: QuotationDraft): HalfPackageCostMargin {
+  const halfGrossProfit = subtractDecimal4(draft.total, draft.expectedCost);
   return {
     costVersion: {
       id: draft.costTemplateVersionId,
       versionNumber: draft.costTemplateVersionNumber,
     },
     expectedCost: draft.expectedCost,
-    grossMarginRate: draft.grossMarginRate,
-    grossProfit: draft.grossProfit,
+    grossMarginRate: decimalRate(halfGrossProfit, draft.total),
+    grossProfit: halfGrossProfit,
     id: draft.id,
     marginBenchmarkRate: draft.marginBenchmarkRate,
     projectId: draft.projectId,
     projectAddress: draft.projectAddress,
-    salesAmount: draft.adjustedTotal,
+    salesAmount: draft.total,
     scopes: [
       ...draft.scopes.map((scope) => ({
       expectedCost: scope.expectedCost,
@@ -1427,6 +1532,81 @@ function compareQuotationVersions(
   return differences;
 }
 
+function compareMainMaterialVersions(
+  from: MainMaterialQuotation | null,
+  to: MainMaterialQuotation | null,
+  includeCosts: boolean,
+): HalfPackageVersionDifference[] {
+  const differences: HalfPackageVersionDifference[] = [];
+  if (from?.catalog.versionNumber !== to?.catalog.versionNumber) {
+    differences.push({
+      after: to ? String(to.catalog.versionNumber) : null,
+      before: from ? String(from.catalog.versionNumber) : null,
+      field: "MAIN_MATERIAL_CATALOG_VERSION",
+      itemName: "主材库版本",
+      scopeName: "主材",
+    });
+  }
+  const fromLines = keyedMainMaterialLines(from?.lines ?? []);
+  const toLines = keyedMainMaterialLines(to?.lines ?? []);
+  for (const key of new Set([...fromLines.keys(), ...toLines.keys()])) {
+    const previous = fromLines.get(key);
+    const current = toLines.get(key);
+    const fields: Array<readonly [HalfPackageVersionDifference["field"], string | null, string | null]> = [
+      ["MAIN_MATERIAL_SELECTION", materialSelectionLabel(previous), materialSelectionLabel(current)],
+      ["MAIN_MATERIAL_BRAND", previous?.brand ?? null, current?.brand ?? null],
+      ["MAIN_MATERIAL_MODEL", previous?.model ?? null, current?.model ?? null],
+      ["MAIN_MATERIAL_SPEC", previous?.spec ?? null, current?.spec ?? null],
+      ["MAIN_MATERIAL_COLOR", previous?.selectedColor ?? null, current?.selectedColor ?? null],
+      ["MAIN_MATERIAL_QUANTITY", previous?.quantity ?? null, current?.quantity ?? null],
+      ["MAIN_MATERIAL_LOSS_RATE", previous?.lossRate ?? null, current?.lossRate ?? null],
+      ["MAIN_MATERIAL_SALE_UNIT_PRICE", previous?.saleUnitPrice ?? null, current?.saleUnitPrice ?? null],
+      ["MAIN_MATERIAL_AMOUNT", previous?.saleAmount ?? null, current?.saleAmount ?? null],
+    ];
+    if (includeCosts) {
+      fields.push(
+        ["MAIN_MATERIAL_COST_UNIT_PRICE", previous?.costUnitPrice ?? null, current?.costUnitPrice ?? null],
+        ["MAIN_MATERIAL_COST_AMOUNT", previous?.costAmount ?? null, current?.costAmount ?? null],
+      );
+    }
+    for (const [field, before, after] of fields) {
+      if (before === after) continue;
+      differences.push({
+        after,
+        before,
+        field,
+        itemName: current?.itemName ?? previous?.itemName ?? current?.demandName ?? previous?.demandName ?? "主材项",
+        scopeName: current?.scopeName ?? previous?.scopeName ?? "主材",
+      });
+    }
+  }
+  return differences;
+}
+
+function keyedMainMaterialLines(
+  lines: readonly MainMaterialQuotation["lines"][number][],
+): Map<string, MainMaterialQuotation["lines"][number]> {
+  const categoryCounters = new Map<string, number>();
+  return new Map(lines.map((line) => {
+    const counterKey = `${line.origin}:${line.categoryCode}`;
+    const index = categoryCounters.get(counterKey) ?? 0;
+    categoryCounters.set(counterKey, index + 1);
+    const key = line.origin === "AUTO_TILE"
+      ? `${line.origin}:${line.scopeName}:${line.demandName}`
+      : `${counterKey}:${index}`;
+    return [key, line] as const;
+  }));
+}
+
+function materialSelectionLabel(
+  line: MainMaterialQuotation["lines"][number] | undefined,
+): string | null {
+  if (!line?.materialId) return null;
+  return [line.brand, line.itemName, line.model]
+    .filter((value, index, values) => value && values.indexOf(value) === index)
+    .join(" · ");
+}
+
 const electricalBuildingAreaItems = new Set([
   "开管线槽",
   "打孔穿线",
@@ -1448,10 +1628,60 @@ const otherBuildingAreaItems = new Set([
   "室内家政服务费",
 ]);
 
-function decimal4(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    throw new BadRequestException("金额格式不正确");
-  }
-  return parsed;
+function projectBaseTotal(quotation: QuotationDraft): string {
+  return addDecimal4(
+    quotation.total,
+    quotation.mainMaterialTotal ?? "0.0000",
+  );
+}
+
+function addDecimal4(left: string, right: string): string {
+  return fixed4(decimal4Units(left) + decimal4Units(right));
+}
+
+function subtractDecimal4(left: string, right: string): string {
+  return fixed4(decimal4Units(left) - decimal4Units(right));
+}
+
+function adjustedProjectTotal(
+  total: string,
+  discountRate: string,
+  writeOff: string,
+): string {
+  const totalUnits = decimal4Units(total);
+  const rateUnits = decimal4Units(discountRate);
+  const discounted = divideRounded(totalUnits * rateUnits, 10_000n);
+  const adjusted = discounted - decimal4Units(writeOff);
+  return fixed4(adjusted > 0n ? adjusted : 0n);
+}
+
+function decimalRate(numerator: string, denominator: string): string | null {
+  const denominatorUnits = decimal4Units(denominator);
+  if (denominatorUnits === 0n) return null;
+  return fixed4(
+    divideRounded(decimal4Units(numerator) * 10_000n, denominatorUnits),
+  );
+}
+
+function decimal4Units(value: string): bigint {
+  const normalized = value.trim();
+  const match = normalized.match(/^(-?)(\d+)(?:\.(\d{1,4}))?$/);
+  if (!match?.[2]) throw new BadRequestException("金额格式不正确");
+  const sign = match[1] === "-" ? -1n : 1n;
+  return sign * BigInt(`${match[2]}${(match[3] ?? "").padEnd(4, "0")}`);
+}
+
+function fixed4(units: bigint): string {
+  const sign = units < 0n ? "-" : "";
+  const absolute = units < 0n ? -units : units;
+  const raw = absolute.toString().padStart(5, "0");
+  return `${sign}${raw.slice(0, -4)}.${raw.slice(-4)}`;
+}
+
+function divideRounded(numerator: bigint, denominator: bigint): bigint {
+  const negative = (numerator < 0n) !== (denominator < 0n);
+  const absoluteNumerator = numerator < 0n ? -numerator : numerator;
+  const absoluteDenominator = denominator < 0n ? -denominator : denominator;
+  const quotient = (absoluteNumerator + absoluteDenominator / 2n) / absoluteDenominator;
+  return negative ? -quotient : quotient;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import type { HalfPackageExportFormat } from "@shanyu/contracts";
+import type { HalfPackageExportAudience, HalfPackageExportFormat } from "@shanyu/contracts";
 import { Check, FileSpreadsheet, FileText, Info, Printer } from "lucide-react";
 import { useState } from "react";
 
@@ -21,6 +21,7 @@ import { createQuotationExport } from "@/lib/quotation-client";
 import { cn } from "@/lib/utils";
 
 interface ExportMenuProps {
+  readonly allowInternal?: boolean;
   readonly compact?: boolean;
   readonly disabled?: boolean;
   readonly fileNameStem: string;
@@ -29,6 +30,7 @@ interface ExportMenuProps {
 }
 
 export function ExportMenu({
+  allowInternal = false,
   compact = false,
   disabled = false,
   fileNameStem,
@@ -36,6 +38,7 @@ export function ExportMenu({
   quotationId,
 }: ExportMenuProps) {
   const [open, setOpen] = useState(false);
+  const [audience, setAudience] = useState<HalfPackageExportAudience>("CLIENT");
   const [formats, setFormats] = useState<HalfPackageExportFormat[]>([
     "PDF",
     "XLSX",
@@ -57,7 +60,7 @@ export function ExportMenu({
     setError(null);
     try {
       for (const format of formats) {
-        const record = await createQuotationExport(quotationId, format);
+        const record = await createQuotationExport(quotationId, format, audience);
         const link = document.createElement("a");
         link.href = `${apiUrl}${record.downloadPath}`;
         link.download = record.fileName;
@@ -88,7 +91,7 @@ export function ExportMenu({
       </DialogTrigger>
       <DialogContent className="w-[calc(100%-2rem)] max-w-[560px] gap-[18px] rounded-xl p-6">
         <DialogHeader className="gap-1.5">
-          <DialogTitle className="text-xl font-semibold">导出半包报价单</DialogTitle>
+          <DialogTitle className="text-xl font-semibold">导出项目报价单</DialogTitle>
           <DialogDescription className="type-table-body">
             Excel 与 PDF 共用标准打印模板。
           </DialogDescription>
@@ -100,7 +103,7 @@ export function ExportMenu({
         >
           <Info className="mt-0.5 size-4 shrink-0" />
           <span>
-            仅导出上一个确认/审批完的版本，最新的折扣和抹零经过审批生效后支持导出。
+            导出绑定当前可导出的报价版本；折扣和抹零审批通过后才会进入客户文件。
           </span>
         </div>
 
@@ -122,13 +125,23 @@ export function ExportMenu({
           </div>
         </section>
 
+        {allowInternal ? (
+          <section className="grid gap-2">
+            <h3 className="type-table-head m-0">文件用途</h3>
+            <div className="flex gap-2.5">
+              <AudienceOption audience="CLIENT" current={audience} label="客户版" onSelect={(value) => { setAudience(value); setFormats(["PDF", "XLSX"]); }} />
+              <AudienceOption audience="INTERNAL" current={audience} label="内部成本版" onSelect={(value) => { setAudience(value); setFormats(["XLSX"]); }} />
+            </div>
+          </section>
+        ) : null}
+
         <section className="grid gap-2.5 rounded-lg bg-muted p-3.5">
           <h3 className="type-table-head m-0 font-semibold">导出规则</h3>
           <p className="type-table-body m-0">
-            ✓ 1:1 还原标准模板　 ✓ 自动添加空间序号　 ✓ 管理费归入【十三、工程汇总】
+            ✓ 半包与主材分 Sheet　 ✓ 还原标准模板　 ✓ 自动生成分类小计
           </p>
           <p className="type-support m-0 text-muted-foreground">
-            仅导出数量大于 0 的工程项；PDF 沿用 Excel 的打印区域设置
+            仅导出数量大于 0 的内容；{audience === "CLIENT" ? "客户版物理移除成本字段" : "内部版标记并包含主材成本列"}
           </p>
         </section>
 
@@ -198,4 +211,9 @@ function FormatOption({
       {format}
     </button>
   );
+}
+
+function AudienceOption({ audience, current, label, onSelect }: { readonly audience: HalfPackageExportAudience; readonly current: HalfPackageExportAudience; readonly label: string; readonly onSelect: (value: HalfPackageExportAudience) => void }) {
+  const selected = audience === current;
+  return <button aria-pressed={selected} className={cn("type-table-head flex h-[46px] min-w-[150px] items-center gap-2 rounded-lg border px-3.5", selected ? "border-primary bg-primary-soft" : "border-border bg-background text-muted-foreground")} onClick={() => onSelect(audience)} type="button">{selected ? <Check className="size-4 text-primary" /> : null}{label}</button>;
 }

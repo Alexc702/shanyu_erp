@@ -4,12 +4,20 @@ import ExcelJS from "exceljs";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import {
+  PDFDocument,
+  PDFName,
+  PDFString,
+  rgb,
+  type PDFFont,
+  type PDFPage,
+} from "pdf-lib";
 
 import type {
   QuotationDraft,
   QuotationExportFormat,
 } from "./quotation.repository";
+import type { MainMaterialQuotation } from "../main-material/main-material.repository";
 
 export interface GeneratedQuotationExport {
   readonly contentType: string;
@@ -18,9 +26,27 @@ export interface GeneratedQuotationExport {
 }
 
 interface ExportContext {
+  readonly audience: "CLIENT" | "INTERNAL";
   readonly customerName: string;
+  readonly mainMaterial: MainMaterialQuotation | null;
   readonly quotation: QuotationDraft;
   readonly sections: readonly ExportSection[];
+  readonly summary: QuotationExportSummary;
+}
+
+export interface QuotationExportSummaryRow {
+  readonly amount: string;
+  readonly label: "直接费" | "管理费" | "折扣和抹零" | "税金" | "总造价";
+  readonly number: string;
+  readonly remarks: string;
+}
+
+export interface QuotationExportSummary {
+  readonly grandTotal: string;
+  readonly rows: readonly QuotationExportSummaryRow[];
+  readonly taxableTotal: string;
+  readonly taxAmount: string;
+  readonly taxRate: "0.0600";
 }
 
 interface ExportLine {
@@ -41,7 +67,10 @@ interface ExportSection {
   readonly subtotal: string;
 }
 
-const templateFileName = "半包报价单excel导出模版_v1.xlsx";
+const templateFileName = "新报价2026年8月27主材修改.xlsx";
+const mainMaterialTemplateFileName = "主材报价模版_v1.xlsx";
+let templateWorkbookPromise: Promise<ExcelJS.Workbook> | undefined;
+let mainMaterialTemplateWorkbookPromise: Promise<ExcelJS.Workbook> | undefined;
 
 @Injectable()
 export class QuotationExporter {
@@ -49,11 +78,16 @@ export class QuotationExporter {
     quotation: QuotationDraft,
     format: QuotationExportFormat,
     customerName = "",
+    mainMaterial: MainMaterialQuotation | null = null,
+    audience: "CLIENT" | "INTERNAL" = "CLIENT",
   ): Promise<GeneratedQuotationExport> {
     const context = {
+      audience,
       customerName,
+      mainMaterial,
       quotation,
       sections: exportSections(quotation),
+      summary: buildQuotationExportSummary(quotation, mainMaterial),
     } satisfies ExportContext;
     return format === "XLSX"
       ? this.generateWorkbook(context)
@@ -63,22 +97,48 @@ export class QuotationExporter {
   private async generateWorkbook(
     context: ExportContext,
   ): Promise<GeneratedQuotationExport> {
-    const template = new ExcelJS.Workbook();
-    await template.xlsx.load((await readTemplate()) as never);
+    const template = await loadTemplateWorkbook();
     const source = template.getWorksheet("半包报价模板") ?? template.worksheets[0];
-    if (!source) throw new Error("半包报价导出模板缺少工作表");
+    const coverSource = template.getWorksheet("封面");
+    const budgetSource = template.getWorksheet("预算说明书 ");
+    if (!source || !coverSource || !budgetSource) {
+      throw new Error("报价导出模板缺少封面、预算说明书或半包报价模板");
+    }
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "山屿 ERP";
     workbook.created = new Date();
-    const sheet = workbook.addWorksheet("半包报价模板", {
+    const cover = copyStaticWorksheet(
+      template,
+      coverSource,
+      workbook,
+      "封面",
+      4,
+      coverSource.rowCount,
+    );
+    cover.getCell("A4").value = coverSource.getCell("A4").text.replace(
+      /项目：.*$/u,
+      `项目：${context.quotation.projectAddress}`,
+    );
+    copyStaticWorksheet(
+      template,
+      budgetSource,
+      workbook,
+      "预算说明书",
+      2,
+      budgetSource.rowCount,
+    );
+
+    const sheet = workbook.addWorksheet("半包报价单", {
       pageSetup: { ...source.pageSetup },
       properties: { ...source.properties },
       views: source.views.map((view) => ({ ...view })),
     });
+    sheet.headerFooter = structuredClone(source.headerFooter);
     for (let column = 1; column <= 9; column += 1) {
       sheet.getColumn(column).width = source.getColumn(column).width;
       sheet.getColumn(column).hidden = source.getColumn(column).hidden;
+      sheet.getColumn(column).style = structuredClone(source.getColumn(column).style);
     }
     copyTemplateImage(template, source, workbook, sheet);
 
@@ -103,19 +163,15 @@ export class QuotationExporter {
     applyMergedOutline(sheet, 3, 9, 4, 9, { right: "medium" });
     applyMergedOutline(sheet, 4, 7, 4, 7);
     applyMergedOutline(sheet, 4, 8, 4, 8);
-    sheet.getCell("A1").value = "基础报价明细表";
-    sheet.getCell("A2").value = "客户名称：";
     sheet.getCell("C2").value = context.customerName;
-    sheet.getCell("E2").value = "外框面积（㎡）：";
     sheet.getCell("G2").value = number2(context.quotation.outerFrameArea);
-    sheet.getCell("H2").value = "工程地址：";
     sheet.getCell("I2").value = context.quotation.projectAddress;
 
     const itemRows = templateItemRows(source);
     let outputRow = 5;
     context.sections.forEach((section, sectionIndex) => {
       const heading = sheet.getRow(outputRow);
-      copyStyledRow(source.getRow(26), heading);
+      copyStyledRow(source.getRow(5), heading);
       sheet.mergeCells(outputRow, 1, outputRow, 3);
       heading.getCell(1).value = sectionHeading(sectionIndex + 1, section.name);
       heading.getCell(4).value = section.area ? "面积（㎡)：" : null;
@@ -129,7 +185,7 @@ export class QuotationExporter {
       outputRow += 1;
 
       section.lines.forEach((line, lineIndex) => {
-        const sourceRow = itemRows.get(line.itemName) ?? source.getRow(27);
+        const sourceRow = itemRows.get(line.itemName) ?? source.getRow(6);
         const target = sheet.getRow(outputRow);
         copyStyledRow(sourceRow, target);
         sheet.mergeCells(outputRow, 1, outputRow, 2);
@@ -164,41 +220,32 @@ export class QuotationExporter {
     });
 
     const summaryHeading = sheet.getRow(outputRow);
-    copyStyledRow(source.getRow(200), summaryHeading);
+    copyStyledRow(source.getRow(345), summaryHeading);
     sheet.mergeCells(outputRow, 1, outputRow, 3);
     summaryHeading.getCell(1).value = "【十三、工程汇总】";
     outputRow += 1;
 
-    const discountSavings = Math.max(
-      0,
-      Number(context.quotation.total) - Number(context.quotation.adjustedTotal),
-    );
-    const summaryRows = [
-      ["（1）", "直接费", number2(context.quotation.directCost), ""],
-      ["（2）", "管理费", number2(context.quotation.managementFee), "管理费统一按半包直接费 10% 计算。"],
-      ["（3）", "折扣/抹零", -number2(discountSavings.toFixed(4)), "按已确认折扣与抹零计算。"],
-      ["（4）", "总造价", number2(context.quotation.adjustedTotal), ""],
-    ] as const;
-    summaryRows.forEach(([number, label, amount, remarks], index) => {
+    context.summary.rows.forEach((summaryRow) => {
       const target = sheet.getRow(outputRow);
-      copyStyledRow(source.getRow(201 + index), target);
-      target.getCell(2).value = number;
-      target.getCell(3).value = label;
+      copyStyledRow(source.getRow(summaryTemplateRow(summaryRow.label)), target);
+      target.getCell(2).value = summaryRow.number;
+      target.getCell(3).value = summaryRow.label;
       target.getCell(5).value = "元";
-      target.getCell(7).value = amount;
+      target.getCell(7).value = number2(summaryRow.amount);
       target.getCell(8).value = null;
-      target.getCell(9).value = remarks;
+      target.getCell(9).value = summaryRow.remarks;
       outputRow += 1;
     });
 
     sheet.pageSetup.printArea = `A1:I${outputRow - 1}`;
     sheet.pageSetup.fitToWidth = 1;
     sheet.pageSetup.fitToHeight = 1;
+    await addMainMaterialSheet(workbook, context);
     const payload = Buffer.from(await workbook.xlsx.writeBuffer());
     return {
       contentType:
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      fileName: exportFileName(context.quotation, "xlsx"),
+      fileName: exportFileName(context.quotation, "xlsx", context.audience),
       payload,
     };
   }
@@ -215,12 +262,24 @@ export class QuotationExporter {
     const font = await document.embedFont(await readFile(fontPath), {
       subset: true,
     });
+    const template = await loadTemplateWorkbook();
+    await addIntroductoryPdfPages(document, font, template, context);
     const rows = pdfRows(context);
     let page = addLandscapePage(document);
+    let section: PdfSection = "HALF";
+    setPdfSection(page, section);
     let y = 575;
     for (const row of rows) {
+      if (row.kind === "break") {
+        section = "MAIN";
+        page = addLandscapePage(document);
+        setPdfSection(page, section);
+        y = 575;
+        continue;
+      }
       if (y - row.height < 18) {
         page = addLandscapePage(document);
+        setPdfSection(page, section);
         y = 575;
       }
       drawPdfRow(page, font, y, row);
@@ -229,7 +288,7 @@ export class QuotationExporter {
     const payload = Buffer.from(await document.save());
     return {
       contentType: "application/pdf",
-      fileName: exportFileName(context.quotation, "pdf"),
+      fileName: exportFileName(context.quotation, "pdf", context.audience),
       payload,
     };
   }
@@ -250,6 +309,309 @@ async function readTemplate(): Promise<Buffer> {
   throw new Error(`找不到半包报价导出模板：${templateFileName}`);
 }
 
+async function loadTemplateWorkbook(): Promise<ExcelJS.Workbook> {
+  templateWorkbookPromise ??= (async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load((await readTemplate()) as never);
+    return workbook;
+  })();
+  return templateWorkbookPromise;
+}
+
+async function readMainMaterialTemplate(): Promise<Buffer> {
+  const candidates = [
+    join(process.cwd(), "assets", mainMaterialTemplateFileName),
+    join(process.cwd(), "apps", "api", "assets", mainMaterialTemplateFileName),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return await readFile(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  throw new Error(`找不到主材报价导出模板：${mainMaterialTemplateFileName}`);
+}
+
+async function loadMainMaterialTemplateWorkbook(): Promise<ExcelJS.Workbook> {
+  mainMaterialTemplateWorkbookPromise ??= (async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load((await readMainMaterialTemplate()) as never);
+    return workbook;
+  })();
+  return mainMaterialTemplateWorkbookPromise;
+}
+
+export function buildQuotationExportSummary(
+  quotation: QuotationDraft,
+  mainMaterial: MainMaterialQuotation | null = null,
+): QuotationExportSummary {
+  const directCost = addDecimal4(
+    quotation.directCost,
+    quotation.mainMaterialDirectCost ?? mainMaterial?.directCost ?? "0.0000",
+  );
+  const managementFee = addDecimal4(
+    quotation.managementFee,
+    quotation.mainMaterialManagementFee ??
+      mainMaterial?.managementFee ??
+      "0.0000",
+  );
+  const adjustmentApproved =
+    quotation.status === "APPROVED" &&
+    quotation.adjustmentStatus === "CONFIRMED" &&
+    (decimal4Units(quotation.discountRate) !== 10_000n ||
+      decimal4Units(quotation.writeOff) !== 0n);
+  const beforeAdjustment = addDecimal4(directCost, managementFee);
+  const taxableTotal = adjustmentApproved
+    ? quotation.adjustedTotal
+    : beforeAdjustment;
+  const taxAmount = multiplyDecimal4(taxableTotal, "0.0600");
+  const rows: QuotationExportSummaryRow[] = [
+    {
+      amount: directCost,
+      label: "直接费",
+      number: "（1）",
+      remarks: "",
+    },
+    {
+      amount: managementFee,
+      label: "管理费",
+      number: "（2）",
+      remarks: "管理费统一按工程总价10%计算。",
+    },
+  ];
+  if (adjustmentApproved) {
+    rows.push({
+      amount: subtractDecimal4(taxableTotal, beforeAdjustment),
+      label: "折扣和抹零",
+      number: "（3）",
+      remarks: `获批折扣率 ${formatPercentage(quotation.discountRate)}，抹零 ${formatDecimal2(quotation.writeOff)} 元。`,
+    });
+  }
+  rows.push(
+    {
+      amount: taxAmount,
+      label: "税金",
+      number: adjustmentApproved ? "（4）" : "（3）",
+      remarks: "固定为工程总价6%",
+    },
+    {
+      amount: addDecimal4(taxableTotal, taxAmount),
+      label: "总造价",
+      number: adjustmentApproved ? "（5）" : "（4）",
+      remarks: "",
+    },
+  );
+  return {
+    grandTotal: addDecimal4(taxableTotal, taxAmount),
+    rows,
+    taxableTotal,
+    taxAmount,
+    taxRate: "0.0600",
+  };
+}
+
+function summaryTemplateRow(label: QuotationExportSummaryRow["label"]): number {
+  if (label === "直接费") return 346;
+  if (label === "管理费") return 347;
+  if (label === "总造价") return 349;
+  return 348;
+}
+
+function copyStaticWorksheet(
+  sourceWorkbook: ExcelJS.Workbook,
+  sourceSheet: ExcelJS.Worksheet,
+  targetWorkbook: ExcelJS.Workbook,
+  targetName: string,
+  lastColumn: number,
+  lastRow: number,
+): ExcelJS.Worksheet {
+  const targetSheet = targetWorkbook.addWorksheet(targetName, {
+    pageSetup: structuredClone(sourceSheet.pageSetup),
+    properties: structuredClone(sourceSheet.properties),
+    views: structuredClone(sourceSheet.views),
+  });
+  targetSheet.headerFooter = structuredClone(sourceSheet.headerFooter);
+  for (let column = 1; column <= lastColumn; column += 1) {
+    const sourceColumn = sourceSheet.getColumn(column);
+    const targetColumn = targetSheet.getColumn(column);
+    targetColumn.width = sourceColumn.width;
+    targetColumn.hidden = sourceColumn.hidden;
+    targetColumn.outlineLevel = sourceColumn.outlineLevel;
+    targetColumn.style = structuredClone(sourceColumn.style);
+  }
+  for (let rowNumber = 1; rowNumber <= lastRow; rowNumber += 1) {
+    const sourceRow = sourceSheet.getRow(rowNumber);
+    const targetRow = targetSheet.getRow(rowNumber);
+    targetRow.height = sourceRow.height;
+    targetRow.hidden = sourceRow.hidden;
+    targetRow.outlineLevel = sourceRow.outlineLevel;
+    for (let column = 1; column <= lastColumn; column += 1) {
+      const sourceCell = sourceRow.getCell(column);
+      const targetCell = targetRow.getCell(column);
+      targetCell.style = structuredClone(sourceCell.style);
+      if (!sourceCell.isMerged || sourceCell.master.address === sourceCell.address) {
+        targetCell.value = structuredClone(sourceCell.value);
+      }
+      targetCell.note = structuredClone(sourceCell.note);
+      targetCell.dataValidation = structuredClone(sourceCell.dataValidation);
+    }
+  }
+  for (const range of sourceSheet.model.merges) targetSheet.mergeCells(range);
+  for (const rowBreak of sourceSheet.model.rowBreaks ?? []) {
+    targetSheet.getRow(rowBreak.id).addPageBreak(
+      rowBreak.min ?? 0,
+      rowBreak.max ?? lastColumn - 1,
+    );
+  }
+  copyTemplateImage(sourceWorkbook, sourceSheet, targetWorkbook, targetSheet);
+  return targetSheet;
+}
+
+const materialTemplateSections = [
+  { code: "TILE", detail: 6, heading: 5, subtotal: 23 },
+  { code: "SEAM", detail: 25, heading: 24, subtotal: 29 },
+  { code: "FLOOR", detail: 31, heading: 30, subtotal: 45 },
+  { code: "GLASS_DOOR", detail: 47, heading: 46, subtotal: 67 },
+  { code: "CEILING", detail: 69, heading: 68, subtotal: 75 },
+  { code: "BATHROOM", detail: 77, heading: 76, subtotal: 102 },
+  { code: "SHOWER", detail: 104, heading: 103, subtotal: 110 },
+  { code: "STONE", detail: 112, heading: 111, subtotal: 117 },
+  { code: "SWITCH", detail: 119, heading: 118, subtotal: 120 },
+  { code: "CUSTOM", detail: 122, heading: 121, subtotal: 128 },
+] as const;
+
+async function addMainMaterialSheet(
+  workbook: ExcelJS.Workbook,
+  context: ExportContext,
+): Promise<void> {
+  const template = await loadMainMaterialTemplateWorkbook();
+  const source = template.getWorksheet("主材报价模板 ") ?? template.worksheets[0];
+  if (!source) throw new Error("主材报价模板缺少工作表");
+  const sheet = workbook.addWorksheet("主材报价单", {
+    pageSetup: { ...source.pageSetup },
+    properties: { ...source.properties },
+    views: source.views.map((view) => ({ ...view })),
+  });
+  sheet.headerFooter = structuredClone(source.headerFooter);
+  const lastColumn = context.audience === "INTERNAL" ? 10 : 9;
+  for (let column = 1; column <= lastColumn; column += 1) {
+    sheet.getColumn(column).width = source.getColumn(column).width;
+    sheet.getColumn(column).hidden = source.getColumn(column).hidden;
+    sheet.getColumn(column).style = structuredClone(source.getColumn(column).style);
+  }
+  copyTemplateImage(template, source, workbook, sheet);
+  for (let rowNumber = 1; rowNumber <= 4; rowNumber += 1) {
+    copyStyledRow(source.getRow(rowNumber), sheet.getRow(rowNumber), lastColumn);
+  }
+  for (const range of [
+    "A1:I1",
+    "A2:B2",
+    "C2:D2",
+    "E2:F2",
+    "A3:B4",
+    "C3:C4",
+    "D3:D4",
+    "E3:E4",
+    "F3:F4",
+    "G3:H3",
+    "I3:I4",
+  ]) {
+    sheet.mergeCells(range);
+  }
+  sheet.getCell("A1").value = context.audience === "INTERNAL"
+    ? "主材报价明细表（内部版）"
+    : "主材报价明细表";
+  if (context.audience === "INTERNAL") sheet.getCell("J4").value = "成本（内部）";
+  sheet.getCell("A2").value = "客户名称：";
+  sheet.getCell("C2").value = context.customerName;
+  sheet.getCell("E2").value = "建筑面积（㎡）：";
+  sheet.getCell("G2").value = number2(context.quotation.outerFrameArea);
+  sheet.getCell("H2").value = "工程地址：";
+  sheet.getCell("I2").value = context.quotation.projectAddress;
+  let outputRow = 5;
+  for (const section of materialTemplateSections) {
+    const lines = (context.mainMaterial?.lines ?? []).filter(
+      (line) =>
+        line.categoryCode === section.code &&
+        line.itemVersionId &&
+        line.saleAmount &&
+        Number(line.quantity) > 0,
+    );
+    copyStyledRow(source.getRow(section.heading), sheet.getRow(outputRow), lastColumn);
+    sheet.mergeCells(outputRow, 1, outputRow, lastColumn);
+    sheet.getCell(outputRow, 1).value = source.getRow(section.heading).getCell(1).text;
+    outputRow += 1;
+    let subtotal = "0.0000";
+    let costSubtotal = "0.0000";
+    lines.forEach((line, index) => {
+      const target = sheet.getRow(outputRow);
+      copyStyledRow(source.getRow(section.detail), target, lastColumn);
+      sheet.mergeCells(outputRow, 1, outputRow, 2);
+      target.getCell(1).value = index + 1;
+      target.getCell(3).value = [line.itemName, line.model]
+        .filter((value, valueIndex, values) => value && values.indexOf(value) === valueIndex)
+        .join(" · ");
+      target.getCell(4).value = line.spec ?? line.demandSpec;
+      target.getCell(5).value = formatExportUnit(line.unit ?? "");
+      target.getCell(6).value = number4(line.quantity);
+      target.getCell(7).value = number2(line.saleUnitPrice ?? "0");
+      target.getCell(8).value = number2(line.saleAmount ?? "0");
+      target.getCell(9).value = [line.brand, line.selectedColor]
+        .filter(Boolean)
+        .join(" · ");
+      if (context.audience === "INTERNAL") {
+        target.getCell(10).value = number2(line.costAmount ?? "0.0000");
+      }
+      target.height = excelItemRowHeight(
+        target.getCell(3).text,
+        target.getCell(9).text,
+      );
+      subtotal = addDecimal4(subtotal, line.saleAmount ?? "0.0000");
+      costSubtotal = addDecimal4(costSubtotal, line.costAmount ?? "0.0000");
+      outputRow += 1;
+    });
+    copyStyledRow(source.getRow(section.subtotal), sheet.getRow(outputRow), lastColumn);
+    sheet.mergeCells(outputRow, 1, outputRow, 7);
+    sheet.getCell(outputRow, 1).value = "小计：";
+    sheet.getCell(outputRow, 8).value = number2(subtotal);
+    sheet.getCell(outputRow, 9).value = null;
+    if (context.audience === "INTERNAL") {
+      sheet.getCell(outputRow, 10).value = number2(costSubtotal);
+    }
+    outputRow += 1;
+  }
+  const main = context.mainMaterial;
+  copyStyledRow(source.getRow(129), sheet.getRow(outputRow), lastColumn);
+  sheet.mergeCells(outputRow, 1, outputRow, lastColumn);
+  sheet.getCell(outputRow, 1).value = "【十一、工 程 汇 总】";
+  outputRow += 1;
+  const summary = [
+    ["直接费", main?.directCost ?? "0.0000", ""],
+    ["服务费", main?.managementFee ?? "0.0000", "管理费统一按工程总价10%计算。"],
+    ["总造价", main?.total ?? "0.0000", ""],
+  ] as const;
+  summary.forEach(([label, amount, remarks], index) => {
+    const target = sheet.getRow(outputRow);
+    copyStyledRow(source.getRow(130 + index), target, lastColumn);
+    target.getCell(2).value = `（${index + 1}）`;
+    target.getCell(3).value = label;
+    target.getCell(5).value = "元";
+    target.getCell(7).value = number2(amount);
+    target.getCell(8).value = null;
+    target.getCell(9).value = remarks;
+    if (context.audience === "INTERNAL") {
+      target.getCell(10).value = index === 0
+        ? number2(main?.expectedCost ?? "0.0000")
+        : null;
+    }
+    outputRow += 1;
+  });
+  sheet.pageSetup.printArea = `A1:I${outputRow - 1}`;
+  sheet.pageSetup.fitToWidth = 1;
+  sheet.pageSetup.fitToHeight = 0;
+}
+
 function copyTemplateImage(
   sourceWorkbook: ExcelJS.Workbook,
   sourceSheet: ExcelJS.Worksheet,
@@ -267,9 +629,9 @@ function copyTemplateImage(
   }
 }
 
-function copyStyledRow(source: ExcelJS.Row, target: ExcelJS.Row): void {
+function copyStyledRow(source: ExcelJS.Row, target: ExcelJS.Row, lastColumn = 9): void {
   target.height = source.height;
-  for (let column = 1; column <= 9; column += 1) {
+  for (let column = 1; column <= lastColumn; column += 1) {
     const sourceCell = source.getCell(column);
     const targetCell = target.getCell(column);
     targetCell.style = structuredClone(sourceCell.style);
@@ -314,7 +676,7 @@ function excelItemRowHeight(itemName: string, remarks: string | null): number {
 
 function templateItemRows(sheet: ExcelJS.Worksheet): Map<string, ExcelJS.Row> {
   const rows = new Map<string, ExcelJS.Row>();
-  for (let rowNumber = 5; rowNumber <= 199; rowNumber += 1) {
+  for (let rowNumber = 5; rowNumber < 345; rowNumber += 1) {
     const name = sheet.getRow(rowNumber).getCell(3).text.trim();
     if (name && !name.startsWith("【") && name !== "小计：") {
       rows.set(name, sheet.getRow(rowNumber));
@@ -345,9 +707,7 @@ function exportSections(quotation: QuotationDraft): ExportSection[] {
           lines,
           name: scope.name,
           perimeter: scope.perimeter,
-          subtotal: lines
-            .reduce((total, line) => total + Number(line.amount), 0)
-            .toFixed(4),
+          subtotal: scope.subtotal,
         }]
       : [];
   });
@@ -372,14 +732,172 @@ interface PdfRow {
   readonly bold: boolean;
   readonly cells: readonly string[];
   readonly height: number;
-  readonly kind: "full" | "table";
+  readonly kind: "break" | "full" | "table";
   readonly size: number;
+}
+
+type PdfSection = "BUDGET" | "COVER" | "HALF" | "MAIN";
+
+async function addIntroductoryPdfPages(
+  document: PDFDocument,
+  font: PDFFont,
+  template: ExcelJS.Workbook,
+  context: ExportContext,
+): Promise<void> {
+  const coverSource = template.getWorksheet("封面");
+  const budgetSource = template.getWorksheet("预算说明书 ");
+  if (!coverSource || !budgetSource) {
+    throw new Error("报价导出模板缺少封面或预算说明书");
+  }
+
+  const coverPage = addLandscapePage(document);
+  setPdfSection(coverPage, "COVER");
+  const coverImagePlacement = coverSource.getImages()[0];
+  if (coverImagePlacement) {
+    const image = template.getImage(Number(coverImagePlacement.imageId));
+    if (image?.buffer && image.extension) {
+      const embedded = image.extension === "png"
+        ? await document.embedPng(image.buffer)
+        : image.extension === "jpeg"
+          ? await document.embedJpg(image.buffer)
+          : null;
+      if (embedded) {
+        const scale = Math.min(345 / embedded.width, 225 / embedded.height);
+        const width = embedded.width * scale;
+        const height = embedded.height * scale;
+        coverPage.drawImage(embedded, {
+          height,
+          width,
+          x: (841.89 - width) / 2,
+          y: 292,
+        });
+      }
+    }
+  }
+  drawCenteredText(
+    coverPage,
+    font,
+    coverSource.getCell("A2").text.trim(),
+    20,
+    185,
+  );
+  drawCenteredText(
+    coverPage,
+    font,
+    `项目：${context.quotation.projectAddress}`,
+    13,
+    132,
+  );
+  drawCenteredText(
+    coverPage,
+    font,
+    coverSource.getCell("A6").text.trim(),
+    13,
+    90,
+  );
+
+  const budgetPage = addLandscapePage(document);
+  setPdfSection(budgetPage, "BUDGET");
+  drawBudgetWorksheet(budgetPage, font, budgetSource);
+}
+
+function drawCenteredText(
+  page: PDFPage,
+  font: PDFFont,
+  text: string,
+  size: number,
+  y: number,
+): void {
+  page.drawText(text, {
+    font,
+    size,
+    x: (841.89 - font.widthOfTextAtSize(text, size)) / 2,
+    y,
+  });
+}
+
+function drawBudgetWorksheet(
+  page: PDFPage,
+  font: PDFFont,
+  source: ExcelJS.Worksheet,
+): void {
+  const left = 18;
+  const width = 805;
+  const numberWidth = 30;
+  const sourceHeights = Array.from(
+    { length: 19 },
+    (_, index) => source.getRow(index + 1).height ?? 17.6,
+  );
+  const scale = Math.min(
+    1,
+    559 / sourceHeights.reduce((sum, height) => sum + height, 0),
+  );
+  let top = 577;
+  sourceHeights.forEach((sourceHeight, index) => {
+    const rowNumber = index + 1;
+    const height = sourceHeight * scale;
+    const bottom = top - height;
+    const first = source.getRow(rowNumber).getCell(1).text.trim();
+    const second = source.getRow(rowNumber).getCell(2).text.trim();
+    if (rowNumber > 2) {
+      page.drawRectangle({
+        borderColor: rgb(0.25, 0.25, 0.25),
+        borderWidth: 0.45,
+        height,
+        width,
+        x: left,
+        y: bottom,
+      });
+    }
+    if (rowNumber <= 2) {
+      const size = rowNumber === 1 ? 14 : 7;
+      const lines = wrapText(first, font, size, width - 16, 2);
+      lines.forEach((line, lineIndex) => {
+        const x = rowNumber === 1
+          ? left + (width - font.widthOfTextAtSize(line, size)) / 2
+          : left + 8;
+        page.drawText(line, {
+          font,
+          size,
+          x,
+          y: top - size - 4 - lineIndex * (size + 2),
+        });
+      });
+    } else {
+      page.drawLine({
+        color: rgb(0.45, 0.45, 0.45),
+        end: { x: left + numberWidth, y: top },
+        start: { x: left + numberWidth, y: bottom },
+        thickness: 0.35,
+      });
+      const size = 5.8;
+      const maxLines = Math.max(1, Math.floor((height - 4) / (size + 1)));
+      page.drawText(first, {
+        font,
+        size,
+        x: left + (numberWidth - font.widthOfTextAtSize(first, size)) / 2,
+        y: top - size - 4,
+      });
+      wrapText(second, font, size, width - numberWidth - 8, maxLines)
+        .forEach((line, lineIndex) => page.drawText(line, {
+          font,
+          size,
+          x: left + numberWidth + 4,
+          y: top - size - 3 - lineIndex * (size + 1),
+        }));
+    }
+    top = bottom;
+  });
+}
+
+function setPdfSection(page: PDFPage, section: PdfSection): void {
+  page.node.set(PDFName.of("ShanyuSection"), PDFString.of(section));
 }
 
 function pdfRows(context: ExportContext): PdfRow[] {
   const rows: PdfRow[] = [
     { background: "none", bold: true, cells: ["基础报价明细表"], height: 34, kind: "full", size: 18 },
-    { background: "blue", bold: true, cells: [`客户名称：${context.customerName}    外框面积（㎡）：${number2(context.quotation.outerFrameArea).toFixed(2)}    工程地址：${context.quotation.projectAddress}`], height: 28, kind: "full", size: 11 },
+    { background: "blue", bold: true, cells: [`客户名称：${context.customerName}    建筑面积（㎡）：${formatDecimal2(context.quotation.outerFrameArea)}    工程地址：${context.quotation.projectAddress}`], height: 28, kind: "full", size: 11 },
     { background: "blue", bold: true, cells: ["编号", "工程项目", "单位", "数量", "单价", "金额", "备注"], height: 30, kind: "table", size: 11 },
   ];
   context.sections.forEach((section, sectionIndex) => {
@@ -388,22 +906,85 @@ function pdfRows(context: ExportContext): PdfRow[] {
       rows.push({
         background: "none",
         bold: false,
-        cells: [String(lineIndex + 1), line.itemName, formatExportUnit(line.unit), number4(line.quantity).toFixed(2), number2(line.saleUnitPrice).toFixed(2), number2(line.amount).toFixed(2), line.remarks ?? ""],
+        cells: [String(lineIndex + 1), line.itemName, formatExportUnit(line.unit), formatDecimal2(line.quantity), formatDecimal2(line.saleUnitPrice), formatDecimal2(line.amount), line.remarks ?? ""],
         height: pdfItemRowHeight(line.itemName, line.remarks),
         kind: "table",
         size: 10,
       });
     });
-    rows.push({ background: "none", bold: true, cells: ["", "小计", "元", "", "", number2(section.subtotal).toFixed(2), ""], height: 26, kind: "table", size: 10 });
+    rows.push({ background: "none", bold: true, cells: ["", "小计", "元", "", "", formatDecimal2(section.subtotal), ""], height: 26, kind: "table", size: 10 });
   });
   rows.push({ background: "blue", bold: true, cells: ["【十三、工程汇总】"], height: 22, kind: "full", size: 9 });
-  const savings = Math.max(0, Number(context.quotation.total) - Number(context.quotation.adjustedTotal));
+  context.summary.rows.forEach((summaryRow) => rows.push({
+    background: "summary",
+    bold: true,
+    cells: [
+      summaryRow.number,
+      summaryRow.label,
+      "元",
+      "",
+      "",
+      formatDecimal2(summaryRow.amount),
+      summaryRow.remarks,
+    ],
+    height: 22,
+    kind: "table",
+    size: 8,
+  }));
+  rows.push({ background: "none", bold: false, cells: [], height: 0, kind: "break", size: 0 });
+  rows.push({ background: "none", bold: true, cells: ["主材报价明细表"], height: 34, kind: "full", size: 18 });
+  rows.push({ background: "blue", bold: true, cells: [`客户名称：${context.customerName}    工程地址：${context.quotation.projectAddress}`], height: 28, kind: "full", size: 11 });
+  rows.push({ background: "blue", bold: true, cells: ["编号", "主材/型号", "单位", "数量", "单价", "金额", "品牌/颜色/规格"], height: 30, kind: "table", size: 11 });
+  materialTemplateSections.forEach((section) => {
+    const lines = (context.mainMaterial?.lines ?? []).filter(
+      (line) => line.categoryCode === section.code && line.itemVersionId && Number(line.quantity) > 0,
+    );
+    const categoryName = lines[0]?.categoryCode ?? section.code;
+    rows.push({ background: "blue", bold: true, cells: [`【${mainMaterialCategoryName(categoryName)}】`], height: 26, kind: "full", size: 11 });
+    lines.forEach((line, index) => rows.push({
+      background: "none",
+      bold: false,
+      cells: [
+        String(index + 1),
+        [line.itemName, line.model].filter(Boolean).join(" · "),
+        formatExportUnit(line.unit ?? ""),
+        formatDecimal2(line.quantity),
+        formatDecimal2(line.saleUnitPrice ?? "0"),
+        formatDecimal2(line.saleAmount ?? "0"),
+        [line.brand, line.selectedColor, line.spec].filter(Boolean).join(" · "),
+      ],
+      height: pdfItemRowHeight(
+        [line.itemName, line.model].filter(Boolean).join(" · "),
+        [line.brand, line.selectedColor, line.spec].filter(Boolean).join(" · "),
+      ),
+      kind: "table",
+      size: 10,
+    }));
+    const subtotal = lines.reduce(
+      (sum, line) => addDecimal4(sum, line.saleAmount ?? "0.0000"),
+      "0.0000",
+    );
+    rows.push({
+      background: "none",
+      bold: true,
+      cells: ["", "小计", "元", "", "", formatDecimal2(subtotal), ""],
+      height: 26,
+      kind: "table",
+      size: 10,
+    });
+  });
   [
-    ["（1）", "直接费", context.quotation.directCost, ""],
-    ["（2）", "管理费", context.quotation.managementFee, "管理费统一按半包直接费 10% 计算。"],
-    ["（3）", "折扣/抹零", (-savings).toFixed(4), "按已确认折扣与抹零计算。"],
-    ["（4）", "总造价", context.quotation.adjustedTotal, ""],
-  ].forEach(([number, label, amount, remarks]) => rows.push({ background: "summary", bold: true, cells: [number ?? "", label ?? "", "元", "", "", number2(amount ?? "0").toFixed(2), remarks ?? ""], height: 22, kind: "table", size: 8 }));
+    ["（1）", "直接费", context.mainMaterial?.directCost ?? "0.0000", ""],
+    ["（2）", "服务费", context.mainMaterial?.managementFee ?? "0.0000", "管理费统一按工程总价10%计算。"],
+    ["（3）", "总造价", context.mainMaterial?.total ?? "0.0000", ""],
+  ].forEach(([number, label, amount, remarks]) => rows.push({
+    background: "summary",
+    bold: true,
+    cells: [number ?? "", label ?? "", "元", "", "", formatDecimal2(amount ?? "0"), remarks ?? ""],
+    height: 22,
+    kind: "table",
+    size: 8,
+  }));
   return rows;
 }
 
@@ -412,6 +993,7 @@ function addLandscapePage(document: PDFDocument): PDFPage {
 }
 
 function drawPdfRow(page: PDFPage, font: PDFFont, top: number, row: PdfRow): void {
+  if (row.kind === "break") return;
   const x = 18;
   const width = 805;
   const bottom = top - row.height;
@@ -440,20 +1022,38 @@ function drawPdfRow(page: PDFPage, font: PDFFont, top: number, row: PdfRow): voi
   });
 }
 
+function mainMaterialCategoryName(code: string): string {
+  return ({
+    BATHROOM: "卫浴",
+    CEILING: "集成吊顶",
+    CUSTOM: "定制类",
+    FLOOR: "木地板",
+    GLASS_DOOR: "房门/门套/玻璃门",
+    SEAM: "美缝",
+    SHOWER: "淋浴房",
+    STONE: "石材/岩板",
+    SWITCH: "开关面板",
+    TILE: "瓷砖",
+  } as Record<string, string>)[code] ?? code;
+}
+
 function wrapText(text: string, font: PDFFont, size: number, width: number, maxLines: number): string[] {
   const normalized = text.trim();
   if (!normalized) return [""];
   const lines: string[] = [];
   for (const paragraph of normalized.split(/\r?\n/)) {
     let current = "";
+    let currentWidth = 0;
     for (const character of paragraph) {
-      const candidate = current + character;
-      if (current && font.widthOfTextAtSize(candidate, size) > width) {
+      const characterWidth = font.widthOfTextAtSize(character, size);
+      if (current && currentWidth + characterWidth > width) {
         lines.push(current);
         current = character;
+        currentWidth = characterWidth;
         if (lines.length === maxLines) break;
       } else {
-        current = candidate;
+        current += character;
+        currentWidth += characterWidth;
       }
     }
     if (lines.length === maxLines) break;
@@ -491,15 +1091,59 @@ function formatExportUnit(unit: string): string {
 }
 
 function number2(value: string): number {
-  return Number.parseFloat(Number.parseFloat(value).toFixed(2));
+  return Number(formatDecimal2(value));
 }
 
 function number4(value: string): number {
   return Number.parseFloat(Number.parseFloat(value).toFixed(4));
 }
 
-function exportFileName(quotation: QuotationDraft, extension: "pdf" | "xlsx"): string {
-  return `${safeName(quotation.projectAddress)}_半包报价单_V${quotation.versionNumber}.${extension}`;
+function exportFileName(quotation: QuotationDraft, extension: "pdf" | "xlsx", audience: "CLIENT" | "INTERNAL" = "CLIENT"): string {
+  const suffix = audience === "INTERNAL" ? "_内部版" : "";
+  return `${safeName(quotation.projectAddress)}_项目报价单_V${quotation.versionNumber}${suffix}.${extension}`;
+}
+
+function addDecimal4(left: string, right: string): string {
+  return fixed4(decimal4Units(left) + decimal4Units(right));
+}
+
+function subtractDecimal4(left: string, right: string): string {
+  return fixed4(decimal4Units(left) - decimal4Units(right));
+}
+
+function multiplyDecimal4(left: string, right: string): string {
+  const product = decimal4Units(left) * decimal4Units(right);
+  const rounded = product >= 0n
+    ? (product + 5_000n) / 10_000n
+    : (product - 5_000n) / 10_000n;
+  return fixed4(rounded);
+}
+
+function formatDecimal2(value: string): string {
+  const units = decimal4Units(value);
+  const rounded = units >= 0n
+    ? (units + 50n) / 100n
+    : (units - 50n) / 100n;
+  const sign = rounded < 0n ? "-" : "";
+  const absolute = rounded < 0n ? -rounded : rounded;
+  return `${sign}${absolute / 100n}.${String(absolute % 100n).padStart(2, "0")}`;
+}
+
+function formatPercentage(value: string): string {
+  return `${formatDecimal2(fixed4(decimal4Units(value) * 100n))}%`;
+}
+
+function decimal4Units(value: string): bigint {
+  const match = /^(-?)(\d+)(?:\.(\d{1,4}))?$/.exec(value.trim());
+  if (!match) throw new Error("导出金额格式不正确");
+  const units = BigInt(match[2] ?? "0") * 10_000n + BigInt((match[3] ?? "").padEnd(4, "0"));
+  return match[1] === "-" ? -units : units;
+}
+
+function fixed4(units: bigint): string {
+  const sign = units < 0n ? "-" : "";
+  const absolute = units < 0n ? -units : units;
+  return `${sign}${absolute / 10_000n}.${String(absolute % 10_000n).padStart(4, "0")}`;
 }
 
 function safeName(value: string): string {

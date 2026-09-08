@@ -226,6 +226,9 @@ export interface HalfPackageQuotation {
   readonly isCurrent: boolean;
   readonly managementFee: string;
   readonly managementRate: string;
+  readonly mainMaterialTotal?: string;
+  readonly halfPackageTotal?: string;
+  readonly projectTotal?: string;
   readonly projectId: string;
   readonly projectAddress: string;
   readonly revision: number;
@@ -251,6 +254,181 @@ export type HalfPackageAdjustmentStatus =
 
 export interface HalfPackageQuotationResponse {
   readonly quotation: HalfPackageQuotation;
+}
+
+export type MainMaterialCategoryCode =
+  | "TILE"
+  | "SEAM"
+  | "FLOOR"
+  | "GLASS_DOOR"
+  | "CEILING"
+  | "BATHROOM"
+  | "SHOWER"
+  | "STONE"
+  | "SWITCH"
+  | "CUSTOM";
+
+export type MainMaterialDataStatus = "ACTIVE" | "PENDING_DATA" | "INACTIVE";
+export type MainMaterialImportMode = "FULL" | "DELTA";
+
+export interface MainMaterialAssetView {
+  readonly id: string;
+  readonly path: string;
+}
+
+export interface MainMaterialItemView {
+  readonly assets: readonly MainMaterialAssetView[];
+  readonly attributes: Readonly<Record<string, string>>;
+  readonly brand: string;
+  readonly categoryCode: MainMaterialCategoryCode;
+  readonly categoryName: string;
+  readonly colors: readonly string[];
+  readonly costPrice?: string | null;
+  readonly id: string;
+  readonly itemName: string;
+  readonly materialId: string;
+  readonly missingFields: string;
+  readonly model: string;
+  readonly priceDerivation?: string;
+  readonly recordVersion: number;
+  readonly remarks: string;
+  readonly salePrice: string | null;
+  readonly series: string;
+  readonly sourceFile?: string;
+  readonly sourceRow?: string;
+  readonly sourceSheet?: string;
+  readonly spec: string;
+  readonly status: MainMaterialDataStatus;
+  readonly unit: string;
+}
+
+export interface PublishedMainMaterialCategoryView {
+  readonly code: MainMaterialCategoryCode;
+  readonly itemCount: number;
+  readonly name: string;
+}
+
+export interface PublishedMainMaterialCatalogView {
+  readonly categories: readonly PublishedMainMaterialCategoryView[];
+  readonly id: string;
+  readonly items: readonly MainMaterialItemView[];
+  readonly name: string;
+  readonly publishedAt: string;
+  readonly versionNumber: number;
+}
+
+export interface PublishedMainMaterialCatalogResponse {
+  readonly catalog: PublishedMainMaterialCatalogView;
+}
+
+export interface MainMaterialImportValidation {
+  readonly blockerCount: number;
+  readonly blockers: readonly string[];
+  readonly itemCount: number;
+  readonly pendingItemCount: number;
+  readonly warningCount: number;
+  readonly warnings: readonly string[];
+}
+
+export interface MainMaterialImportBatchView {
+  readonly createdAt: string;
+  readonly fileName: string;
+  readonly id: string;
+  readonly mode: MainMaterialImportMode;
+  readonly publishedVersionId: string | null;
+  readonly reused: boolean;
+  readonly status: "FAILED" | "VALIDATED" | "PUBLISHED";
+  readonly validation: MainMaterialImportValidation;
+}
+
+export interface MainMaterialImportResponse {
+  readonly batch: MainMaterialImportBatchView;
+}
+
+export interface MainMaterialQuoteItemSnapshot {
+  readonly assets: readonly MainMaterialAssetView[];
+  readonly brand: string;
+  readonly colors: readonly string[];
+  readonly costUnitPrice?: string;
+  readonly itemName: string;
+  readonly materialId: string;
+  readonly model: string;
+  readonly saleUnitPrice: string;
+  readonly series: string;
+  readonly spec: string;
+  readonly unit: string;
+}
+
+export interface MainMaterialQuotationLineView {
+  readonly amount: string | null;
+  readonly baseQuantity: string | null;
+  readonly categoryCode: MainMaterialCategoryCode;
+  readonly costAmount?: string | null;
+  readonly demandName: string;
+  readonly demandSpec: string;
+  readonly id: string;
+  readonly item: MainMaterialQuoteItemSnapshot | null;
+  readonly lossRate: string;
+  readonly origin: "AUTO_TILE" | "MANUAL";
+  readonly quantity: string;
+  readonly scopeName: string;
+  readonly selectedColor: string | null;
+}
+
+export type MainMaterialQuotationLine = MainMaterialQuotationLineView;
+
+export interface MainMaterialQuotationSummary {
+  readonly directCost: string;
+  readonly expectedCost?: string;
+  readonly grossMarginRate?: string | null;
+  readonly grossProfit?: string;
+  readonly managementFee: string;
+  readonly total: string;
+}
+
+export interface MainMaterialQuotationView {
+  readonly catalogVersion: {
+    readonly id: string;
+    readonly name: string;
+    readonly versionNumber: number;
+  };
+  readonly id: string;
+  readonly lines: readonly MainMaterialQuotationLineView[];
+  readonly projectId: string;
+  readonly revision: number;
+  readonly status: HalfPackageQuotationStatus;
+  readonly summary: MainMaterialQuotationSummary;
+}
+
+export interface MainMaterialQuotationResponse {
+  readonly quotation: MainMaterialQuotationView;
+}
+
+export interface MainMaterialCatalogFieldDifferenceView {
+  readonly after: string;
+  readonly before: string;
+  readonly field: string;
+  readonly label: string;
+}
+
+export interface MainMaterialCatalogLineDifferenceView {
+  readonly demandName: string;
+  readonly fields: readonly MainMaterialCatalogFieldDifferenceView[];
+  readonly lineId: string;
+  readonly materialId: string;
+  readonly reason: string | null;
+  readonly status: "UPDATED" | "UNAVAILABLE";
+}
+
+export interface MainMaterialCatalogUpdateCheckView {
+  readonly currentVersionNumber: number;
+  readonly differences: readonly MainMaterialCatalogLineDifferenceView[];
+  readonly latestVersionNumber: number;
+  readonly updateAvailable: boolean;
+}
+
+export interface MainMaterialCatalogUpdateCheckResponse {
+  readonly check: MainMaterialCatalogUpdateCheckView;
 }
 
 export interface UpdateHalfPackageQuotationLineRequest {
@@ -341,6 +519,18 @@ export interface HalfPackageVersionDifference {
   readonly field:
     | "COST_UNIT_PRICE"
     | "DISCOUNT_RATE"
+    | "MAIN_MATERIAL_AMOUNT"
+    | "MAIN_MATERIAL_BRAND"
+    | "MAIN_MATERIAL_CATALOG_VERSION"
+    | "MAIN_MATERIAL_COLOR"
+    | "MAIN_MATERIAL_COST_AMOUNT"
+    | "MAIN_MATERIAL_COST_UNIT_PRICE"
+    | "MAIN_MATERIAL_LOSS_RATE"
+    | "MAIN_MATERIAL_MODEL"
+    | "MAIN_MATERIAL_QUANTITY"
+    | "MAIN_MATERIAL_SALE_UNIT_PRICE"
+    | "MAIN_MATERIAL_SELECTION"
+    | "MAIN_MATERIAL_SPEC"
     | "QUANTITY"
     | "SALE_UNIT_PRICE"
     | "SELECTED"
@@ -357,12 +547,15 @@ export interface HalfPackageVersionCompareResponse {
 }
 
 export type HalfPackageExportFormat = "PDF" | "XLSX";
+export type HalfPackageExportAudience = "CLIENT" | "INTERNAL";
 
 export interface CreateHalfPackageExportRequest {
+  readonly audience?: HalfPackageExportAudience;
   readonly format: HalfPackageExportFormat;
 }
 
 export interface HalfPackageExportRecord {
+  readonly audience: HalfPackageExportAudience;
   readonly downloadPath: string;
   readonly fileName: string;
   readonly format: HalfPackageExportFormat;

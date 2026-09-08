@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 
 import { AccessModule } from "../access/access.module";
 import { CatalogModule } from "../catalog/catalog.module";
+import { MainMaterialModule } from "../main-material/main-material.module";
 import { ProjectModule } from "../project/project.module";
 import { HalfPackageCalculator } from "./half-package-calculator";
 import { PgQuotationRepository } from "./pg-quotation.repository";
@@ -20,7 +21,7 @@ import { QuotationService } from "./quotation.service";
     QuotationApprovalController,
     QuotationExportController,
   ],
-  imports: [AccessModule, CatalogModule, ProjectModule],
+  imports: [AccessModule, CatalogModule, MainMaterialModule, ProjectModule],
   providers: [
     HalfPackageCalculator,
     PgQuotationRepository,

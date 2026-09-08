@@ -6,12 +6,14 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { fetchPublishedCatalog, fetchSession } from "@/lib/api-client";
+import { fetchPublishedCatalog, fetchPublishedMainMaterialCatalog, fetchSession } from "@/lib/api-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
 import { quotationLineCategory } from "@/lib/quotation-view-model";
 
+import { MainMaterialCatalogTable } from "./main-material-catalog-table";
+
 interface CatalogPageProps {
-  readonly searchParams: Promise<{ section?: string }>;
+  readonly searchParams: Promise<{ section?: string; type?: string }>;
 }
 
 export default async function CatalogPage({ searchParams }: CatalogPageProps) {
@@ -24,9 +26,22 @@ export default async function CatalogPage({ searchParams }: CatalogPageProps) {
   if (!hasOwnerAccess && session.user.role !== "LEAD_DESIGNER") {
     redirect("/");
   }
+  const resolvedSearch = await searchParams;
+  if (resolvedSearch.type === "main") {
+    const mainCatalog = await fetchPublishedMainMaterialCatalog(cookieHeader);
+    return (
+      <AppShell active="catalog" user={session.user}>
+        <MainMaterialCatalog
+          canViewCost={hasOwnerAccess}
+          catalog={mainCatalog}
+          selectedCode={resolvedSearch.section}
+        />
+      </AppShell>
+    );
+  }
   const catalog = await fetchPublishedCatalog(cookieHeader);
   const canViewCost = hasOwnerAccess;
-  const selectedCode = (await searchParams).section;
+  const selectedCode = resolvedSearch.section;
   const selectedSection =
     catalog?.sections.find((section) => section.code === selectedCode) ??
     catalog?.sections[0];
@@ -50,7 +65,7 @@ export default async function CatalogPage({ searchParams }: CatalogPageProps) {
 
         <nav className="catalog-tabs" aria-label="主材库类型">
           <Link className="catalog-tab active" href="/catalog">半包工程项</Link>
-          <span aria-disabled="true" className="catalog-tab">主材 SKU · 后续版本</span>
+          <Link className="catalog-tab" href="/catalog?type=main">主材 SKU</Link>
         </nav>
 
         {!catalog || !selectedSection ? (
@@ -126,6 +141,27 @@ export default async function CatalogPage({ searchParams }: CatalogPageProps) {
       </main>
     </AppShell>
   );
+}
+
+function MainMaterialCatalog({
+  canViewCost,
+  catalog,
+  selectedCode,
+}: {
+  readonly canViewCost: boolean;
+  readonly catalog: Awaited<ReturnType<typeof fetchPublishedMainMaterialCatalog>>;
+  readonly selectedCode?: string;
+}) {
+  const selected = catalog?.categories.find((candidate) => candidate.code === selectedCode)
+    ?? catalog?.categories[0];
+  const items = selected
+    ? catalog?.items.filter((item) => item.categoryCode === selected.code) ?? []
+    : [];
+  return <main className="page-content catalog-page">
+    <section className="page-title-row"><div><p className="eyebrow">V2 · 主材 SKU</p><h1>主材库</h1><p>集中维护主材型号、规格、颜色、销售价与来源图片。</p></div>{canViewCost ? <Button asChild><Link href="/catalog/import?type=main"><FileUp />导入 Excel</Link></Button> : null}</section>
+    <nav className="catalog-tabs" aria-label="主材库类型"><Link className="catalog-tab" href="/catalog">半包工程项</Link><Link className="catalog-tab active" href="/catalog?type=main">主材 SKU</Link></nav>
+    {!catalog || !selected ? <section className="panel empty-panel"><h2>尚无已发布主材版本</h2><p>主材库发布后可用于项目选型。</p></section> : <><div className="catalog-version-strip"><Badge variant="success">当前生效</Badge><span>V{catalog.versionNumber} · {catalog.items.length} 条记录 · {catalog.items.filter((item) => item.status === "ACTIVE").length} 条可选 · {formatPublishedAt(catalog.publishedAt)} 发布</span></div><div className="catalog-layout"><aside className="catalog-section-nav"><h2>分类</h2>{catalog.categories.map((category) => <Link className={category.code === selected.code ? "catalog-section-link active" : "catalog-section-link"} href={`/catalog?type=main&section=${category.code}`} key={category.code}><span>{category.name}</span><span>{category.itemCount}项</span></Link>)}</aside><section className="panel catalog-section"><div className="panel-heading"><div><p className="eyebrow">当前分类</p><h2>{selected.name}</h2><p>{items.length} 条 · 待补资料记录不会进入项目选型</p></div><Badge variant="outline">主材库 V{catalog.versionNumber}</Badge></div><MainMaterialCatalogTable canManage={canViewCost} items={items} /></section></div></>}
+  </main>;
 }
 
 function formatPrice(value: string | undefined): string {

@@ -1,5 +1,6 @@
 import type {
   HalfPackageApprovalDecision,
+  HalfPackageExportAudience,
   HalfPackageExportFormat,
   HalfPackageExportResponse,
   HalfPackageCostMargin,
@@ -142,12 +143,19 @@ export async function updateQuotationMarginBenchmark(
 export async function createQuotationExport(
   quotationId: string,
   format: HalfPackageExportFormat,
-  fetcher: Fetcher = fetch,
+  audienceOrFetcher: HalfPackageExportAudience | Fetcher = "CLIENT",
+  fetcherArgument: Fetcher = fetch,
 ) {
+  const fetcher = typeof audienceOrFetcher === "function"
+    ? audienceOrFetcher
+    : fetcherArgument;
+  const audience = typeof audienceOrFetcher === "function"
+    ? undefined
+    : audienceOrFetcher;
   const response = await fetcher(
     `${apiUrl}/approvals/half-package/${quotationId}/exports`,
     {
-      body: JSON.stringify({ format }),
+      body: JSON.stringify(audience ? { audience, format } : { format }),
       credentials: "include",
       headers: { "content-type": "application/json" },
       method: "POST",

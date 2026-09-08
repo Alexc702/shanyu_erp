@@ -76,6 +76,11 @@ interface QuotationRow {
   is_current: boolean;
   management_fee: string;
   management_rate: string;
+  main_material_catalog_version_id: string | null;
+  main_material_direct_cost: string;
+  main_material_expected_cost: string;
+  main_material_management_fee: string;
+  main_material_total: string;
   margin_benchmark_rate: string;
   parent_version_id: string | null;
   project_id: string;
@@ -98,6 +103,7 @@ interface QuotationRow {
 }
 
 interface ExportRow {
+  audience: "CLIENT" | "INTERNAL";
   content_type: string;
   content_sha256: string;
   created_at: Date;
@@ -585,7 +591,30 @@ export class PgQuotationRepository implements QuotationRepository {
             SET status = 'QUOTED', submitted_by_user_id = $2,
                 submitted_at = current_timestamp, updated_at = current_timestamp
           WHERE id = $1 AND status = 'DRAFT' AND is_current
-            AND revision = $3`,
+            AND revision = $3
+            AND NOT EXISTS (
+              SELECT 1 FROM main_material_quote_lines material
+               WHERE material.quotation_id = half_package_quotations.id
+                 AND material.origin = 'AUTO_TILE'
+                 AND material.item_version_id IS NULL
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM half_package_quotation_lines line
+                JOIN half_package_quotation_spaces scope
+                  ON scope.id = line.quotation_space_id
+                JOIN half_package_version_items version_item
+                  ON version_item.id = line.version_item_id
+                JOIN half_package_main_material_demand_tags tag
+                  ON tag.standard_item_id = version_item.standard_item_id
+               WHERE scope.quotation_id = half_package_quotations.id
+                 AND line.selected AND line.calculated_quantity > 0
+                 AND NOT EXISTS (
+                   SELECT 1 FROM main_material_quote_lines material
+                    WHERE material.quotation_id = half_package_quotations.id
+                      AND material.source_half_package_line_id = line.id
+                 )
+            )`,
         [quotationId, actorUserId, expectedRevision],
       );
       if (updated.rowCount !== 1) {
@@ -675,6 +704,12 @@ export class PgQuotationRepository implements QuotationRepository {
         [source.id],
       );
       await insertDraft(database, cloned);
+      await cloneMainMaterialQuoteLines(
+        database,
+        source.id,
+        cloned.id,
+        true,
+      );
       const status = action === "RETURNED" ? "RETURNED" : "APPROVED";
       const updated = await database.query(
         `UPDATE half_package_quotations
@@ -721,12 +756,36 @@ export class PgQuotationRepository implements QuotationRepository {
       const row = locked.rows[0];
       if (!row) throw new QuotationRevisionConflictError();
       const lockedSource = await this.hydrateDraft(database, row);
-      const cloned = cloneAsVersion(
+      const publishedCatalog = await database.query<{ id: string }>(
+        `SELECT id FROM main_material_catalog_versions
+          WHERE status = 'PUBLISHED' LIMIT 1`,
+      );
+      const preserveAdjustment = lockedSource.status === "RETURNED";
+      const provisionalMainTotal = lockedSource.mainMaterialTotal ?? "0.0000";
+      const provisionalAdjustedTotal = preserveAdjustment
+        ? lockedSource.adjustedTotal
+        : addDecimal4(lockedSource.total, provisionalMainTotal);
+      const provisionalGrossProfit = subtractDecimal4(
+        subtractDecimal4(provisionalAdjustedTotal, lockedSource.expectedCost),
+        lockedSource.mainMaterialExpectedCost ?? "0.0000",
+      );
+      const cloned = {
+        ...cloneAsVersion(
         lockedSource,
         actorUserId,
         lockedSource.versionNumber + 1,
-        lockedSource.status === "RETURNED",
-      );
+        preserveAdjustment,
+        ),
+        adjustedTotal: provisionalAdjustedTotal,
+        grossMarginRate: decimalRate(provisionalGrossProfit, provisionalAdjustedTotal),
+        grossProfit: provisionalGrossProfit,
+        mainMaterialCatalogVersionId:
+          publishedCatalog.rows[0]?.id ?? lockedSource.mainMaterialCatalogVersionId ?? null,
+        mainMaterialDirectCost: lockedSource.mainMaterialDirectCost ?? "0.0000",
+        mainMaterialExpectedCost: lockedSource.mainMaterialExpectedCost ?? "0.0000",
+        mainMaterialManagementFee: lockedSource.mainMaterialManagementFee ?? "0.0000",
+        mainMaterialTotal: provisionalMainTotal,
+      };
       await database.query(
         `UPDATE half_package_quotations
             SET is_current = false, updated_at = current_timestamp
@@ -734,6 +793,13 @@ export class PgQuotationRepository implements QuotationRepository {
         [lockedSource.id],
       );
       await insertDraft(database, cloned);
+      await cloneMainMaterialQuoteLines(
+        database,
+        lockedSource.id,
+        cloned.id,
+        false,
+      );
+      await recalculateMainMaterialTotals(database, cloned.id);
       return cloned.id;
     });
     const draft = await this.findById(draftId);
@@ -744,13 +810,14 @@ export class PgQuotationRepository implements QuotationRepository {
   async createExport(input: NewQuotationExport): Promise<QuotationExport> {
     await this.database.query(
       `INSERT INTO half_package_exports
-         (id, quotation_id, format, file_name, content_type,
+         (id, quotation_id, format, audience, file_name, content_type,
           content_sha256, payload, created_by_user_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         input.id,
         input.quotationId,
         input.format,
+        input.audience,
         input.fileName,
         input.contentType,
         input.sha256,
@@ -765,7 +832,7 @@ export class PgQuotationRepository implements QuotationRepository {
   async findExport(exportId: string): Promise<QuotationExport | null> {
     const result = await this.database.query<ExportRow>(
       `SELECT id, quotation_id, format, file_name, content_type,
-              content_sha256, payload, created_at
+              audience, content_sha256, payload, created_at
          FROM half_package_exports
         WHERE id = $1`,
       [exportId],
@@ -773,6 +840,7 @@ export class PgQuotationRepository implements QuotationRepository {
     const row = result.rows[0];
     return row
       ? {
+          audience: row.audience,
           contentType: row.content_type,
           createdAt: row.created_at,
           fileName: row.file_name,
@@ -829,6 +897,11 @@ export class PgQuotationRepository implements QuotationRepository {
       isCurrent: row.is_current,
       managementFee: row.management_fee,
       managementRate: row.management_rate,
+      mainMaterialCatalogVersionId: row.main_material_catalog_version_id,
+      mainMaterialDirectCost: row.main_material_direct_cost,
+      mainMaterialExpectedCost: row.main_material_expected_cost,
+      mainMaterialManagementFee: row.main_material_management_fee,
+      mainMaterialTotal: row.main_material_total,
       marginBenchmarkRate: row.margin_benchmark_rate,
       parentVersionId: row.parent_version_id,
       projectId: row.project_id,
@@ -881,10 +954,13 @@ async function insertDraft(
         gross_margin_rate, management_fee, total, adjusted_total,
         discount_rate, write_off, revision, created_by_user_id,
         project_address, is_current, parent_version_id, adjustment_status,
-        adjustment_reason, margin_benchmark_rate)
+        adjustment_reason, margin_benchmark_rate,
+        main_material_catalog_version_id, main_material_direct_cost,
+        main_material_management_fee, main_material_total,
+        main_material_expected_cost)
      VALUES ($1, $2, $3, 'DRAFT', $4, $5, $6, $7, $8, $9, $10, $11,
              $12, $13, $14, $15, $16, $17, $18, $19, $20, true, $21, $22,
-             $23, $24)`,
+             $23, $24, $25, $26, $27, $28, $29)`,
     [
       input.id,
       input.projectId,
@@ -910,6 +986,11 @@ async function insertDraft(
       input.adjustmentStatus,
       input.adjustmentReason,
       input.marginBenchmarkRate,
+      input.mainMaterialCatalogVersionId ?? null,
+      input.mainMaterialDirectCost ?? "0.0000",
+      input.mainMaterialManagementFee ?? "0.0000",
+      input.mainMaterialTotal ?? "0.0000",
+      input.mainMaterialExpectedCost ?? "0.0000",
     ],
   );
   for (const scope of input.scopes) {
@@ -1117,6 +1198,259 @@ function cloneAsVersion(
   };
 }
 
+interface MaterialCloneRow {
+  asset_ids: string[];
+  base_quantity: string | null;
+  brand: string | null;
+  category_code: string;
+  cost_amount: string | null;
+  cost_unit_price: string | null;
+  demand_name: string;
+  demand_spec: string;
+  id: string;
+  item_name: string | null;
+  item_version_id: string | null;
+  loss_rate: string;
+  material_id: string | null;
+  model: string | null;
+  origin: "AUTO_TILE" | "MANUAL";
+  quote_quantity: string;
+  sale_amount: string | null;
+  sale_unit_price: string | null;
+  scope_name: string;
+  selected_color: string | null;
+  series: string | null;
+  sort_order: number;
+  source_half_package_line_id: string | null;
+  spec: string | null;
+  unit: string | null;
+}
+
+interface MaterialTargetItemRow {
+  asset_ids: string[];
+  brand: string;
+  colors: string[];
+  cost_price: string;
+  id: string;
+  item_name: string;
+  material_id: string;
+  model: string;
+  sale_price: string;
+  series: string;
+  spec: string;
+  unit: string;
+}
+
+async function cloneMainMaterialQuoteLines(
+  database: DatabaseExecutor,
+  sourceQuotationId: string,
+  targetQuotationId: string,
+  preserveExactSnapshot: boolean,
+): Promise<void> {
+  const sourceResult = await database.query<MaterialCloneRow>(
+    `SELECT id, origin, source_half_package_line_id, category_code,
+            scope_name, demand_name, demand_spec, base_quantity, loss_rate,
+            quote_quantity, item_version_id, material_id, item_name, brand,
+            series, model, spec, selected_color, unit, sale_unit_price,
+            cost_unit_price, sale_amount, cost_amount, asset_ids, sort_order
+       FROM main_material_quote_lines
+      WHERE quotation_id = $1
+      ORDER BY sort_order, id`,
+    [sourceQuotationId],
+  );
+  if (!sourceResult.rowCount) return;
+
+  const lineMapResult = await database.query<{
+    new_id: string;
+    old_id: string;
+  }>(
+    `SELECT old_line.id AS old_id, new_line.id AS new_id
+       FROM half_package_quotation_spaces old_scope
+       JOIN half_package_quotation_lines old_line
+         ON old_line.quotation_space_id = old_scope.id
+       JOIN half_package_quotation_spaces new_scope
+         ON new_scope.quotation_id = $2
+        AND (
+          new_scope.project_space_id = old_scope.project_space_id
+          OR (new_scope.project_space_id IS NULL AND old_scope.project_space_id IS NULL
+              AND new_scope.name = old_scope.name)
+        )
+       JOIN half_package_quotation_lines new_line
+         ON new_line.quotation_space_id = new_scope.id
+        AND new_line.version_item_id = old_line.version_item_id
+      WHERE old_scope.quotation_id = $1`,
+    [sourceQuotationId, targetQuotationId],
+  );
+  const lineIds = new Map(
+    lineMapResult.rows.map((row) => [row.old_id, row.new_id] as const),
+  );
+  const targetItemResult = preserveExactSnapshot
+    ? { rows: [] as MaterialTargetItemRow[] }
+    : await database.query<MaterialTargetItemRow>(
+        `SELECT item.id, item.material_id, item.item_name, item.brand,
+                item.series, item.model, item.spec, item.colors, item.unit,
+                item.sale_price, item.cost_price,
+                coalesce((SELECT jsonb_agg(link.asset_id ORDER BY link.sort_order)
+                  FROM main_material_item_assets link
+                 WHERE link.catalog_version_id = item.catalog_version_id
+                   AND link.material_id = item.material_id), '[]'::jsonb) AS asset_ids
+           FROM main_material_item_versions item
+           JOIN half_package_quotations quotation
+             ON quotation.id = $1
+            AND quotation.main_material_catalog_version_id = item.catalog_version_id
+          WHERE item.data_status = 'ACTIVE'
+            AND item.sale_price IS NOT NULL AND item.cost_price IS NOT NULL`,
+        [targetQuotationId],
+      );
+  const targetItems = new Map(
+    targetItemResult.rows.map((item) => [item.material_id, item] as const),
+  );
+
+  for (const source of sourceResult.rows) {
+    const mappedHalfLineId = source.source_half_package_line_id
+      ? lineIds.get(source.source_half_package_line_id) ?? null
+      : null;
+    if (source.origin === "AUTO_TILE" && !mappedHalfLineId) continue;
+    const targetItem = preserveExactSnapshot || !source.material_id
+      ? null
+      : targetItems.get(source.material_id) ?? null;
+    const compatible = preserveExactSnapshot
+      ? Boolean(source.item_version_id)
+      : Boolean(
+          targetItem &&
+          (source.origin !== "AUTO_TILE" ||
+            (normalizeMaterialSpec(targetItem.spec) === normalizeMaterialSpec(source.demand_spec) &&
+              ["m2", "m²", "㎡"].includes(targetItem.unit.trim().toLowerCase()))) &&
+          (!targetItem.colors.length ||
+            Boolean(source.selected_color && targetItem.colors.includes(source.selected_color))),
+        );
+    const itemVersionId = compatible
+      ? preserveExactSnapshot ? source.item_version_id : targetItem?.id ?? null
+      : null;
+    const saleUnitPrice = compatible
+      ? preserveExactSnapshot ? source.sale_unit_price : targetItem?.sale_price ?? null
+      : null;
+    const costUnitPrice = compatible
+      ? preserveExactSnapshot ? source.cost_unit_price : targetItem?.cost_price ?? null
+      : null;
+    await database.query(
+      `INSERT INTO main_material_quote_lines
+         (id, quotation_id, origin, source_half_package_line_id,
+          category_code, scope_name, demand_name, demand_spec, base_quantity,
+          loss_rate, quote_quantity, item_version_id, material_id, item_name,
+          brand, series, model, spec, selected_color, unit, sale_unit_price,
+          cost_unit_price, sale_amount, cost_amount, asset_ids, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+               $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+               CASE WHEN $21::numeric IS NULL THEN NULL
+                 ELSE round($11::numeric * $21::numeric, 4) END,
+               CASE WHEN $22::numeric IS NULL THEN NULL
+                 ELSE round($11::numeric * $22::numeric, 4) END,
+               $23::jsonb, $24)`,
+      [
+        randomUUID(), targetQuotationId, source.origin, mappedHalfLineId,
+        source.category_code, source.scope_name, source.demand_name,
+        source.demand_spec, source.base_quantity, source.loss_rate,
+        source.quote_quantity, itemVersionId,
+        compatible ? preserveExactSnapshot ? source.material_id : targetItem?.material_id ?? null : null,
+        compatible ? preserveExactSnapshot ? source.item_name : targetItem?.item_name ?? null : null,
+        compatible ? preserveExactSnapshot ? source.brand : targetItem?.brand ?? null : null,
+        compatible ? preserveExactSnapshot ? source.series : targetItem?.series ?? null : null,
+        compatible ? preserveExactSnapshot ? source.model : targetItem?.model ?? null : null,
+        compatible ? preserveExactSnapshot ? source.spec : targetItem?.spec ?? null : null,
+        compatible ? source.selected_color : null,
+        compatible ? preserveExactSnapshot ? source.unit : targetItem?.unit ?? null : null,
+        saleUnitPrice, costUnitPrice,
+        JSON.stringify(
+          compatible
+            ? preserveExactSnapshot ? source.asset_ids : targetItem?.asset_ids ?? []
+            : [],
+        ),
+        source.sort_order,
+      ],
+    );
+  }
+}
+
+async function recalculateMainMaterialTotals(
+  database: DatabaseExecutor,
+  quotationId: string,
+): Promise<void> {
+  await database.query(
+    `WITH totals AS (
+       SELECT coalesce(sum(sale_amount), 0)::numeric(16,4) AS direct_cost,
+              coalesce(sum(cost_amount), 0)::numeric(16,4) AS expected_cost
+         FROM main_material_quote_lines
+        WHERE quotation_id = $1
+     )
+     UPDATE half_package_quotations q
+        SET main_material_direct_cost = totals.direct_cost,
+            main_material_management_fee = round(totals.direct_cost * 0.1000, 4),
+            main_material_total = round(totals.direct_cost * 1.1000, 4),
+            main_material_expected_cost = totals.expected_cost,
+            adjusted_total = greatest(round(
+              (q.total + round(totals.direct_cost * 1.1000, 4))
+              * q.discount_rate - q.write_off, 4), 0),
+            gross_profit = round(greatest(round(
+              (q.total + round(totals.direct_cost * 1.1000, 4))
+              * q.discount_rate - q.write_off, 4), 0)
+              - q.expected_cost - totals.expected_cost, 4),
+            gross_margin_rate = CASE WHEN greatest(round(
+              (q.total + round(totals.direct_cost * 1.1000, 4))
+              * q.discount_rate - q.write_off, 4), 0) = 0 THEN NULL
+              ELSE round((greatest(round(
+                (q.total + round(totals.direct_cost * 1.1000, 4))
+                * q.discount_rate - q.write_off, 4), 0)
+                - q.expected_cost - totals.expected_cost) /
+                greatest(round((q.total + round(totals.direct_cost * 1.1000, 4))
+                * q.discount_rate - q.write_off, 4), 0), 4) END,
+            updated_at = current_timestamp
+       FROM totals
+      WHERE q.id = $1`,
+    [quotationId],
+  );
+}
+
+function addDecimal4(left: string, right: string): string {
+  return fixed4(decimal4Units(left) + decimal4Units(right));
+}
+
+function subtractDecimal4(left: string, right: string): string {
+  return fixed4(decimal4Units(left) - decimal4Units(right));
+}
+
+function decimalRate(numerator: string, denominator: string): string | null {
+  const denominatorUnits = decimal4Units(denominator);
+  if (denominatorUnits === 0n) return null;
+  return fixed4(divideRounded(decimal4Units(numerator) * 10_000n, denominatorUnits));
+}
+
+function decimal4Units(value: string): bigint {
+  const match = /^(-?)(\d+)(?:\.(\d{1,4}))?$/.exec(value.trim());
+  if (!match) throw new Error("金额格式不正确");
+  const units = BigInt(match[2] ?? "0") * 10_000n + BigInt((match[3] ?? "").padEnd(4, "0"));
+  return match[1] === "-" ? -units : units;
+}
+
+function divideRounded(numerator: bigint, denominator: bigint): bigint {
+  const negative = (numerator < 0n) !== (denominator < 0n);
+  const left = numerator < 0n ? -numerator : numerator;
+  const right = denominator < 0n ? -denominator : denominator;
+  const quotient = (left + right / 2n) / right;
+  return negative ? -quotient : quotient;
+}
+
+function fixed4(units: bigint): string {
+  const sign = units < 0n ? "-" : "";
+  const absolute = units < 0n ? -units : units;
+  return `${sign}${absolute / 10_000n}.${String(absolute % 10_000n).padStart(4, "0")}`;
+}
+
+function normalizeMaterialSpec(value: string): string {
+  return value.toLowerCase().replaceAll("×", "*").replaceAll("x", "*")
+    .replaceAll("mm", "").replaceAll(" ", "");
+}
+
 const quotationSelect = `SELECT q.id, q.project_id, q.project_address,
                                  q.adjustment_status, q.adjustment_reason,
                                  q.version_number, q.status,
@@ -1129,6 +1463,11 @@ const quotationSelect = `SELECT q.id, q.project_id, q.project_address,
                                  ctv.version_number AS cost_template_version_number,
                                  q.quantity_rule_version_id, q.outer_frame_area,
                                  q.management_rate, q.direct_cost, q.expected_cost,
+                                 q.main_material_catalog_version_id,
+                                 q.main_material_direct_cost,
+                                 q.main_material_management_fee,
+                                 q.main_material_total,
+                                 q.main_material_expected_cost,
                                  q.margin_benchmark_rate,
                                  q.gross_profit, q.gross_margin_rate,
                                  q.management_fee, q.total, q.adjusted_total,

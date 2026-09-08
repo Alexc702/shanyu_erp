@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import {
   fetchProject,
+  fetchMainMaterialQuotationVersion,
   fetchQuotationVersion,
   fetchQuotationVersionCostMargin,
   fetchSession,
@@ -27,13 +28,17 @@ export default async function ApprovalDetailPage({ params }: ApprovalDetailPageP
     fetchQuotationVersionCostMargin(cookieHeader, quotationId),
   ]);
   if (!quotation || !costMargin) notFound();
-  const project = await fetchProject(cookieHeader, quotation.projectId);
-  if (!project) notFound();
+  const [project, mainMaterial] = await Promise.all([
+    fetchProject(cookieHeader, quotation.projectId),
+    fetchMainMaterialQuotationVersion(cookieHeader, quotation.projectId, quotation.id),
+  ]);
+  if (!project || !mainMaterial) notFound();
   return (
     <AppShell active="approvals" user={session.user}>
       <ApprovalDetail
         costMargin={costMargin}
         initialQuotation={quotation}
+        mainMaterial={mainMaterial}
         project={project}
       />
     </AppShell>

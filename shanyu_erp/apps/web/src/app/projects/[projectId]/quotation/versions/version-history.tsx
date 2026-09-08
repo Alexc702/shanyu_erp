@@ -13,7 +13,6 @@ import {
   Clock3,
   Eye,
   Info,
-  LockKeyhole,
   ScrollText,
   ShieldAlert,
 } from "lucide-react";
@@ -135,8 +134,9 @@ export function VersionHistory({
               版本对比
             </Button>
             <ExportMenu
+              allowInternal={hasOwnerPermissions(user.role)}
               disabled={!exportable || working}
-              fileNameStem={`${project.projectAddress}_半包报价单_V${currentVersion.versionNumber}`}
+              fileNameStem={`${project.projectAddress}_项目报价单_V${currentVersion.versionNumber}`}
               quotationId={currentVersion.id}
             />
           </div>
@@ -245,9 +245,10 @@ export function VersionHistory({
                           </Button>
                           {isExportable(version) ? (
                             <ExportMenu
+                              allowInternal={hasOwnerPermissions(user.role)}
                               compact
                               disabled={working}
-                              fileNameStem={`${project.projectAddress}_半包报价单_V${version.versionNumber}`}
+                              fileNameStem={`${project.projectAddress}_项目报价单_V${version.versionNumber}`}
                               quotationId={version.id}
                             />
                           ) : null}
@@ -259,17 +260,6 @@ export function VersionHistory({
               </TableBody>
             </Table>
           </Card>
-
-          <div className="type-support grid gap-1.5 rounded-lg bg-muted px-3 py-2.5 text-muted-foreground">
-            <strong className="flex items-center gap-1.5 text-foreground">
-              <LockKeyhole className="size-3.5" />
-              角色与状态决定可用操作
-            </strong>
-            <span>
-              草稿可编辑并确认生成；已报价可导出、调整折扣抹零或继续编辑；已退回可继续编辑；已批准仅老板可打回。
-            </span>
-            <span>审批操作必须校验当前有效版本；对已失效版本的旧页面操作由服务端拒绝。</span>
-          </div>
 
           {differences ? (
             <Card
@@ -345,8 +335,9 @@ export function VersionHistory({
                 <span>客户文件不包含成本、返点、毛利或内部审批信息。</span>
               </div>
               <ExportMenu
+                allowInternal={hasOwnerPermissions(user.role)}
                 disabled={!exportable || working}
-                fileNameStem={`${project.projectAddress}_半包报价单_V${currentVersion.versionNumber}`}
+                fileNameStem={`${project.projectAddress}_项目报价单_V${currentVersion.versionNumber}`}
                 fullWidth
                 quotationId={currentVersion.id}
               />
@@ -608,6 +599,18 @@ function fieldLabel(field: HalfPackageVersionDifference["field"]): string {
   return {
     COST_UNIT_PRICE: "成本单价",
     DISCOUNT_RATE: "折扣",
+    MAIN_MATERIAL_AMOUNT: "主材金额",
+    MAIN_MATERIAL_BRAND: "主材品牌",
+    MAIN_MATERIAL_CATALOG_VERSION: "主材库版本",
+    MAIN_MATERIAL_COLOR: "主材颜色",
+    MAIN_MATERIAL_COST_AMOUNT: "主材成本金额",
+    MAIN_MATERIAL_COST_UNIT_PRICE: "主材成本单价",
+    MAIN_MATERIAL_LOSS_RATE: "主材损耗率",
+    MAIN_MATERIAL_MODEL: "主材型号",
+    MAIN_MATERIAL_QUANTITY: "主材数量",
+    MAIN_MATERIAL_SALE_UNIT_PRICE: "主材销售单价",
+    MAIN_MATERIAL_SELECTION: "主材选型",
+    MAIN_MATERIAL_SPEC: "主材规格",
     QUANTITY: "数量",
     SALE_UNIT_PRICE: "销售单价",
     SELECTED: "选择状态",
@@ -622,8 +625,14 @@ function differenceValue(
 ): string {
   if (value === null) return "—";
   if (field === "SELECTED") return value === "true" ? "已选" : "未选";
+  if (field === "MAIN_MATERIAL_CATALOG_VERSION") return `V${value}`;
+  if (field === "MAIN_MATERIAL_LOSS_RATE") return `${(Number(value) * 100).toFixed(2)}%`;
   if (
     field === "COST_UNIT_PRICE" ||
+    field === "MAIN_MATERIAL_AMOUNT" ||
+    field === "MAIN_MATERIAL_COST_AMOUNT" ||
+    field === "MAIN_MATERIAL_COST_UNIT_PRICE" ||
+    field === "MAIN_MATERIAL_SALE_UNIT_PRICE" ||
     field === "SALE_UNIT_PRICE" ||
     field === "TOTAL" ||
     field === "WRITE_OFF"
@@ -631,5 +640,12 @@ function differenceValue(
     return `¥ ${formatQuotationMoney(value)}`;
   }
   if (field === "DISCOUNT_RATE") return `${(Number(value) * 100).toFixed(2)}%`;
+  if (
+    field === "MAIN_MATERIAL_SELECTION" ||
+    field === "MAIN_MATERIAL_BRAND" ||
+    field === "MAIN_MATERIAL_MODEL" ||
+    field === "MAIN_MATERIAL_SPEC" ||
+    field === "MAIN_MATERIAL_COLOR"
+  ) return value;
   return Number(value).toFixed(2);
 }

@@ -105,6 +105,11 @@ export interface QuotationDraft {
   readonly isCurrent: boolean;
   readonly managementFee: string;
   readonly managementRate: string;
+  readonly mainMaterialCatalogVersionId?: string | null;
+  readonly mainMaterialDirectCost?: string;
+  readonly mainMaterialExpectedCost?: string;
+  readonly mainMaterialManagementFee?: string;
+  readonly mainMaterialTotal?: string;
   readonly marginBenchmarkRate: string;
   readonly parentVersionId: string | null;
   readonly projectId: string;
@@ -189,6 +194,7 @@ export interface QuotationRepository {
 export type QuotationExportFormat = "PDF" | "XLSX";
 
 export interface QuotationExport {
+  readonly audience: "CLIENT" | "INTERNAL";
   readonly contentType: string;
   readonly createdAt: Date;
   readonly fileName: string;

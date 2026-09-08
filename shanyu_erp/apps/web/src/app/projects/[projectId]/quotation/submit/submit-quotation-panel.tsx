@@ -5,6 +5,7 @@ import type {
   HalfPackageQuotationLine,
   HalfPackageQuotationScope,
   HalfPackageSubmissionCheck,
+  MainMaterialQuotationView,
 } from "@shanyu/contracts";
 import {
   AlertCircle,
@@ -42,9 +43,11 @@ import {
 
 export function SubmitQuotationPanel({
   check,
+  mainMaterial,
   quotation,
 }: {
   readonly check: HalfPackageSubmissionCheck;
+  readonly mainMaterial: MainMaterialQuotationView;
   readonly quotation: HalfPackageQuotation;
 }) {
   const router = useRouter();
@@ -76,8 +79,8 @@ export function SubmitQuotationPanel({
     <main className="compact-workflow-page submit-quotation-page workflow-page">
       <header className="centered-workflow-header workflow-header">
         <div className="grid gap-1">
-          <h1 className="type-page-title">确认半包报价单</h1>
-          <p className="type-body">按空间核对本次报价明细；仅展示数量不为空的工程项</p>
+          <h1 className="type-page-title">确认项目报价单</h1>
+          <p className="type-body">统一核对半包与主材明细；仅展示数量不为空的内容</p>
         </div>
         <Badge className="bg-primary-soft px-2 py-1 text-primary" variant="secondary">
           {quotation.projectAddress} · V{quotation.versionNumber} 草稿
@@ -89,7 +92,7 @@ export function SubmitQuotationPanel({
         <MetricCard label="已计价工程项" value={String(pricedItemCount)} />
         <MetricCard
           emphasized
-          label="半包销售金额"
+          label="项目报价金额"
           value={`¥${displayMoney(quotation.total)}`}
         />
         <MetricCard label="报价版本" value={`V${quotation.versionNumber} 草稿`} />
@@ -112,6 +115,13 @@ export function SubmitQuotationPanel({
           {spaces.map((scope) => (
             <SpaceSummaryCard key={scope.id} scope={scope} />
           ))}
+          <Card className="overflow-hidden border-border shadow-none">
+            <div className="flex items-center justify-between gap-4 px-4 py-[13px]">
+              <div className="grid gap-0.5"><strong className="type-entity">主材报价</strong><span className="type-support text-muted-foreground">{mainMaterial.lines.filter((line) => line.item).length} 项已选 · 主材库 V{mainMaterial.catalogVersion.versionNumber}</span></div>
+              <div className="grid text-right"><span className="type-support text-muted-foreground">主材合计</span><strong className="type-section-title">¥{displayMoney(mainMaterial.summary.total)}</strong></div>
+            </div>
+            <div className="border-t border-border px-4 py-3"><Button asChild size="sm" variant="outline"><Link href={`/projects/${quotation.projectId}/quotation/main-materials/preview`}>查看主材客户版明细</Link></Button></div>
+          </Card>
         </section>
 
         <aside className="submit-quotation-sidebar grid gap-3">
@@ -264,7 +274,7 @@ function PassedCheckCard({
             status="空间完整"
           />
           <ValidationRow label={`${pricedItemCount} 项数量与单价完整`} status="数据完整" />
-          <ValidationRow label="金额计算结果正常" status="计算通过" />
+          <ValidationRow label="半包与主材金额计算正常" status="计算通过" />
           <ValidationRow label="无异常工程项" last status="无阻断" />
         </div>
         {check.warningCount > 0 ? (
@@ -349,9 +359,9 @@ function BlockedCheckCard({
           ))}
         </div>
         <Button asChild className="w-full border-border" variant="outline">
-          <Link href={`/projects/${projectId}/quotation`}>
+          <Link href={blockers.some((item) => item.includes("主材型号")) ? `/projects/${projectId}/quotation/main-materials` : `/projects/${projectId}/quotation`}>
             <ArrowLeft />
-            返回半包报价修改
+            返回修改
           </Link>
         </Button>
         <InfoNotice>
@@ -378,7 +388,7 @@ function PassedSubmitCard({
       <CardContent className="grid gap-3 p-4 text-left">
         <strong className="type-section-title">本次生成</strong>
         <div className="grid gap-1">
-          <span className="type-support text-muted-foreground">半包销售金额</span>
+          <span className="type-support text-muted-foreground">项目报价金额</span>
           <strong className="type-key-amount">¥{displayMoney(total)}</strong>
         </div>
         <p className="type-support text-muted-foreground">
@@ -406,7 +416,7 @@ function BlockedSubmitCard({
       <CardContent className="grid gap-3 p-4 text-left">
         <strong className="type-section-title">本次生成</strong>
         <div className="grid gap-1">
-          <span className="type-support text-muted-foreground">半包销售金额</span>
+          <span className="type-support text-muted-foreground">项目报价金额</span>
           <strong className="type-key-amount">¥{displayMoney(total)}</strong>
         </div>
         <div className="flex items-center gap-2 rounded-[7px] bg-destructive-soft p-2.5 text-destructive">

@@ -12,6 +12,10 @@ import type {
   HalfPackageSubmissionCheck,
   HalfPackageSubmissionCheckResponse,
   LoginResponse,
+  MainMaterialQuotationResponse,
+  MainMaterialQuotationView,
+  PublishedMainMaterialCatalogResponse,
+  PublishedMainMaterialCatalogView,
   PublishedHalfPackageCatalogResponse,
   PublishedHalfPackageCatalogView,
   ProjectDetail,
@@ -108,6 +112,52 @@ export async function fetchPublishedCatalog(
   }
   const payload = (await response.json()) as PublishedHalfPackageCatalogResponse;
   return payload.catalog;
+}
+
+export async function fetchPublishedMainMaterialCatalog(
+  cookieHeader: string,
+  filters: { readonly category?: string; readonly query?: string; readonly spec?: string } = {},
+): Promise<PublishedMainMaterialCatalogView | null> {
+  const params = new URLSearchParams();
+  if (filters.category) params.set("category", filters.category);
+  if (filters.query) params.set("q", filters.query);
+  if (filters.spec) params.set("spec", filters.spec);
+  const response = await fetch(
+    `${apiUrl}/catalog/main-materials/published?${params}`,
+    { cache: "no-store", headers: { cookie: cookieHeader } },
+  );
+  if ([401, 403, 404].includes(response.status)) return null;
+  if (!response.ok) throw new Error(`Main material catalog request failed with status ${response.status}`);
+  return ((await response.json()) as PublishedMainMaterialCatalogResponse).catalog;
+}
+
+export async function fetchMainMaterialQuotation(
+  cookieHeader: string,
+  projectId: string,
+): Promise<MainMaterialQuotationView | null> {
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/main-material-quotation`,
+    { cache: "no-store", headers: { cookie: cookieHeader } },
+  );
+  if ([401, 403, 404, 409].includes(response.status)) return null;
+  if (!response.ok) throw new Error(`Main material quotation request failed with status ${response.status}`);
+  return ((await response.json()) as MainMaterialQuotationResponse).quotation;
+}
+
+export async function fetchMainMaterialQuotationVersion(
+  cookieHeader: string,
+  projectId: string,
+  quotationId: string,
+): Promise<MainMaterialQuotationView | null> {
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/main-material-quotation/versions/${quotationId}`,
+    { cache: "no-store", headers: { cookie: cookieHeader } },
+  );
+  if ([401, 403, 404].includes(response.status)) return null;
+  if (!response.ok) {
+    throw new Error(`Main material quotation version failed with status ${response.status}`);
+  }
+  return ((await response.json()) as MainMaterialQuotationResponse).quotation;
 }
 
 export async function fetchHalfPackageQuotation(

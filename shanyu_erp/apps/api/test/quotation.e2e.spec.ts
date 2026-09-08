@@ -1,7 +1,9 @@
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import type { ProjectDetail, SessionUser } from "@shanyu/contracts";
+import ExcelJS from "exceljs";
 import { randomUUID } from "node:crypto";
+import { PDFDocument, PDFName } from "pdf-lib";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -365,7 +367,7 @@ describe("half-package quotation HTTP interface", () => {
         fileName: string;
         sha256: string;
       };
-      expect(exported.fileName).toContain("半包报价");
+      expect(exported.fileName).toContain("项目报价");
       expect(exported.sha256).toHaveLength(64);
 
       const downloaded = await request(app.getHttpServer())
@@ -382,13 +384,48 @@ describe("half-package quotation HTTP interface", () => {
       expect(downloaded.body.subarray(0, expected.signature.length).toString()).toBe(
         expected.signature,
       );
+      if (expected.format === "PDF") {
+        expect(await exportedPdfSectionOrder(downloaded.body)).toEqual([
+          "COVER",
+          "BUDGET",
+          "HALF",
+          "MAIN",
+        ]);
+      } else {
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(
+          downloaded.body as unknown as Parameters<typeof workbook.xlsx.load>[0],
+        );
+        expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+          "封面",
+          "预算说明书",
+          "半包报价单",
+          "主材报价单",
+        ]);
+        expect(workbook.getWorksheet("封面")?.getCell("A4").text)
+          .toContain(project.projectAddress);
+        const summary = exportedQuotationSummary(
+          workbook.getWorksheet("半包报价单"),
+        );
+        expect(summary.map((row) => row.label)).toEqual([
+          "直接费",
+          "管理费",
+          "折扣和抹零",
+          "税金",
+          "总造价",
+        ]);
+        expect(summary.at(-2)?.amount).toBe(7.71);
+        expect(summary.at(-1)?.amount).toBe(136.29);
+        expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues())))
+          .not.toContain("成本");
+      }
 
       await request(app.getHttpServer())
         .get(exported.downloadPath)
         .expect(401);
     }
 
-  }, 30_000);
+  }, 120_000);
 
   async function login(account: string, password: string): Promise<string> {
     const response = await request(app.getHttpServer())
@@ -405,7 +442,7 @@ describe("half-package quotation HTTP interface", () => {
 
 describe("half-package quotation PostgreSQL concurrency", () => {
   it(
-    "creates exactly one complete V1 when ten first requests arrive concurrently",
+    "creates exactly one complete first version when ten first requests arrive concurrently",
     async () => {
       const moduleRef = await Test.createTestingModule({
         imports: [AppModule],
@@ -570,12 +607,54 @@ describe("half-package quotation PostgreSQL concurrency", () => {
             expect(body.versions[0]).toMatchObject({ versionNumber: 1 });
           });
 
+        const materialResponse = await request(realApp.getHttpServer())
+          .get(`/projects/${projectId}/main-material-quotation`)
+          .set("Cookie", cookie)
+          .expect(200);
+        const catalogResponse = await request(realApp.getHttpServer())
+          .get("/catalog/main-materials/published?category=TILE")
+          .set("Cookie", cookie)
+          .expect(200);
+        let materialQuotation = materialResponse.body.quotation as {
+          lines: Array<{
+            demandSpec: string;
+            id: string;
+            item: unknown;
+            origin: string;
+          }>;
+          revision: number;
+        };
+        const materialItems = catalogResponse.body.catalog.items as Array<{
+          colors: string[];
+          id: string;
+          spec: string;
+        }>;
+        for (const line of materialQuotation.lines.filter(
+          (candidate) => candidate.origin === "AUTO_TILE" && !candidate.item,
+        )) {
+          const item = materialItems.find(
+            (candidate) =>
+              normalizeMaterialSpec(candidate.spec) === normalizeMaterialSpec(line.demandSpec),
+          );
+          if (!item) throw new Error(`找不到兼容瓷砖：${line.demandSpec}`);
+          const selected = await request(realApp.getHttpServer())
+            .patch(`/projects/${projectId}/main-material-quotation/lines/${line.id}`)
+            .set("Cookie", cookie)
+            .send({
+              color: item.colors[0] ?? null,
+              expectedRevision: materialQuotation.revision,
+              itemVersionId: item.id,
+            })
+            .expect(200);
+          materialQuotation = selected.body.quotation;
+        }
+
         const first = quotations[0];
         if (!first) throw new Error("并发请求未返回报价");
         const quoted = await request(realApp.getHttpServer())
           .post(`/projects/${projectId}/half-package-quotation/submit`)
           .set("Cookie", cookie)
-          .send({ expectedRevision: recalculated.body.quotation.revision })
+          .send({ expectedRevision: materialQuotation.revision })
           .expect(201)
           .expect(({ body }) => {
             expect(body.quotation).toMatchObject({
@@ -946,4 +1025,35 @@ function bufferResponse(
   response.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
   response.on("end", () => callback(null, Buffer.concat(chunks)));
   response.on("error", callback);
+}
+
+function exportedQuotationSummary(
+  worksheet: ExcelJS.Worksheet | undefined,
+): Array<{ amount: number; label: string }> {
+  const rows: Array<{ amount: number; label: string }> = [];
+  worksheet?.eachRow((row) => {
+    const label = row.getCell(3).text;
+    if (!["直接费", "管理费", "折扣和抹零", "税金", "总造价"].includes(label)) {
+      return;
+    }
+    rows.push({ amount: Number(row.getCell(7).value), label });
+  });
+  return rows;
+}
+
+async function exportedPdfSectionOrder(payload: Buffer): Promise<string[]> {
+  const document = await PDFDocument.load(payload);
+  const sections = document.getPages().map((page) =>
+    page.node
+      .get(PDFName.of("ShanyuSection"))
+      ?.toString()
+      .replace(/^\(|\)$/g, "") ?? "",
+  );
+  return sections.filter(
+    (section, index) => section && section !== sections[index - 1],
+  );
+}
+
+function normalizeMaterialSpec(value: string): string {
+  return value.toLowerCase().replaceAll("×", "*").replaceAll("x", "*").replaceAll("mm", "").replaceAll(" ", "");
 }
