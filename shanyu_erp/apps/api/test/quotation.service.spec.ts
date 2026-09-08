@@ -10,12 +10,7 @@ import type {
   SessionUser,
 } from "@shanyu/contracts";
 import ExcelJS from "exceljs";
-import {
-  decodePDFRawStream,
-  PDFContentStream,
-  PDFDocument,
-  PDFRawStream,
-} from "pdf-lib";
+import { PDFDocument, PDFName } from "pdf-lib";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { AccessPolicy } from "../src/access/access.policy";
@@ -525,19 +520,52 @@ describe("QuotationService", () => {
     });
   });
 
-  it("exports before discount submission, blocks pending export, and exports after approval", async () => {
+  it("exports an undiscounted quote and blocks pending export", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const submitted = await service.submit(lead, project.id, draft.revision);
     await expect(
       service.decide(lead, submitted.id, "APPROVED", null),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
+    const quotedXlsx = await service.createExport(lead, submitted.id, "XLSX");
+    const quotedWorkbook = new ExcelJS.Workbook();
+    await quotedWorkbook.xlsx.load(
+      quotedXlsx.payload as unknown as Parameters<typeof quotedWorkbook.xlsx.load>[0],
+    );
+    expect(quotedWorkbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      "封面",
+      "预算说明书",
+      "半包报价单",
+      "主材报价单",
+    ]);
+    expect(quotationSummaryRows(quotedWorkbook.getWorksheet("半包报价单")))
+      .toEqual([
+        { amount: 20182.2, label: "直接费", number: "（1）" },
+        { amount: 2018.22, label: "管理费", number: "（2）" },
+        { amount: 1332.03, label: "税金", number: "（3）" },
+        { amount: 23532.45, label: "总造价", number: "（4）" },
+      ]);
+    const quotedHalfPackage = quotedWorkbook.getWorksheet("半包报价单");
+    const quotedManagementRow = quotationSummaryRowNumber(
+      quotedHalfPackage,
+      "管理费",
+    );
+    const quotedTaxRow = quotationSummaryRowNumber(quotedHalfPackage, "税金");
+    const quotedTotalRow = quotationSummaryRowNumber(quotedHalfPackage, "总造价");
+    expect(quotationSummaryRowNumber(quotedHalfPackage, "折扣和抹零")).toBe(0);
+    expect(quotedTaxRow).toBe(quotedManagementRow + 1);
+    expect(quotedTotalRow).toBe(quotedTaxRow + 1);
+    expect(quotedHalfPackage?.getRow(quotedTaxRow).hidden).toBe(false);
+
     const initialExport = await service.createExport(lead, submitted.id, "PDF");
     expect(initialExport).toMatchObject({ format: "PDF" });
     expect(initialExport.payload.subarray(0, 4).toString()).toBe("%PDF");
-    const pdfOperators = await decodedPdfOperators(initialExport.payload);
-    expect(pdfOperators).toMatch(/\/\S+ 11 Tf/);
-    expect(pdfOperators).toMatch(/\/\S+ 10 Tf/);
+    expect(await pdfSectionOrder(initialExport.payload)).toEqual([
+      "COVER",
+      "BUDGET",
+      "HALF",
+      "MAIN",
+    ]);
     const pending = await service.updateAdjustment(lead, submitted.id, {
       action: "SUBMIT_FOR_APPROVAL",
       discountRate: "1.0000",
@@ -556,7 +584,7 @@ describe("QuotationService", () => {
       null,
     );
     expect(approved.status).toBe("APPROVED");
-    const exported = await service.createExport(owner, approved.id, "XLSX");
+    const exported = quotedXlsx;
     expect(exported).toMatchObject({ format: "XLSX" });
     expect(exported.payload.subarray(0, 2).toString()).toBe("PK");
     expect(exported.sha256).toHaveLength(64);
@@ -565,7 +593,41 @@ describe("QuotationService", () => {
     await workbook.xlsx.load(
       customerExport.payload as unknown as Parameters<typeof workbook.xlsx.load>[0],
     );
-    const worksheet = workbook.getWorksheet("半包报价模板");
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      "封面",
+      "预算说明书",
+      "半包报价单",
+      "主材报价单",
+    ]);
+    const cover = workbook.getWorksheet("封面");
+    expect(cover?.getCell("A4").text).toContain(project.projectAddress);
+    expect(cover?.getCell("A4").text).not.toContain("金地天元鸣望-8-2-602");
+    expect(cover?.getImages()).toHaveLength(1);
+    expect(cover?.getCell("D4").master.address).toBe("A4");
+    expect(cover?.getRow(1).height).toBe(408);
+    expect([cover?.getColumn(1).width, cover?.getColumn(4).width]).toEqual([
+      112.625,
+      17.9134615384615,
+    ]);
+    expect(cover?.pageSetup.printArea).toBe("A1:D7");
+    expect(cover?.pageSetup.orientation).toBe("landscape");
+    expect([
+      cover?.pageSetup.fitToPage,
+      cover?.pageSetup.fitToWidth,
+      cover?.pageSetup.fitToHeight,
+    ]).toEqual([true, 1, 1]);
+    const budget = workbook.getWorksheet("预算说明书");
+    expect(budget?.getCell("B18").text).toContain("本报价未包含税金。");
+    expect(budget?.getCell("B2").master.address).toBe("A2");
+    expect(budget?.getRow(14).height).toBe(68);
+    expect(budget?.getColumn(2).width).toBe(151.576923076923);
+    expect(budget?.pageSetup.printArea).toBe("A1:B19");
+    expect([
+      budget?.pageSetup.fitToPage,
+      budget?.pageSetup.fitToWidth,
+      budget?.pageSetup.fitToHeight,
+    ]).toEqual([true, 1, 1]);
+    const worksheet = workbook.getWorksheet("半包报价单");
     expect(worksheet?.getCell("A1").value).toBe("基础报价明细表");
     expect(worksheet?.getCell("C2").value).toBe(project.customerName);
     expect(worksheet?.getCell("B4").master.address).toBe("A3");
@@ -608,13 +670,111 @@ describe("QuotationService", () => {
     ]);
     expect(worksheet?.getImages()).toHaveLength(1);
     expect(worksheet?.pageSetup.printArea).toMatch(/^A1:I\d+$/);
-    expect(JSON.stringify(worksheet?.getSheetValues())).toContain("【十三、工程汇总】");
-    expect(JSON.stringify(worksheet?.getSheetValues())).toContain("管理费");
+    expect(quotationSummaryRows(worksheet)).toEqual([
+      { amount: 20182.2, label: "直接费", number: "（1）" },
+      { amount: 2018.22, label: "管理费", number: "（2）" },
+      { amount: 1332.03, label: "税金", number: "（3）" },
+      { amount: 23532.45, label: "总造价", number: "（4）" },
+    ]);
     expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues()))).not.toContain("成本");
+    expect(workbookFormulaCells(workbook)).toEqual([]);
     await expect(
       service.getExport(unrelatedLead, exported.id),
     ).rejects.toBeInstanceOf(NotFoundException);
-  }, 30_000);
+  }, 60_000);
+
+  it.each([
+    {
+      discountRate: "0.9500",
+      expected: [
+        { amount: 20182.2, label: "直接费", number: "（1）" },
+        { amount: 2018.22, label: "管理费", number: "（2）" },
+        { amount: -1110.02, label: "折扣和抹零", number: "（3）" },
+        { amount: 1265.42, label: "税金", number: "（4）" },
+        { amount: 22355.82, label: "总造价", number: "（5）" },
+      ],
+      adjustmentRemark: "获批折扣率 95.00%，抹零 0.00 元。",
+      name: "已批准折扣",
+      writeOff: "0.0000",
+    },
+    {
+      discountRate: "1.0000",
+      expected: [
+        { amount: 20182.2, label: "直接费", number: "（1）" },
+        { amount: 2018.22, label: "管理费", number: "（2）" },
+        { amount: -100, label: "折扣和抹零", number: "（3）" },
+        { amount: 1326.03, label: "税金", number: "（4）" },
+        { amount: 23426.45, label: "总造价", number: "（5）" },
+      ],
+      adjustmentRemark: "获批折扣率 100.00%，抹零 100.00 元。",
+      name: "已批准抹零",
+      writeOff: "100.0000",
+    },
+    {
+      discountRate: "0.9500",
+      expected: [
+        { amount: 20182.2, label: "直接费", number: "（1）" },
+        { amount: 2018.22, label: "管理费", number: "（2）" },
+        { amount: -1210.02, label: "折扣和抹零", number: "（3）" },
+        { amount: 1259.42, label: "税金", number: "（4）" },
+        { amount: 22249.82, label: "总造价", number: "（5）" },
+      ],
+      adjustmentRemark: "获批折扣率 95.00%，抹零 100.00 元。",
+      name: "已批准折扣和抹零",
+      writeOff: "100.0000",
+    },
+  ])("为$name动态生成同一份 XLSX/PDF 汇总", async ({
+    adjustmentRemark,
+    discountRate,
+    expected,
+    writeOff,
+  }) => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const quoted = await service.submit(lead, project.id, draft.revision);
+    const pending = await service.updateAdjustment(lead, quoted.id, {
+      action: "SUBMIT_FOR_APPROVAL",
+      discountRate,
+      expectedRevision: quoted.revision,
+      reason: "客户确认优惠",
+      writeOff,
+    });
+    await expect(
+      service.createExport(lead, pending.id, "XLSX"),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const approved = await service.decide(owner, pending.id, "APPROVED", null);
+
+    const xlsx = await service.createExport(owner, approved.id, "XLSX");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      xlsx.payload as unknown as Parameters<typeof workbook.xlsx.load>[0],
+    );
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      "封面",
+      "预算说明书",
+      "半包报价单",
+      "主材报价单",
+    ]);
+    const halfPackage = workbook.getWorksheet("半包报价单");
+    expect(quotationSummaryRows(halfPackage)).toEqual(expected);
+    const taxRow = halfPackage?.findRow(
+      quotationSummaryRowNumber(halfPackage, "税金"),
+    );
+    const adjustmentRow = halfPackage?.findRow(
+      quotationSummaryRowNumber(halfPackage, "折扣和抹零"),
+    );
+    expect(adjustmentRow?.getCell(9).text).toBe(adjustmentRemark);
+    expect(taxRow?.getCell(9).text).toBe("固定为工程总价6%");
+    expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues())))
+      .not.toContain("成本");
+
+    const pdf = await service.createExport(owner, approved.id, "PDF");
+    expect(await pdfSectionOrder(pdf.payload)).toEqual([
+      "COVER",
+      "BUDGET",
+      "HALF",
+      "MAIN",
+    ]);
+  }, 60_000);
 
   it("requires a return reason and keeps pricing adjustments in the next editable version", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
@@ -961,23 +1121,58 @@ function quotationContent(quotation: {
   }));
 }
 
-async function decodedPdfOperators(payload: Buffer): Promise<string> {
+function quotationSummaryRows(
+  worksheet: ExcelJS.Worksheet | undefined,
+): Array<{ amount: number; label: string; number: string }> {
+  const rows: Array<{ amount: number; label: string; number: string }> = [];
+  worksheet?.eachRow((row) => {
+    const label = row.getCell(3).text;
+    if (!["直接费", "管理费", "折扣和抹零", "税金", "总造价"].includes(label)) {
+      return;
+    }
+    rows.push({
+      amount: Number(row.getCell(7).value),
+      label,
+      number: row.getCell(2).text,
+    });
+  });
+  return rows;
+}
+
+function quotationSummaryRowNumber(
+  worksheet: ExcelJS.Worksheet | undefined,
+  label: string,
+): number {
+  let rowNumber = 0;
+  worksheet?.eachRow((row) => {
+    if (row.getCell(3).text === label) rowNumber = row.number;
+  });
+  return rowNumber;
+}
+
+function workbookFormulaCells(workbook: ExcelJS.Workbook): string[] {
+  const cells: string[] = [];
+  workbook.worksheets.forEach((worksheet) => worksheet.eachRow((row) =>
+    row.eachCell((cell) => {
+      if (cell.type === ExcelJS.ValueType.Formula) {
+        cells.push(`${worksheet.name}!${cell.address}`);
+      }
+    }),
+  ));
+  return cells;
+}
+
+async function pdfSectionOrder(payload: Buffer): Promise<string[]> {
   const document = await PDFDocument.load(payload);
-  const contents = document.getPages()[0]?.node.normalizedEntries().Contents;
-  if (!contents) return "";
-  return contents
-    .asArray()
-    .map((entry) => document.context.lookup(entry))
-    .map((stream) => {
-      if (stream instanceof PDFRawStream) {
-        return Buffer.from(decodePDFRawStream(stream).decode()).toString();
-      }
-      if (stream instanceof PDFContentStream) {
-        return Buffer.from(stream.getUnencodedContents()).toString();
-      }
-      return "";
-    })
-    .join("\n");
+  const sections = document.getPages().map((page) =>
+    page.node
+      .get(PDFName.of("ShanyuSection"))
+      ?.toString()
+      .replace(/^\(|\)$/g, "") ?? "",
+  );
+  return sections.filter(
+    (section, index) => section && section !== sections[index - 1],
+  );
 }
 
 const owner: SessionUser = {

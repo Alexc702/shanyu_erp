@@ -1,7 +1,9 @@
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import type { ProjectDetail, SessionUser } from "@shanyu/contracts";
+import ExcelJS from "exceljs";
 import { randomUUID } from "node:crypto";
+import { PDFDocument, PDFName } from "pdf-lib";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -365,7 +367,7 @@ describe("half-package quotation HTTP interface", () => {
         fileName: string;
         sha256: string;
       };
-      expect(exported.fileName).toContain("半包报价");
+      expect(exported.fileName).toContain("项目报价");
       expect(exported.sha256).toHaveLength(64);
 
       const downloaded = await request(app.getHttpServer())
@@ -382,13 +384,48 @@ describe("half-package quotation HTTP interface", () => {
       expect(downloaded.body.subarray(0, expected.signature.length).toString()).toBe(
         expected.signature,
       );
+      if (expected.format === "PDF") {
+        expect(await exportedPdfSectionOrder(downloaded.body)).toEqual([
+          "COVER",
+          "BUDGET",
+          "HALF",
+          "MAIN",
+        ]);
+      } else {
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(
+          downloaded.body as unknown as Parameters<typeof workbook.xlsx.load>[0],
+        );
+        expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+          "封面",
+          "预算说明书",
+          "半包报价单",
+          "主材报价单",
+        ]);
+        expect(workbook.getWorksheet("封面")?.getCell("A4").text)
+          .toContain(project.projectAddress);
+        const summary = exportedQuotationSummary(
+          workbook.getWorksheet("半包报价单"),
+        );
+        expect(summary.map((row) => row.label)).toEqual([
+          "直接费",
+          "管理费",
+          "折扣和抹零",
+          "税金",
+          "总造价",
+        ]);
+        expect(summary.at(-2)?.amount).toBe(7.71);
+        expect(summary.at(-1)?.amount).toBe(136.29);
+        expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues())))
+          .not.toContain("成本");
+      }
 
       await request(app.getHttpServer())
         .get(exported.downloadPath)
         .expect(401);
     }
 
-  }, 30_000);
+  }, 120_000);
 
   async function login(account: string, password: string): Promise<string> {
     const response = await request(app.getHttpServer())
@@ -946,4 +983,31 @@ function bufferResponse(
   response.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
   response.on("end", () => callback(null, Buffer.concat(chunks)));
   response.on("error", callback);
+}
+
+function exportedQuotationSummary(
+  worksheet: ExcelJS.Worksheet | undefined,
+): Array<{ amount: number; label: string }> {
+  const rows: Array<{ amount: number; label: string }> = [];
+  worksheet?.eachRow((row) => {
+    const label = row.getCell(3).text;
+    if (!["直接费", "管理费", "折扣和抹零", "税金", "总造价"].includes(label)) {
+      return;
+    }
+    rows.push({ amount: Number(row.getCell(7).value), label });
+  });
+  return rows;
+}
+
+async function exportedPdfSectionOrder(payload: Buffer): Promise<string[]> {
+  const document = await PDFDocument.load(payload);
+  const sections = document.getPages().map((page) =>
+    page.node
+      .get(PDFName.of("ShanyuSection"))
+      ?.toString()
+      .replace(/^\(|\)$/g, "") ?? "",
+  );
+  return sections.filter(
+    (section, index) => section && section !== sections[index - 1],
+  );
 }
