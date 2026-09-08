@@ -20,6 +20,7 @@ import {
 } from "../project/projects.repository";
 import type { QuantityRule } from "./half-package-calculator";
 import {
+  type ConfirmedQuotationAdjustment,
   type NewQuotationDraft,
   type NewQuotationExport,
   type QuotationDraft,
@@ -60,20 +61,26 @@ interface TemplateItemRow {
 }
 
 interface QuotationRow {
-  building_area: string;
+  adjustment_reason: string | null;
+  adjustment_status: QuotationDraft["adjustmentStatus"];
+  adjusted_total: string;
   cost_template_version_id: string;
   cost_template_version_number: number;
   created_by_user_id: string;
   direct_cost: string;
+  discount_rate: string;
   expected_cost: string;
   gross_margin_rate: string | null;
   gross_profit: string;
   id: string;
+  is_current: boolean;
   management_fee: string;
   management_rate: string;
+  margin_benchmark_rate: string;
   parent_version_id: string | null;
   project_id: string;
-  project_name: string;
+  outer_frame_area: string;
+  project_address: string;
   quantity_rule_version_id: string;
   revision: number;
   status: QuotationStatus;
@@ -87,6 +94,7 @@ interface QuotationRow {
   template_version_number: number;
   total: string;
   version_number: number;
+  write_off: string;
 }
 
 interface ExportRow {
@@ -256,7 +264,7 @@ export class PgQuotationRepository implements QuotationRepository {
   async findDraft(projectId: string): Promise<QuotationDraft | null> {
     const result = await this.database.query<QuotationRow>(
       `${quotationSelect}
-        WHERE q.project_id = $1 AND q.status = 'DRAFT'`,
+        WHERE q.project_id = $1 AND q.status = 'DRAFT' AND q.is_current`,
       [projectId],
     );
     return result.rows[0]
@@ -267,7 +275,7 @@ export class PgQuotationRepository implements QuotationRepository {
   async findLatest(projectId: string): Promise<QuotationDraft | null> {
     const result = await this.database.query<QuotationRow>(
       `${quotationSelect}
-        WHERE q.project_id = $1
+        WHERE q.project_id = $1 AND q.is_current
         ORDER BY q.version_number DESC
         LIMIT 1`,
       [projectId],
@@ -299,10 +307,12 @@ export class PgQuotationRepository implements QuotationRepository {
     );
   }
 
-  async listPendingApproval(): Promise<readonly QuotationDraft[]> {
+  async listQuoted(): Promise<readonly QuotationDraft[]> {
     const result = await this.database.query<QuotationRow>(
       `${quotationSelect}
-        WHERE q.status = 'PENDING_APPROVAL'
+        WHERE q.status = 'QUOTED'
+          AND q.adjustment_status = 'PENDING_APPROVAL'
+          AND q.is_current
         ORDER BY q.submitted_at DESC, q.id`,
     );
     return Promise.all(
@@ -318,7 +328,7 @@ export class PgQuotationRepository implements QuotationRepository {
       const existing = await database.query(
         `SELECT id
            FROM half_package_quotations
-          WHERE project_id = $1 AND status = 'DRAFT'`,
+          WHERE project_id = $1 AND is_current`,
         [input.projectId],
       );
       if (existing.rowCount !== 0) {
@@ -327,11 +337,13 @@ export class PgQuotationRepository implements QuotationRepository {
       const inserted = await database.query(
         `INSERT INTO half_package_quotations
            (id, project_id, version_number, status, template_version_id,
-            cost_template_version_id, quantity_rule_version_id, building_area,
+            cost_template_version_id, quantity_rule_version_id, outer_frame_area,
             management_rate, direct_cost, expected_cost, gross_profit,
-            gross_margin_rate, management_fee, total, revision, created_by_user_id)
+            gross_margin_rate, management_fee, total, adjusted_total,
+            discount_rate, write_off, revision, created_by_user_id,
+            project_address, is_current)
          VALUES ($1, $2, $3, 'DRAFT', $4, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, $15, $16)
+                 $12, $13, $14, $15, $16, $17, $18, $19, $20, true)
          ON CONFLICT ON CONSTRAINT half_package_quotations_version
          DO NOTHING
          RETURNING id`,
@@ -342,7 +354,7 @@ export class PgQuotationRepository implements QuotationRepository {
           input.templateVersionId,
           input.costTemplateVersionId,
           input.ruleVersionId,
-          input.buildingArea,
+          input.outerFrameArea,
           input.managementRate,
           input.directCost,
           input.expectedCost,
@@ -350,8 +362,12 @@ export class PgQuotationRepository implements QuotationRepository {
           input.grossMarginRate,
           input.managementFee,
           input.total,
+          input.adjustedTotal,
+          input.discountRate,
+          input.writeOff,
           input.revision,
           input.createdByUserId,
+          input.projectAddress,
         ],
       );
       if (inserted.rowCount !== 1) {
@@ -386,9 +402,10 @@ export class PgQuotationRepository implements QuotationRepository {
         `UPDATE half_package_quotations
             SET direct_cost = $3, expected_cost = $4, gross_profit = $5,
                 gross_margin_rate = $6, management_fee = $7, total = $8,
-                revision = $9, updated_at = current_timestamp
+                adjusted_total = $9, revision = $10,
+                updated_at = current_timestamp
           WHERE id = $1 AND project_id = $2 AND status = 'DRAFT'
-            AND revision = $10`,
+            AND is_current AND revision = $11`,
         [
           input.id,
           input.projectId,
@@ -398,6 +415,7 @@ export class PgQuotationRepository implements QuotationRepository {
           input.grossMarginRate,
           input.managementFee,
           input.total,
+          input.adjustedTotal,
           input.revision,
           expectedRevision,
         ],
@@ -425,9 +443,10 @@ export class PgQuotationRepository implements QuotationRepository {
         `UPDATE half_package_quotations
             SET direct_cost = $3, expected_cost = $4, gross_profit = $5,
                 gross_margin_rate = $6, management_fee = $7, total = $8,
-                revision = $9, updated_at = current_timestamp
+                adjusted_total = $9, revision = $10,
+                updated_at = current_timestamp
           WHERE id = $1 AND project_id = $2 AND status = 'DRAFT'
-            AND revision = $10`,
+            AND is_current AND revision = $11`,
         [
           input.id,
           input.projectId,
@@ -437,6 +456,7 @@ export class PgQuotationRepository implements QuotationRepository {
           input.grossMarginRate,
           input.managementFee,
           input.total,
+          input.adjustedTotal,
           input.revision,
           expectedRevision,
         ],
@@ -495,6 +515,65 @@ export class PgQuotationRepository implements QuotationRepository {
     return saved;
   }
 
+  async saveAdjustment(
+    quotationId: string,
+    discountRate: string,
+    writeOff: string,
+    adjustedTotal: string,
+    grossProfit: string,
+    grossMarginRate: string | null,
+    actorUserId: string,
+    reason: string | null,
+    expectedRevision: number,
+  ): Promise<QuotationDraft> {
+    const updated = await this.database.query(
+      `UPDATE half_package_quotations
+          SET discount_rate = $2, write_off = $3, adjusted_total = $4,
+              gross_profit = $5, gross_margin_rate = $6,
+              adjustment_status = 'PENDING_APPROVAL',
+              adjustment_reason = $7,
+              adjustment_submitted_by_user_id = $8,
+              adjustment_submitted_at = current_timestamp,
+              revision = revision + 1, updated_at = current_timestamp
+        WHERE id = $1 AND status = 'QUOTED' AND is_current
+          AND adjustment_status = 'AWAITING_SUBMISSION'
+          AND revision = $9`,
+      [
+        quotationId,
+        discountRate,
+        writeOff,
+        adjustedTotal,
+        grossProfit,
+        grossMarginRate,
+        reason,
+        actorUserId,
+        expectedRevision,
+      ],
+    );
+    if (updated.rowCount !== 1) throw new QuotationRevisionConflictError();
+    const saved = await this.findById(quotationId);
+    if (!saved) throw new Error("保存折扣与抹零后无法读取报价");
+    return saved;
+  }
+
+  async updateMarginBenchmarkRate(
+    quotationId: string,
+    marginBenchmarkRate: string,
+  ): Promise<QuotationDraft> {
+    const updated = await this.database.query(
+      `UPDATE half_package_quotations
+          SET margin_benchmark_rate = $2, updated_at = current_timestamp
+        WHERE id = $1`,
+      [quotationId, marginBenchmarkRate],
+    );
+    if (updated.rowCount !== 1) {
+      throw new QuotationRevisionConflictError();
+    }
+    const saved = await this.findById(quotationId);
+    if (!saved) throw new Error("保存基准毛利率后无法读取报价");
+    return saved;
+  }
+
   async submitDraft(
     quotationId: string,
     actorUserId: string,
@@ -503,19 +582,20 @@ export class PgQuotationRepository implements QuotationRepository {
     await this.database.transaction(async (database) => {
       const updated = await database.query(
         `UPDATE half_package_quotations
-            SET status = 'PENDING_APPROVAL', submitted_by_user_id = $2,
+            SET status = 'QUOTED', submitted_by_user_id = $2,
                 submitted_at = current_timestamp, updated_at = current_timestamp
-          WHERE id = $1 AND status = 'DRAFT' AND revision = $3`,
+          WHERE id = $1 AND status = 'DRAFT' AND is_current
+            AND revision = $3`,
         [quotationId, actorUserId, expectedRevision],
       );
       if (updated.rowCount !== 1) {
         throw new QuotationRevisionConflictError();
       }
-      await insertDecision(database, quotationId, actorUserId, "SUBMITTED", null);
+      await insertDecision(database, quotationId, actorUserId, "QUOTED", null);
     });
     const submitted = await this.findById(quotationId);
     if (!submitted) {
-      throw new Error("提交半包报价后无法读取结果");
+      throw new Error("确认生成半包报价单后无法读取结果");
     }
     return submitted;
   }
@@ -525,54 +605,140 @@ export class PgQuotationRepository implements QuotationRepository {
     actorUserId: string,
     action: QuotationDecisionAction,
     reason: string | null,
+    adjustment?: ConfirmedQuotationAdjustment,
   ): Promise<QuotationDraft> {
-    await this.database.transaction(async (database) => {
-      const target = await database.query<{ project_id: string }>(
-        `SELECT project_id FROM half_package_quotations
-          WHERE id = $1 AND status = 'PENDING_APPROVAL'
-          FOR UPDATE`,
-        [quotationId],
+    const resultId = await this.database.transaction(async (database) => {
+      const target = await database.query<QuotationRow>(
+        `${quotationSelect}
+          WHERE q.id = $1 AND q.is_current
+            AND (
+              (q.status = 'QUOTED' AND q.adjustment_status = 'PENDING_APPROVAL')
+              OR (q.status = 'QUOTED' AND $2 = 'APPROVED' AND $3::boolean)
+              OR (q.status = 'APPROVED' AND $2 = 'RETURNED')
+            )
+          FOR UPDATE OF q`,
+        [quotationId, action, Boolean(adjustment)],
       );
-      const projectId = target.rows[0]?.project_id;
-      if (!projectId) {
-        throw new QuotationRevisionConflictError();
-      }
-      if (action === "APPROVED" || action === "SPECIAL_APPROVED") {
-        await database.query(
+      const row = target.rows[0];
+      if (!row) throw new QuotationRevisionConflictError();
+      let source = await this.hydrateDraft(database, row);
+      if (adjustment) {
+        if (
+          source.status !== "QUOTED" ||
+          source.adjustmentStatus !== "AWAITING_SUBMISSION" ||
+          source.revision !== adjustment.expectedRevision
+        ) {
+          throw new QuotationRevisionConflictError();
+        }
+        const adjusted = await database.query(
           `UPDATE half_package_quotations
-              SET status = 'SUPERSEDED', updated_at = current_timestamp
-            WHERE project_id = $1 AND status = 'APPROVED'`,
-          [projectId],
+              SET discount_rate = $2, write_off = $3, adjusted_total = $4,
+                  gross_profit = $5, gross_margin_rate = $6,
+                  adjustment_status = 'CONFIRMED', adjustment_reason = $7,
+                  adjustment_submitted_by_user_id = $8,
+                  adjustment_submitted_at = current_timestamp,
+                  revision = revision + 1, updated_at = current_timestamp
+            WHERE id = $1 AND is_current AND status = 'QUOTED'
+              AND adjustment_status = 'AWAITING_SUBMISSION'
+              AND revision = $9`,
+          [
+            source.id,
+            adjustment.discountRate,
+            adjustment.writeOff,
+            adjustment.adjustedTotal,
+            adjustment.grossProfit,
+            adjustment.grossMarginRate,
+            adjustment.reason,
+            actorUserId,
+            adjustment.expectedRevision,
+          ],
         );
+        if (adjusted.rowCount !== 1) throw new QuotationRevisionConflictError();
+        source = {
+          ...source,
+          adjustedTotal: adjustment.adjustedTotal,
+          adjustmentReason: adjustment.reason,
+          adjustmentStatus: "CONFIRMED",
+          discountRate: adjustment.discountRate,
+          grossMarginRate: adjustment.grossMarginRate,
+          grossProfit: adjustment.grossProfit,
+          revision: source.revision + 1,
+          writeOff: adjustment.writeOff,
+        };
       }
+      const nextVersion = source.versionNumber + 1;
+      const cloned = cloneAsVersion(source, actorUserId, nextVersion, true);
+      await database.query(
+        `UPDATE half_package_quotations
+            SET is_current = false, updated_at = current_timestamp
+          WHERE id = $1 AND is_current`,
+        [source.id],
+      );
+      await insertDraft(database, cloned);
       const status = action === "RETURNED" ? "RETURNED" : "APPROVED";
       const updated = await database.query(
         `UPDATE half_package_quotations
-            SET status = $2, decided_by_user_id = $3,
-                decided_at = current_timestamp, decision_action = $4,
-                decision_reason = $5, updated_at = current_timestamp
-          WHERE id = $1 AND status = 'PENDING_APPROVAL'`,
-        [quotationId, status, actorUserId, action, reason],
+            SET status = $2, submitted_by_user_id = $3,
+                submitted_at = coalesce($4, current_timestamp),
+                decided_by_user_id = $3, decided_at = current_timestamp,
+                decision_action = $5, decision_reason = $6,
+                adjustment_status = $7,
+                updated_at = current_timestamp
+          WHERE id = $1 AND status = 'DRAFT' AND is_current`,
+        [
+          cloned.id,
+          status,
+          actorUserId,
+          source.submittedAt,
+          action,
+          reason,
+          action === "RETURNED" ? "AWAITING_SUBMISSION" : "CONFIRMED",
+        ],
       );
-      if (updated.rowCount !== 1) {
-        throw new QuotationRevisionConflictError();
-      }
-      await insertDecision(database, quotationId, actorUserId, action, reason);
+      if (updated.rowCount !== 1) throw new QuotationRevisionConflictError();
+      await insertDecision(database, cloned.id, actorUserId, action, reason);
+      return cloned.id;
     });
-    const decided = await this.findById(quotationId);
+    const decided = await this.findById(resultId);
     if (!decided) {
       throw new Error("审批半包报价后无法读取结果");
     }
     return decided;
   }
 
-  async createDraftFromVersion(
+  async continueEditing(
     source: QuotationDraft,
     actorUserId: string,
   ): Promise<QuotationDraft> {
-    const versions = await this.listByProject(source.projectId);
-    const nextVersion = Math.max(0, ...versions.map((item) => item.versionNumber)) + 1;
-    return this.createDraft(cloneAsDraft(source, actorUserId, nextVersion));
+    const draftId = await this.database.transaction(async (database) => {
+      const locked = await database.query<QuotationRow>(
+        `${quotationSelect}
+          WHERE q.id = $1 AND q.project_id = $2 AND q.is_current
+            AND q.status IN ('QUOTED', 'RETURNED')
+          FOR UPDATE OF q`,
+        [source.id, source.projectId],
+      );
+      const row = locked.rows[0];
+      if (!row) throw new QuotationRevisionConflictError();
+      const lockedSource = await this.hydrateDraft(database, row);
+      const cloned = cloneAsVersion(
+        lockedSource,
+        actorUserId,
+        lockedSource.versionNumber + 1,
+        lockedSource.status === "RETURNED",
+      );
+      await database.query(
+        `UPDATE half_package_quotations
+            SET is_current = false, updated_at = current_timestamp
+          WHERE id = $1 AND is_current`,
+        [lockedSource.id],
+      );
+      await insertDraft(database, cloned);
+      return cloned.id;
+    });
+    const draft = await this.findById(draftId);
+    if (!draft) throw new Error("继续编辑后无法读取新草稿");
+    return draft;
   }
 
   async createExport(input: NewQuotationExport): Promise<QuotationExport> {
@@ -648,20 +814,26 @@ export class PgQuotationRepository implements QuotationRepository {
       [row.id],
     );
     return {
-      buildingArea: row.building_area,
+      adjustmentReason: row.adjustment_reason,
+      adjustmentStatus: row.adjustment_status,
+      adjustedTotal: row.adjusted_total,
       costTemplateVersionId: row.cost_template_version_id,
       costTemplateVersionNumber: row.cost_template_version_number,
       createdByUserId: row.created_by_user_id,
       directCost: row.direct_cost,
+      discountRate: row.discount_rate,
       expectedCost: row.expected_cost,
       grossMarginRate: row.gross_margin_rate,
       grossProfit: row.gross_profit,
       id: row.id,
+      isCurrent: row.is_current,
       managementFee: row.management_fee,
       managementRate: row.management_rate,
+      marginBenchmarkRate: row.margin_benchmark_rate,
       parentVersionId: row.parent_version_id,
       projectId: row.project_id,
-      projectName: row.project_name,
+      outerFrameArea: row.outer_frame_area,
+      projectAddress: row.project_address,
       revision: row.revision,
       ruleVersionId: row.quantity_rule_version_id,
       scopes: scopeResult.rows.map((scope) => ({
@@ -692,7 +864,56 @@ export class PgQuotationRepository implements QuotationRepository {
       templateVersionNumber: row.template_version_number,
       total: row.total,
       versionNumber: row.version_number,
+      writeOff: row.write_off,
     };
+  }
+}
+
+async function insertDraft(
+  database: DatabaseExecutor,
+  input: QuotationDraft,
+): Promise<void> {
+  await database.query(
+    `INSERT INTO half_package_quotations
+       (id, project_id, version_number, status, template_version_id,
+        cost_template_version_id, quantity_rule_version_id, outer_frame_area,
+        management_rate, direct_cost, expected_cost, gross_profit,
+        gross_margin_rate, management_fee, total, adjusted_total,
+        discount_rate, write_off, revision, created_by_user_id,
+        project_address, is_current, parent_version_id, adjustment_status,
+        adjustment_reason, margin_benchmark_rate)
+     VALUES ($1, $2, $3, 'DRAFT', $4, $5, $6, $7, $8, $9, $10, $11,
+             $12, $13, $14, $15, $16, $17, $18, $19, $20, true, $21, $22,
+             $23, $24)`,
+    [
+      input.id,
+      input.projectId,
+      input.versionNumber,
+      input.templateVersionId,
+      input.costTemplateVersionId,
+      input.ruleVersionId,
+      input.outerFrameArea,
+      input.managementRate,
+      input.directCost,
+      input.expectedCost,
+      input.grossProfit,
+      input.grossMarginRate,
+      input.managementFee,
+      input.total,
+      input.adjustedTotal,
+      input.discountRate,
+      input.writeOff,
+      input.revision,
+      input.createdByUserId,
+      input.projectAddress,
+      input.parentVersionId,
+      input.adjustmentStatus,
+      input.adjustmentReason,
+      input.marginBenchmarkRate,
+    ],
+  );
+  for (const scope of input.scopes) {
+    await insertScope(database, input.id, scope);
   }
 }
 
@@ -814,11 +1035,15 @@ function requiredReference(row: LineRow): string {
   return row.referenced_line_id;
 }
 
+function formatRate(numerator: number, denominator: number): string | null {
+  return denominator === 0 ? null : (numerator / denominator).toFixed(4);
+}
+
 async function insertDecision(
   database: DatabaseExecutor,
   quotationId: string,
   actorUserId: string,
-  action: "SUBMITTED" | QuotationDecisionAction,
+  action: "QUOTED" | QuotationDecisionAction,
   reason: string | null,
 ): Promise<void> {
   await database.query(
@@ -829,10 +1054,11 @@ async function insertDecision(
   );
 }
 
-function cloneAsDraft(
+function cloneAsVersion(
   source: QuotationDraft,
   actorUserId: string,
   versionNumber: number,
+  preserveAdjustment = false,
 ): QuotationDraft {
   const lineIds = new Map<string, string>();
   for (const line of source.scopes.flatMap((scope) => scope.lines)) {
@@ -840,12 +1066,18 @@ function cloneAsDraft(
   }
   return {
     ...source,
+    adjustedTotal: preserveAdjustment ? source.adjustedTotal : source.total,
+    adjustmentReason: preserveAdjustment ? source.adjustmentReason : null,
+    adjustmentStatus: preserveAdjustment
+      ? source.adjustmentStatus
+      : "AWAITING_SUBMISSION",
     createdByUserId: actorUserId,
     decidedAt: null,
     decidedByUserId: null,
     decisionAction: null,
     decisionReason: null,
     id: randomUUID(),
+    isCurrent: true,
     parentVersionId: source.id,
     revision: 0,
     scopes: source.scopes.map((scope) => ({
@@ -869,10 +1101,24 @@ function cloneAsDraft(
     submittedAt: null,
     submittedByUserId: null,
     versionNumber,
+    discountRate: preserveAdjustment ? source.discountRate : "1.0000",
+    grossMarginRate: preserveAdjustment
+      ? source.grossMarginRate
+      : source.total === "0.0000"
+        ? null
+        : formatRate(
+            Number(source.total) - Number(source.expectedCost),
+            Number(source.total),
+          ),
+    grossProfit: preserveAdjustment
+      ? source.grossProfit
+      : (Number(source.total) - Number(source.expectedCost)).toFixed(4),
+    writeOff: preserveAdjustment ? source.writeOff : "0.0000",
   };
 }
 
-const quotationSelect = `SELECT q.id, q.project_id, p.name AS project_name,
+const quotationSelect = `SELECT q.id, q.project_id, q.project_address,
+                                 q.adjustment_status, q.adjustment_reason,
                                  q.version_number, q.status,
                                  q.parent_version_id, q.submitted_by_user_id,
                                  q.submitted_at, q.decided_by_user_id,
@@ -881,13 +1127,15 @@ const quotationSelect = `SELECT q.id, q.project_id, p.name AS project_name,
                                  tv.version_number AS template_version_number,
                                  q.cost_template_version_id,
                                  ctv.version_number AS cost_template_version_number,
-                                 q.quantity_rule_version_id, q.building_area,
+                                 q.quantity_rule_version_id, q.outer_frame_area,
                                  q.management_rate, q.direct_cost, q.expected_cost,
+                                 q.margin_benchmark_rate,
                                  q.gross_profit, q.gross_margin_rate,
-                                 q.management_fee, q.total, q.revision,
+                                 q.management_fee, q.total, q.adjusted_total,
+                                 q.discount_rate, q.write_off, q.is_current,
+                                 q.revision,
                                  q.created_by_user_id
                             FROM half_package_quotations q
-                            JOIN projects p ON p.id = q.project_id
                             JOIN half_package_template_versions tv
                               ON tv.id = q.template_version_id
                             JOIN half_package_template_versions ctv

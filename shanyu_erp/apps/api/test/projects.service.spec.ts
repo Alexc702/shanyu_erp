@@ -45,11 +45,10 @@ describe("ProjectsService", () => {
 
   it("lets the owner create a project with normalized unique spaces", async () => {
     const project = await service.create(owner, {
-      address: "上海市静安区测试路 1 号",
-      buildingArea: "130.0000",
+      outerFrameArea: "130.00",
       customerName: "林先生",
       leadDesignerId: lead.id,
-      name: "静悦府",
+      projectAddress: "上海市静安区测试路 1 号",
       spaces: [
         space(" 客餐厅 ", "LIVING_DINING", true),
         space("主卧", "BEDROOM"),
@@ -59,7 +58,8 @@ describe("ProjectsService", () => {
     expect(project).toMatchObject({
       customerName: "林先生",
       leadDesigner: { id: lead.id },
-      name: "静悦府",
+      outerFrameArea: "130.00",
+      projectAddress: "上海市静安区测试路 1 号",
       spaces: [
         { displayName: "客餐厅", includesBalcony: true, sortOrder: 0 },
         { displayName: "主卧", includesBalcony: false, sortOrder: 1 },
@@ -78,11 +78,10 @@ describe("ProjectsService", () => {
 
   it("gives the administrator the owner project scope", async () => {
     await service.create(administrator, {
-      address: "地址",
-      buildingArea: "100",
+      outerFrameArea: "100",
       customerName: "客户",
       leadDesignerId: lead.id,
-      name: "管理员创建项目",
+      projectAddress: "管理员创建项目",
       spaces: [space("主卧", "BEDROOM")],
     });
 
@@ -92,11 +91,10 @@ describe("ProjectsService", () => {
 
   it("保留衣帽间的独立空间类型", async () => {
     const project = await service.create(owner, {
-      address: "地址",
-      buildingArea: "100",
+      outerFrameArea: "100",
       customerName: "客户",
       leadDesignerId: lead.id,
-      name: "项目",
+      projectAddress: "项目地址",
       spaces: [space("衣帽间", "CLOSET")],
     });
 
@@ -108,22 +106,20 @@ describe("ProjectsService", () => {
   it("only lets a lead create a project for themselves", async () => {
     await expect(
       service.create(lead, {
-        address: "地址",
-        buildingArea: "100",
+        outerFrameArea: "100",
         customerName: "客户",
         leadDesignerId: "another-lead",
-        name: "项目",
+        projectAddress: "项目地址",
         spaces: [space("主卧", "BEDROOM")],
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     await expect(
       service.create(woodwork, {
-        address: "地址",
-        buildingArea: "100",
+        outerFrameArea: "100",
         customerName: "客户",
         leadDesignerId: lead.id,
-        name: "项目",
+        projectAddress: "项目地址",
         spaces: [space("主卧", "BEDROOM")],
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -131,11 +127,10 @@ describe("ProjectsService", () => {
 
   it("rejects invalid, duplicate, or invented space semantics", async () => {
     const base = {
-      address: "地址",
-      buildingArea: "100",
+      outerFrameArea: "100",
       customerName: "客户",
       leadDesignerId: lead.id,
-      name: "项目",
+      projectAddress: "项目地址",
     };
 
     await expect(
@@ -158,13 +153,36 @@ describe("ProjectsService", () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it("requires confirmation before adding a standalone balcony", async () => {
-    const project = await service.create(owner, {
-      address: "地址",
-      buildingArea: "100",
+  it("enforces the new project customer and outer-frame-area limits", async () => {
+    const base = {
       customerName: "客户",
       leadDesignerId: lead.id,
-      name: "项目",
+      outerFrameArea: "130.00",
+      projectAddress: "项目地址",
+      spaces: [space("主卧", "BEDROOM")],
+    };
+
+    await expect(
+      service.create(owner, { ...base, customerName: "一二三四五六七八九十一" }),
+    ).rejects.toThrow("客户名称最多 10 个中文或 20 个英文字符");
+    await expect(
+      service.create(owner, { ...base, customerName: "abcdefghijklmnopqrstu" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.create(owner, { ...base, outerFrameArea: "123456.78" }),
+    ).rejects.toThrow("外框面积最多 5 位整数并保留 2 位小数");
+    await expect(service.create(owner, base)).resolves.toMatchObject({
+      customerName: "客户",
+      outerFrameArea: "130.00",
+    });
+  });
+
+  it("requires confirmation before adding a standalone balcony", async () => {
+    const project = await service.create(owner, {
+      outerFrameArea: "100",
+      customerName: "客户",
+      leadDesignerId: lead.id,
+      projectAddress: "项目地址",
       spaces: [space("客餐厅", "LIVING_DINING", true)],
     });
 
@@ -190,11 +208,10 @@ describe("ProjectsService", () => {
 
   it("updates one-to-six-character names and prevents deleting the last space", async () => {
     const project = await service.create(owner, {
-      address: "地址",
-      buildingArea: "100",
+      outerFrameArea: "100",
       customerName: "客户",
       leadDesignerId: lead.id,
-      name: "项目",
+      projectAddress: "项目地址",
       spaces: [space("主卧", "BEDROOM"), space("次卧", "BEDROOM")],
     });
     const firstSpace = project.spaces[0];
@@ -231,11 +248,10 @@ describe("ProjectsService", () => {
 
   it("only adjusts spaces while the current quotation is a draft", async () => {
     const project = await service.create(owner, {
-      address: "地址",
-      buildingArea: "100",
+      outerFrameArea: "100",
       customerName: "客户",
       leadDesignerId: lead.id,
-      name: "项目",
+      projectAddress: "项目地址",
       spaces: [space("主卧", "BEDROOM"), space("次卧", "BEDROOM")],
     });
     repository.spaceAdjustmentState = "LOCKED";
@@ -262,11 +278,10 @@ describe("ProjectsService", () => {
 
   it("deletes a draft space and records the audit event", async () => {
     const project = await service.create(owner, {
-      address: "地址",
-      buildingArea: "100",
+      outerFrameArea: "100",
       customerName: "客户",
       leadDesignerId: lead.id,
-      name: "项目",
+      projectAddress: "项目地址",
       spaces: [space("主卧", "BEDROOM"), space("次卧", "BEDROOM")],
     });
     const deletedSpace = project.spaces[1]!;
@@ -295,13 +310,18 @@ class InMemoryProjectsRepository implements ProjectsRepository {
 
   async create(input: NewProject): Promise<ProjectDetail> {
     const project: ProjectDetail = {
-      address: input.address,
-      buildingArea: input.buildingArea,
+      createdAt: new Date().toISOString(),
       customerName: input.customerName,
       id: input.id,
       leadDesigner: lead,
-      name: input.name,
+      outerFrameArea: input.outerFrameArea,
+      projectAddress: input.projectAddress,
+      quotationAmount: null,
+      quotationId: null,
+      quotationStatus: null,
+      quotationVersion: null,
       spaces: input.spaces.map((item) => ({ ...item })),
+      updatedAt: new Date().toISOString(),
     };
     this.projects.push(project);
     return project;

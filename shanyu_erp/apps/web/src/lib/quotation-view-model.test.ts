@@ -2,6 +2,7 @@ import type { HalfPackageQuotationScope } from "@shanyu/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  formatQuotationItemName,
   formatDisplayNumber,
   formatQuotationScopeName,
   formatQuotationUnit,
@@ -10,6 +11,7 @@ import {
   quotationOptionQuantityForToggle,
   quotationOptionModelLabel,
   quotationOptionGroup,
+  quotationLinesForDisplay,
   shouldDisplayQuotationOptionLine,
 } from "./quotation-view-model";
 
@@ -107,6 +109,12 @@ describe("quotation view model", () => {
     expect(quotationOptionGroup("瓜子片豆石精找平")).toBe("找平做法");
     expect(quotationOptionGroup("包管道（1根）")).toBeNull();
     expect(quotationOptionGroup("石膏板吊平顶")).toBeNull();
+    expect(formatQuotationItemName("800*800mm地砖（水泥砂浆粘贴）")).toBe(
+      "800*800mm地砖",
+    );
+    expect(formatQuotationItemName("800*800mm墙砖（胶泥粘帖）")).toBe(
+      "800*800mm墙砖",
+    );
   });
 
   it("shows only selected lines below every Excel multi-select group", () => {
@@ -135,6 +143,18 @@ describe("quotation view model", () => {
   it("clears an old manual quantity when a multi-select option is unchecked", () => {
     expect(quotationOptionQuantityForToggle("2.5000", false)).toBeNull();
     expect(quotationOptionQuantityForToggle("2.5000", true)).toBe("2.5000");
+  });
+
+  it("shows only selected positive-quantity lines in a generated quotation", () => {
+    const lines = [
+      { id: "selected", quantity: "2.0000", selected: true },
+      { id: "zero", quantity: "0.0000", selected: true },
+      { id: "blank", quantity: null, selected: true },
+      { id: "not-selected", quantity: "2.0000", selected: false },
+    ];
+
+    expect(quotationLinesForDisplay(lines, false)).toEqual(lines);
+    expect(quotationLinesForDisplay(lines, true)).toEqual([lines[0]]);
   });
 
   it("uses the category labels defined by the reviewed Pencil screens", () => {

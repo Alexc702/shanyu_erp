@@ -64,10 +64,10 @@ export function SubmitQuotationPanel({
     setError(null);
     try {
       await submitQuotation(quotation.projectId, quotation.revision);
-      router.push(`/projects/${quotation.projectId}/quotation/versions`);
+      router.push(`/projects/${quotation.projectId}`);
       router.refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "提交失败");
+      setError(caught instanceof Error ? caught.message : "生成失败");
       setSubmitting(false);
     }
   }
@@ -76,11 +76,11 @@ export function SubmitQuotationPanel({
     <main className="compact-workflow-page submit-quotation-page workflow-page">
       <header className="centered-workflow-header workflow-header">
         <div className="grid gap-1">
-          <h1 className="type-page-title">提交半包报价</h1>
-          <p className="type-body">按空间核对本次提交明细；仅展示数量不为空的工程项</p>
+          <h1 className="type-page-title">确认半包报价单</h1>
+          <p className="type-body">按空间核对本次报价明细；仅展示数量不为空的工程项</p>
         </div>
         <Badge className="bg-primary-soft px-2 py-1 text-primary" variant="secondary">
-          {quotation.projectName} · V{quotation.versionNumber} 草稿
+          {quotation.projectAddress} · V{quotation.versionNumber} 草稿
         </Badge>
       </header>
 
@@ -241,7 +241,7 @@ function PassedCheckCard({
     <Card className="border-border shadow-none">
       <CardContent className="grid gap-3.5 p-4">
         <div className="flex items-center justify-between gap-3">
-          <strong className="type-section-title">提交前检查</strong>
+          <strong className="type-section-title">生成前检查</strong>
           <Badge variant="success">
             <CheckCircle2 className="size-3" />
             已通过
@@ -252,7 +252,7 @@ function PassedCheckCard({
             <Check className="size-[18px]" />
           </span>
           <div className="grid min-w-0 gap-0.5">
-            <strong className="type-entity">可以提交审批</strong>
+            <strong className="type-entity">可以生成报价单</strong>
             <span className="type-support text-muted-foreground">
               {spaceCount} 个空间已完成校验，未发现阻断问题
             </span>
@@ -265,14 +265,14 @@ function PassedCheckCard({
           />
           <ValidationRow label={`${pricedItemCount} 项数量与单价完整`} status="数据完整" />
           <ValidationRow label="金额计算结果正常" status="计算通过" />
-          <ValidationRow label="无待定价或异常工程项" last status="无阻断" />
+          <ValidationRow label="无异常工程项" last status="无阻断" />
         </div>
         {check.warningCount > 0 ? (
           <div className="type-support rounded-lg bg-warning-soft p-2.5 text-warning">
-            {check.warningCount} 项无施工说明，不阻断提交。
+            {check.warningCount} 项无施工说明，不阻断生成。
           </div>
         ) : null}
-        <InfoNotice>仅提交数量不为空的工程项；提交后生成只读快照。</InfoNotice>
+        <InfoNotice>仅生成数量不为空的工程项；确认后生成已报价只读快照。</InfoNotice>
       </CardContent>
     </Card>
   );
@@ -293,7 +293,7 @@ function BlockedCheckCard({
     <Card className="border-border shadow-none">
       <CardContent className="grid gap-3.5 p-4">
         <div className="flex items-center justify-between gap-3">
-          <strong className="type-section-title">提交前检查</strong>
+          <strong className="type-section-title">生成前检查</strong>
           <Badge variant="destructive">
             <AlertCircle className="size-3" />
             {blockers.length} 项阻断
@@ -304,7 +304,7 @@ function BlockedCheckCard({
             <X className="size-[18px]" />
           </span>
           <div className="grid min-w-0 gap-0.5">
-            <strong className="type-entity">暂不可提交</strong>
+            <strong className="type-entity">暂不可生成</strong>
             <span className="type-support">
               还有 {blockers.length} 项阻断问题，请处理完成后重新检查。
             </span>
@@ -355,7 +355,7 @@ function BlockedCheckCard({
           </Link>
         </Button>
         <InfoNotice>
-          数量为空表示工程项不提交；已选择但缺少必填数量的工程项会阻止提交。
+          数量为空表示工程项不生成；已选择但缺少必填数量的工程项会阻止生成。
         </InfoNotice>
       </CardContent>
     </Card>
@@ -376,18 +376,18 @@ function PassedSubmitCard({
   return (
     <Card className="border-border shadow-none">
       <CardContent className="grid gap-3 p-4 text-left">
-        <strong className="type-section-title">本次提交</strong>
+        <strong className="type-section-title">本次生成</strong>
         <div className="grid gap-1">
           <span className="type-support text-muted-foreground">半包销售金额</span>
           <strong className="type-key-amount">¥{displayMoney(total)}</strong>
         </div>
         <p className="type-support text-muted-foreground">
-          提交至何老板审批；审批通过后可导出客户版 PDF / XLSX。
+          确认后生成已报价版本并返回项目管理，可立即导出客户版 PDF / XLSX。
         </p>
         {error ? <p className="type-support text-destructive" role="alert">{error}</p> : null}
         <Button className="w-full" disabled={submitting} onClick={onSubmit}>
           <Send />
-          {submitting ? "正在提交…" : "确认提交审批"}
+          {submitting ? "正在生成…" : "确认生成报价单"}
         </Button>
       </CardContent>
     </Card>
@@ -404,7 +404,7 @@ function BlockedSubmitCard({
   return (
     <Card className="border-border shadow-none">
       <CardContent className="grid gap-3 p-4 text-left">
-        <strong className="type-section-title">本次提交</strong>
+        <strong className="type-section-title">本次生成</strong>
         <div className="grid gap-1">
           <span className="type-support text-muted-foreground">半包销售金额</span>
           <strong className="type-key-amount">¥{displayMoney(total)}</strong>
@@ -412,12 +412,12 @@ function BlockedSubmitCard({
         <div className="flex items-center gap-2 rounded-[7px] bg-destructive-soft p-2.5 text-destructive">
           <LockKeyhole className="size-3.5 shrink-0" />
           <span className="type-status">
-            当前存在 {blockerCount} 项阻断问题，暂不能提交审批。
+            当前存在 {blockerCount} 项阻断问题，暂不能生成报价单。
           </span>
         </div>
         <Button className="w-full" disabled variant="secondary">
           <LockKeyhole />
-          暂不可提交
+          暂不可生成
         </Button>
       </CardContent>
     </Card>

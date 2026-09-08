@@ -1,7 +1,4 @@
-import type {
-  HalfPackageQuotationVersionSummary,
-  ProjectSummary,
-} from "@shanyu/contracts";
+import type { ProjectSummary } from "@shanyu/contracts";
 import { cookies } from "next/headers";
 import { ArrowUpRight, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import Link from "next/link";
@@ -15,7 +12,6 @@ import {
   fetchHalfPackageCostMargin,
   fetchPendingApprovals,
   fetchProjects,
-  fetchQuotationVersions,
   fetchSession,
 } from "@/lib/api-client";
 import { getWorkbench } from "@/lib/workbench";
@@ -27,7 +23,7 @@ interface HomeProps {
   >;
 }
 
-type LeadProjectStatus = "approved" | "draft" | "returned";
+type LeadProjectStatus = "approved" | "draft" | "quoted" | "returned";
 
 interface LeadProjectItem {
   readonly activityAt: string | null;
@@ -51,18 +47,8 @@ export default async function Home({ searchParams }: HomeProps) {
   const isOwner = hasOwnerPermissions(session.user.role);
   const isLead = session.user.role === "LEAD_DESIGNER";
   const projectList = projects ?? [];
-  const versionsByProject = canAccessProjects
-    ? await Promise.all(
-        projectList.map((project) =>
-          fetchQuotationVersions(cookieHeader, project.id),
-        ),
-      )
-    : [];
-  const versions = versionsByProject.flatMap((items) => items ?? []);
   const leadProjects = isLead
-    ? projectList.flatMap((project, index) =>
-        toLeadProjectItems(project, versionsByProject[index] ?? []),
-      )
+    ? projectList.map(toLeadProjectItem)
     : [];
   const pendingApprovals = isOwner ? await fetchPendingApprovals(cookieHeader) : null;
   const margins = isOwner
@@ -76,15 +62,16 @@ export default async function Home({ searchParams }: HomeProps) {
   const metrics = isOwner
     ? [
         ["进行中项目", String(projects?.length ?? 0), "当前可访问项目"],
-        ["待定价", String(versions.filter((item) => item.status === "PENDING_PRICING").length), "报价版本"],
-        ["待审批", String(pendingApprovals?.length ?? 0), "进入审批中心处理"],
+        ["已报价", String(projectList.filter((item) => item.quotationStatus === "QUOTED").length), "待最终审批"],
+        ["审批中心", String(pendingApprovals?.length ?? 0), "当前已报价项目"],
         ["半包预计毛利率", aggregateMargin, "当前报价汇总"],
       ]
     : isLead ? [
         ["我的项目", String(projects?.length ?? 0), "本人负责"],
-        ["草稿", String(versions.filter((item) => item.status === "DRAFT").length), "半包报价持续保存"],
-        ["已退回", String(versions.filter((item) => item.status === "RETURNED").length), "根据审批意见修订"],
-        ["已批准", String(versions.filter((item) => item.status === "APPROVED").length), "已锁定版本"],
+        ["草稿", String(projectList.filter((item) => item.quotationStatus === null || item.quotationStatus === "DRAFT").length), "半包报价持续保存"],
+        ["已报价", String(projectList.filter((item) => item.quotationStatus === "QUOTED").length), "可导出并待最终审批"],
+        ["已退回", String(projectList.filter((item) => item.quotationStatus === "RETURNED").length), "根据审批意见修订"],
+        ["已批准", String(projectList.filter((item) => item.quotationStatus === "APPROVED").length), "已锁定版本"],
       ] : [
         ["当前角色", "预留", "V1 不开放业务操作"],
         ["项目报价", "—", "不可访问"],
@@ -114,7 +101,7 @@ export default async function Home({ searchParams }: HomeProps) {
             <h1>上午好，{session.user.displayName}</h1>
             <p>
               {isOwner
-                ? "查看全公司报价、待定价、审批与预计毛利"
+                ? "查看全公司报价、最终审批与预计毛利"
                 : workbench.description}
             </p>
           </div>
@@ -148,8 +135,8 @@ export default async function Home({ searchParams }: HomeProps) {
               <div className="recent-project-list">
                 {projects.slice(0, 3).map((project) => (
                   <Link href={`/projects/${project.id}`} key={project.id}>
-                    <strong>{project.name} · {project.customerName}</strong>
-                    <span>{Number(project.buildingArea).toFixed(2)} M² · 打开项目</span>
+                    <strong>{project.projectAddress} · {project.customerName}</strong>
+                    <span>{Number(project.outerFrameArea).toFixed(2)} M² · 打开项目</span>
                   </Link>
                 ))}
               </div>
@@ -164,7 +151,7 @@ export default async function Home({ searchParams }: HomeProps) {
               <h2>{workbench.roleLabel}</h2>
               <ul className="check-list">
                 <li>主材库已发布版本可供新报价引用</li>
-                <li>已保存草稿使用固定模板快照</li>
+                <li>已报价版本使用固定模板快照</li>
               </ul>
             </article>
           ) : null}
@@ -188,6 +175,7 @@ function LeadWorkbench({
   const grouped = {
     approved: projects.filter((project) => project.status === "approved"),
     draft: projects.filter((project) => project.status === "draft"),
+    quoted: projects.filter((project) => project.status === "quoted"),
     returned: projects.filter((project) => project.status === "returned"),
   };
 
@@ -211,10 +199,11 @@ function LeadWorkbench({
         </Button>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="业务概览">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5" aria-label="业务概览">
         {[
           ["我的项目", projectCount, "本人负责"],
           ["草稿", grouped.draft.length, "半包报价持续保存"],
+          ["已报价", grouped.quoted.length, "可导出并待最终审批"],
           ["已退回", grouped.returned.length, "根据审批意见修订"],
           ["已批准", grouped.approved.length, "已锁定版本"],
         ].map(([label, value, hint]) => (
@@ -239,7 +228,7 @@ function LeadWorkbench({
           </span>
         </div>
 
-        <div className="grid items-stretch gap-3 xl:grid-cols-3">
+        <div className="grid items-stretch gap-3 xl:grid-cols-4">
           <StatusProjectCard
             badgeVariant="secondary"
             description="可继续编辑"
@@ -249,8 +238,16 @@ function LeadWorkbench({
             title="草稿"
           />
           <StatusProjectCard
+            badgeVariant="warning"
+            description="可导出并待老板最终审批"
+            items={grouped.quoted}
+            pageKey="quotedPage"
+            params={params}
+            title="已报价"
+          />
+          <StatusProjectCard
             badgeVariant="destructive"
-            description="修改后重新提交"
+            description="修改后重新确认生成"
             items={grouped.returned}
             pageKey="returnedPage"
             params={params}
@@ -278,10 +275,10 @@ function StatusProjectCard({
   params,
   title,
 }: {
-  readonly badgeVariant: "destructive" | "secondary" | "success";
+  readonly badgeVariant: "destructive" | "secondary" | "success" | "warning";
   readonly description: string;
   readonly items: readonly LeadProjectItem[];
-  readonly pageKey: "approvedPage" | "draftPage" | "returnedPage";
+  readonly pageKey: "approvedPage" | "draftPage" | "quotedPage" | "returnedPage";
   readonly params: Record<string, string | string[] | undefined>;
   readonly title: string;
 }) {
@@ -314,7 +311,7 @@ function StatusProjectCard({
                   className="type-entity block truncate text-primary hover:underline"
                   href={projectHref(item)}
                 >
-                  {item.project.name}
+                  {item.project.projectAddress}
                 </Link>
                 <p className="type-support m-0 truncate text-muted-foreground">
                   {item.project.customerName} · V{item.versionNumber}
@@ -389,42 +386,17 @@ function PaginationButton({
   );
 }
 
-function toLeadProjectItems(
-  project: ProjectSummary,
-  versions: readonly HalfPackageQuotationVersionSummary[],
-): readonly LeadProjectItem[] {
-  if (versions.length === 0) {
-    return [
-      {
-        activityAt: null,
-        project,
-        quotationId: null,
-        status: "draft",
-        versionNumber: 1,
-      },
-    ];
-  }
-  const statusVersions: readonly [
-    LeadProjectStatus,
-    HalfPackageQuotationVersionSummary | undefined,
-  ][] = [
-    ["draft", versions.find((version) => version.status === "DRAFT")],
-    ["returned", versions.find((version) => version.status === "RETURNED")],
-    ["approved", versions.find((version) => version.status === "APPROVED")],
-  ];
-  return statusVersions.flatMap(([status, version]) =>
-    version
-      ? [
-          {
-            activityAt: version.submittedAt,
-            project,
-            quotationId: version.id,
-            status,
-            versionNumber: version.versionNumber,
-          },
-        ]
-      : [],
-  );
+function toLeadProjectItem(project: ProjectSummary): LeadProjectItem {
+  return {
+    activityAt: project.createdAt,
+    project,
+    quotationId: project.quotationId,
+    status:
+      (project.quotationStatus?.toLocaleLowerCase(
+        "en-US",
+      ) as LeadProjectStatus | undefined) ?? "draft",
+    versionNumber: project.quotationVersion ?? 1,
+  };
 }
 
 function projectHref(item: LeadProjectItem): string {
@@ -442,7 +414,7 @@ function pageNumber(value: string | string[] | undefined): number {
 
 function pageHref(
   params: Record<string, string | string[] | undefined>,
-  key: "approvedPage" | "draftPage" | "returnedPage",
+  key: "approvedPage" | "draftPage" | "quotedPage" | "returnedPage",
   page: number,
 ): string {
   const next = new URLSearchParams();
@@ -457,7 +429,7 @@ function pageHref(
 }
 
 function formatActivityTime(value: string | null): string {
-  if (!value) return "尚未提交";
+  if (!value) return "尚未更新";
   return new Intl.DateTimeFormat("zh-CN", {
     day: "2-digit",
     hour: "2-digit",

@@ -8,6 +8,7 @@ const commonScopeOrder = new Map([
   ["十、油漆工程", 70],
   ["十一、水电工程", 80],
   ["十二、其他工程", 90],
+  ["管理费", 100],
 ]);
 
 const spaceTypeOrder: Record<NonNullable<HalfPackageQuotationScope["spaceType"]>, number> = {
@@ -32,6 +33,10 @@ export function formatQuotationUnit(unit: string): string {
 
 export function formatQuotationScopeName(name: string): string {
   return name.replace(/^[一二三四五六七八九十]+、/, "");
+}
+
+export function formatQuotationItemName(name: string): string {
+  return name.replace(/[（(](水泥砂浆粘贴|胶泥粘帖)[）)]$/, "").trim();
 }
 
 export function orderQuotationScopes(
@@ -83,6 +88,15 @@ export function quotationOptionQuantityForToggle(
   selected: HalfPackageQuotationLine["selected"],
 ): string | null {
   return selected ? quantity : null;
+}
+
+export function quotationLinesForDisplay<
+  T extends Pick<HalfPackageQuotationLine, "quantity" | "selected">,
+>(lines: readonly T[], compactReadOnly: boolean): readonly T[] {
+  if (!compactReadOnly) return lines;
+  return lines.filter(
+    (line) => line.selected && Number(line.quantity ?? "0") > 0,
+  );
 }
 
 export function quotationLineCategory(

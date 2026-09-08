@@ -5,6 +5,7 @@ const commonScopeOrder = new Map([
   ["十、油漆工程", 70],
   ["十一、水电工程", 80],
   ["十二、其他工程", 90],
+  ["管理费", 100],
 ]);
 
 const spaceTypeOrder: Record<
@@ -36,12 +37,21 @@ export function formatMarginRate(value: string | null): string {
 
 export function marginStatus(
   salesAmount: string,
-  grossProfit: string,
-): "未计价" | "已计算" | "负毛利" {
+  grossMarginRate: string | null,
+  marginBenchmarkRate: string,
+): "未计价" | "正常" | "低于基准" | "负毛利" {
   if (salesAmount === "0.0000") {
     return "未计价";
   }
-  return grossProfit.startsWith("-") ? "负毛利" : "已计算";
+  if (grossMarginRate === null) {
+    return "未计价";
+  }
+  if (grossMarginRate.startsWith("-")) {
+    return "负毛利";
+  }
+  return Number(grossMarginRate) < Number(marginBenchmarkRate)
+    ? "低于基准"
+    : "正常";
 }
 
 export function orderCostMarginScopes(
@@ -51,11 +61,24 @@ export function orderCostMarginScopes(
     .map((scope, index) => ({ index, scope }))
     .sort((left, right) => {
       const orderDifference = scopeOrder(left.scope) - scopeOrder(right.scope);
-      return orderDifference === 0
-        ? left.index - right.index
-        : orderDifference;
+      if (orderDifference !== 0) return orderDifference;
+      const nameDifference =
+        scopeNameOrder(left.scope) - scopeNameOrder(right.scope);
+      return nameDifference === 0 ? left.index - right.index : nameDifference;
     })
     .map(({ scope }) => scope);
+}
+
+function scopeNameOrder(scope: HalfPackageCostMarginScope): number {
+  if (scope.spaceType === "BEDROOM") {
+    if (/^主卧/.test(scope.name)) return 0;
+    if (/^次卧/.test(scope.name)) return 10;
+  }
+  if (scope.spaceType === "BATHROOM") {
+    if (/^主(?:卫|卫生间)/.test(scope.name)) return 0;
+    if (/^次(?:卫|卫生间)/.test(scope.name)) return 10;
+  }
+  return 20;
 }
 
 function scopeOrder(scope: HalfPackageCostMarginScope): number {

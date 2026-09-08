@@ -82,12 +82,17 @@ export interface SpaceInput {
 }
 
 export interface ProjectSummary {
-  readonly address: string;
-  readonly buildingArea: string;
+  readonly createdAt: string;
   readonly customerName: string;
   readonly id: string;
   readonly leadDesigner: SessionUser;
-  readonly name: string;
+  readonly outerFrameArea: string;
+  readonly projectAddress: string;
+  readonly quotationAmount: string | null;
+  readonly quotationId: string | null;
+  readonly quotationStatus: HalfPackageQuotationStatus | null;
+  readonly quotationVersion: number | null;
+  readonly updatedAt: string;
 }
 
 export interface ProjectDetail extends ProjectSummary {
@@ -95,11 +100,10 @@ export interface ProjectDetail extends ProjectSummary {
 }
 
 export interface CreateProjectRequest {
-  readonly address: string;
-  readonly buildingArea: string;
   readonly customerName: string;
   readonly leadDesignerId: string;
-  readonly name: string;
+  readonly outerFrameArea: string;
+  readonly projectAddress: string;
   readonly spaces: SpaceInput[];
 }
 
@@ -182,7 +186,7 @@ export interface PublishedHalfPackageCatalogResponse {
 
 export type HalfPackageQuantitySource =
   | "MANUAL"
-  | "PROJECT_BUILDING_AREA"
+  | "PROJECT_OUTER_FRAME_AREA"
   | "SPACE_AREA"
   | "SPACE_PERIMETER_HEIGHT"
   | "LINE_REFERENCE";
@@ -213,12 +217,17 @@ export interface HalfPackageQuotationScope {
 }
 
 export interface HalfPackageQuotation {
+  readonly adjustmentReason: string | null;
+  readonly adjustmentStatus: HalfPackageAdjustmentStatus;
+  readonly adjustedTotal: string;
   readonly directCost: string;
+  readonly discountRate: string;
   readonly id: string;
+  readonly isCurrent: boolean;
   readonly managementFee: string;
   readonly managementRate: string;
   readonly projectId: string;
-  readonly projectName: string;
+  readonly projectAddress: string;
   readonly revision: number;
   readonly scopes: readonly HalfPackageQuotationScope[];
   readonly status: HalfPackageQuotationStatus;
@@ -226,17 +235,19 @@ export interface HalfPackageQuotation {
   readonly templateVersion: number;
   readonly total: string;
   readonly versionNumber: number;
+  readonly writeOff: string;
 }
 
 export type HalfPackageQuotationStatus =
   | "DRAFT"
-  | "PENDING_PRICING"
-  | "PENDING_SUPPLEMENT"
-  | "PENDING_APPROVAL"
+  | "QUOTED"
   | "RETURNED"
-  | "APPROVED"
-  | "SUPERSEDED"
-  | "VOID";
+  | "APPROVED";
+
+export type HalfPackageAdjustmentStatus =
+  | "AWAITING_SUBMISSION"
+  | "PENDING_APPROVAL"
+  | "CONFIRMED";
 
 export interface HalfPackageQuotationResponse {
   readonly quotation: HalfPackageQuotation;
@@ -250,6 +261,18 @@ export interface UpdateHalfPackageQuotationLineRequest {
 
 export interface SubmitHalfPackageQuotationRequest {
   readonly expectedRevision: number;
+}
+
+export interface UpdateHalfPackageAdjustmentRequest {
+  readonly action: "SUBMIT_FOR_APPROVAL" | "CONFIRM";
+  readonly discountRate: string;
+  readonly expectedRevision: number;
+  readonly reason: string | null;
+  readonly writeOff: string;
+}
+
+export interface UpdateHalfPackageMarginBenchmarkRequest {
+  readonly marginBenchmarkPercent: string;
 }
 
 export interface HalfPackageSubmissionCheck {
@@ -269,8 +292,7 @@ export interface HalfPackageSubmissionCheckResponse {
 export type HalfPackageApprovalDecision = "APPROVED" | "RETURNED";
 
 export type HalfPackageApprovalAction =
-  | HalfPackageApprovalDecision
-  | "SPECIAL_APPROVED";
+  HalfPackageApprovalDecision;
 
 export interface DecideHalfPackageQuotationRequest {
   readonly action: HalfPackageApprovalDecision;
@@ -278,14 +300,14 @@ export interface DecideHalfPackageQuotationRequest {
 }
 
 export interface HalfPackageApprovalSummary {
-  readonly buildingArea: string;
   readonly customerName: string;
   readonly expectedCost: string;
   readonly grossMarginRate: string | null;
   readonly grossProfit: string;
   readonly id: string;
+  readonly outerFrameArea: string;
   readonly projectId: string;
-  readonly projectName: string;
+  readonly projectAddress: string;
   readonly salesAmount: string;
   readonly status: HalfPackageQuotationStatus;
   readonly submittedAt: string | null;
@@ -298,9 +320,11 @@ export interface HalfPackageApprovalListResponse {
 }
 
 export interface HalfPackageQuotationVersionSummary {
+  readonly adjustmentStatus: HalfPackageAdjustmentStatus;
   readonly decisionAction: HalfPackageApprovalAction | null;
   readonly decisionReason: string | null;
   readonly id: string;
+  readonly isCurrent: boolean;
   readonly status: HalfPackageQuotationStatus;
   readonly submittedAt: string | null;
   readonly total: string;
@@ -314,7 +338,14 @@ export interface HalfPackageQuotationVersionsResponse {
 export interface HalfPackageVersionDifference {
   readonly after: string | null;
   readonly before: string | null;
-  readonly field: "QUANTITY" | "SALE_UNIT_PRICE" | "SELECTED" | "TOTAL";
+  readonly field:
+    | "COST_UNIT_PRICE"
+    | "DISCOUNT_RATE"
+    | "QUANTITY"
+    | "SALE_UNIT_PRICE"
+    | "SELECTED"
+    | "TOTAL"
+    | "WRITE_OFF";
   readonly itemName: string;
   readonly scopeName: string;
 }
@@ -395,8 +426,9 @@ export interface HalfPackageCostMargin {
   readonly grossMarginRate: string | null;
   readonly grossProfit: string;
   readonly id: string;
+  readonly marginBenchmarkRate: string;
   readonly projectId: string;
-  readonly projectName: string;
+  readonly projectAddress: string;
   readonly salesAmount: string;
   readonly scopes: readonly HalfPackageCostMarginScope[];
   readonly status: HalfPackageQuotationStatus;

@@ -10,18 +10,28 @@ export const QUOTATION_REPOSITORY = Symbol("QUOTATION_REPOSITORY");
 
 export type QuotationStatus =
   | "DRAFT"
-  | "PENDING_PRICING"
-  | "PENDING_SUPPLEMENT"
-  | "PENDING_APPROVAL"
+  | "QUOTED"
   | "RETURNED"
-  | "APPROVED"
-  | "SUPERSEDED"
-  | "VOID";
+  | "APPROVED";
 
 export type QuotationDecisionAction =
   | "APPROVED"
-  | "SPECIAL_APPROVED"
   | "RETURNED";
+
+export type QuotationAdjustmentStatus =
+  | "AWAITING_SUBMISSION"
+  | "PENDING_APPROVAL"
+  | "CONFIRMED";
+
+export interface ConfirmedQuotationAdjustment {
+  readonly adjustedTotal: string;
+  readonly discountRate: string;
+  readonly expectedRevision: number;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
+  readonly reason: string | null;
+  readonly writeOff: string;
+}
 
 export interface QuotationTemplateItem {
   readonly costUnitPrice: string;
@@ -80,20 +90,26 @@ export interface QuotationDraftScope {
 }
 
 export interface QuotationDraft {
-  readonly buildingArea: string;
+  readonly adjustmentReason: string | null;
+  readonly adjustmentStatus: QuotationAdjustmentStatus;
+  readonly adjustedTotal: string;
   readonly costTemplateVersionId: string;
   readonly costTemplateVersionNumber: number;
   readonly createdByUserId: string;
   readonly directCost: string;
+  readonly discountRate: string;
   readonly expectedCost: string;
   readonly grossMarginRate: string | null;
   readonly grossProfit: string;
   readonly id: string;
+  readonly isCurrent: boolean;
   readonly managementFee: string;
   readonly managementRate: string;
+  readonly marginBenchmarkRate: string;
   readonly parentVersionId: string | null;
   readonly projectId: string;
-  readonly projectName: string;
+  readonly outerFrameArea: string;
+  readonly projectAddress: string;
   readonly revision: number;
   readonly ruleVersionId: string;
   readonly scopes: readonly QuotationDraftScope[];
@@ -108,6 +124,7 @@ export interface QuotationDraft {
   readonly templateVersionNumber: number;
   readonly total: string;
   readonly versionNumber: number;
+  readonly writeOff: string;
 }
 
 export type NewQuotationDraft = QuotationDraft;
@@ -118,7 +135,7 @@ export interface QuotationRepository {
   findLatest(projectId: string): Promise<QuotationDraft | null>;
   findById(quotationId: string): Promise<QuotationDraft | null>;
   listByProject(projectId: string): Promise<readonly QuotationDraft[]>;
-  listPendingApproval(): Promise<readonly QuotationDraft[]>;
+  listQuoted(): Promise<readonly QuotationDraft[]>;
   findPublishedTemplate(): Promise<QuotationTemplate | null>;
   findTemplate(
     templateVersionId: string,
@@ -134,6 +151,21 @@ export interface QuotationRepository {
     input: QuotationDraft,
     expectedRevision: number,
   ): Promise<QuotationDraft>;
+  saveAdjustment(
+    quotationId: string,
+    discountRate: string,
+    writeOff: string,
+    adjustedTotal: string,
+    grossProfit: string,
+    grossMarginRate: string | null,
+    actorUserId: string,
+    reason: string | null,
+    expectedRevision: number,
+  ): Promise<QuotationDraft>;
+  updateMarginBenchmarkRate(
+    quotationId: string,
+    marginBenchmarkRate: string,
+  ): Promise<QuotationDraft>;
   submitDraft(
     quotationId: string,
     actorUserId: string,
@@ -144,8 +176,9 @@ export interface QuotationRepository {
     actorUserId: string,
     action: QuotationDecisionAction,
     reason: string | null,
+    adjustment?: ConfirmedQuotationAdjustment,
   ): Promise<QuotationDraft>;
-  createDraftFromVersion(
+  continueEditing(
     source: QuotationDraft,
     actorUserId: string,
   ): Promise<QuotationDraft>;

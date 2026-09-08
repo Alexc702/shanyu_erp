@@ -19,11 +19,15 @@ import {
   fetchQuotationVersions,
   fetchSession,
 } from "@/lib/api-client";
-import { formatQuotationMoney } from "@/lib/quotation-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { ExportMenu } from "./export-menu";
 import { SpaceManager } from "./space-manager";
+import {
+  ContinueEditingButton,
+  QuotationAdjustment,
+  QuotationLiveAmount,
+} from "./quotation-actions";
 
 interface ProjectPageProps {
   readonly params: Promise<{ projectId: string }>;
@@ -78,7 +82,15 @@ export default async function ProjectPage({
       : Math.round((completedItemCount / selectedItemCount) * 100);
   const standardItemCount = catalog?.items.length ?? 0;
   const currentStep = quoteStep(quotation.status);
-  const approved = currentStep === 3;
+  const approved = quotation.status === "APPROVED";
+  const ownerAccess = hasOwnerPermissions(session.user.role);
+  const adjustmentPending =
+    quotation.adjustmentStatus === "PENDING_APPROVAL";
+  const returnReason = returnedRevisionReason(quotation, versions);
+  const exportVisible =
+    (quotation.status === "QUOTED" && !adjustmentPending) ||
+    (quotation.status === "APPROVED" &&
+      quotation.adjustmentStatus === "CONFIRMED");
 
   return (
     <AppShell active="projects" user={session.user}>
@@ -87,14 +99,14 @@ export default async function ProjectPage({
           <div className="grid gap-1">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="type-page-title m-0 tracking-tight">
-                {project.name} · {project.customerName}
+                {project.projectAddress} · {project.customerName}
               </h1>
               <Badge variant={approved ? "success" : "secondary"}>
                 {quoteStatusLabel(quotation.status)}
               </Badge>
             </div>
             <p className="type-body m-0 text-muted-foreground">
-              {Number(project.buildingArea).toFixed(2)}㎡ · 主案 {project.leadDesigner.displayName} · 木作设计师未指派 · 当前 V{quotation.versionNumber}
+              外框面积 {Number(project.outerFrameArea).toFixed(2)}㎡ · 主案 {project.leadDesigner.displayName} · 当前 V{quotation.versionNumber}
             </p>
           </div>
 
@@ -109,38 +121,68 @@ export default async function ProjectPage({
             <Button asChild className="border-border" variant="outline">
               <Link href={`/projects/${project.id}/quotation/versions`}>
                 <History />
-                版本记录
+                项目版本管理
               </Link>
             </Button>
-            {approved ? (
-              <ExportMenu quotationId={quotation.id} />
-            ) : quotation.status === "DRAFT" ? (
+            {exportVisible ? (
+              <ExportMenu
+                fileNameStem={`${project.projectAddress}_半包报价单_V${quotation.versionNumber}`}
+                quotationId={quotation.id}
+              />
+            ) : null}
+            {quotation.status === "DRAFT" ? (
               <Button asChild>
                 <Link href={`/projects/${project.id}/quotation/submit`}>
                   <Send />
-                  提交审批
+                  确认生成报价单
                 </Link>
               </Button>
-            ) : quotation.status === "RETURNED" ? (
-              <Button asChild>
-                <Link href={`/projects/${project.id}`}>
-                  继续修订
-                </Link>
-              </Button>
-            ) : (
+            ) : quotation.status === "RETURNED" ||
+              (quotation.status === "QUOTED" && !adjustmentPending) ? (
+              <ContinueEditingButton
+                projectId={project.id}
+                quotationId={quotation.id}
+                status={quotation.status}
+              />
+            ) : quotation.status !== "APPROVED" ? (
               <Button asChild>
                 <Link href={`/projects/${project.id}/quotation`}>
-                  查看半包报价
+                  查看报价单
                 </Link>
               </Button>
-            )}
+            ) : null}
+            {quotation.status === "QUOTED" ? (
+              <Button
+                disabled={adjustmentPending}
+                form="quotation-adjustment-form"
+                type="submit"
+              >
+                {adjustmentPending
+                  ? "审批中"
+                  : ownerAccess
+                    ? "确认折扣"
+                    : "提交折扣审批"}
+              </Button>
+            ) : null}
           </div>
         </section>
+
+        {returnReason ? (
+          <Card className="border-destructive/30 bg-destructive/5 py-0 shadow-none">
+            <CardContent className="grid gap-1 p-4">
+              <strong className="type-entity text-destructive">老板打回原因</strong>
+              <p className="type-body m-0">{returnReason}</p>
+              <p className="type-support m-0 text-muted-foreground">
+                返修草稿保留上一版折扣与抹零；修改工程项并重新确认生成后，可继续调整折扣与抹零再提交审批。
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card className="border-border py-0 shadow-none">
           <CardContent className="p-4">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {["草稿", "待定价/待补充", "待审批", "已批准"].map(
+              {["草稿", "已报价", "已批准"].map(
                 (label, index) => (
                   <div className="flex items-center gap-2" key={label}>
                     <span
@@ -192,21 +234,51 @@ export default async function ProjectPage({
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <strong className="type-entity">
-                    销售金额 ¥{displayMoney(quotation.total)}
+                    折后金额 ¥
+                    <QuotationLiveAmount
+                      initialAmount={quotation.adjustedTotal}
+                      quotationId={quotation.id}
+                    />
                   </strong>
-                  <Link
-                    className="type-action text-primary hover:underline"
-                    href={
-                      approved
-                        ? `/projects/${project.id}/quotation/versions`
-                        : `/projects/${project.id}/quotation`
-                    }
-                  >
-                    {approved ? "查看半包报价" : "继续编辑半包"} →
-                  </Link>
+                  {quotation.status === "RETURNED" ||
+                  (quotation.status === "QUOTED" && !adjustmentPending) ? (
+                    <ContinueEditingButton
+                      display="link"
+                      projectId={project.id}
+                      quotationId={quotation.id}
+                      status={quotation.status}
+                    />
+                  ) : (
+                    <Link
+                      className="type-action text-primary hover:underline"
+                      href={
+                        approved
+                          ? `/projects/${project.id}/quotation/versions`
+                          : `/projects/${project.id}/quotation`
+                      }
+                    >
+                      {adjustmentPending || approved
+                        ? "查看半包报价"
+                        : "继续编辑半包"} →
+                    </Link>
+                  )}
                 </div>
               </CardContent>
             </Card>
+
+            {quotation.status === "QUOTED" ? (
+              <QuotationAdjustment
+                initialQuotation={quotation}
+                mode={
+                  adjustmentPending
+                    ? "PENDING"
+                    : ownerAccess
+                      ? "OWNER_CONFIRM"
+                      : "DESIGNER_SUBMIT"
+                }
+                projectId={project.id}
+              />
+            ) : null}
 
             <Card className="border-border py-0 shadow-none">
               <CardContent className="grid gap-3 p-4">
@@ -238,8 +310,8 @@ export default async function ProjectPage({
             <CardContent className="grid gap-3 p-4">
               <h2 className="type-section-title">项目与空间</h2>
               <ProjectInfoRow
-                label="建筑面积"
-                value={`${Number(project.buildingArea).toFixed(2)}㎡`}
+                label="外框面积"
+                value={`${Number(project.outerFrameArea).toFixed(2)}㎡`}
               />
               <ProjectInfoRow
                 label="客餐厅"
@@ -299,33 +371,58 @@ function spaceNames(
     .filter((space) => types.includes(space.type))
     .map((space) =>
       includeBalcony && space.includesBalcony
-        ? `${space.displayName} · 包阳台`
+        ? "客餐厅（包阳台）"
         : space.displayName,
     );
   return names.length ? names.join(" / ") : "未配置";
 }
 
 function quoteStep(status: string): number {
-  if (status === "APPROVED" || status === "SUPERSEDED") return 3;
-  if (status === "PENDING_APPROVAL") return 2;
-  if (status === "PENDING_PRICING" || status === "PENDING_SUPPLEMENT") return 1;
+  if (status === "APPROVED") return 2;
+  if (status === "QUOTED" || status === "RETURNED") return 1;
   return 0;
 }
 
 function quoteStatusLabel(status: string): string {
-  if (status === "APPROVED" || status === "SUPERSEDED") return "已批准";
-  if (status === "PENDING_APPROVAL") return "待审批";
-  if (status === "PENDING_PRICING") return "待定价";
-  if (status === "PENDING_SUPPLEMENT") return "待补充";
+  if (status === "APPROVED") return "已批准";
+  if (status === "QUOTED") return "已报价";
   if (status === "RETURNED") return "已退回";
   return "草稿";
-}
-
-function displayMoney(value: string): string {
-  return formatQuotationMoney(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 function firstValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
+}
+
+function returnedRevisionReason(
+  quotation: {
+    readonly id: string;
+    readonly status: string;
+    readonly versionNumber: number;
+  },
+  versions: readonly {
+    readonly decisionReason: string | null;
+    readonly id: string;
+    readonly status: string;
+    readonly versionNumber: number;
+  }[] | null,
+): string | null {
+  if (!versions) return null;
+  if (quotation.status === "RETURNED") {
+    return (
+      versions.find((version) => version.id === quotation.id)?.decisionReason ??
+      null
+    );
+  }
+  if (quotation.status === "DRAFT") {
+    return (
+      versions.find(
+        (version) =>
+          version.status === "RETURNED" &&
+          version.versionNumber === quotation.versionNumber - 1,
+      )?.decisionReason ?? null
+    );
+  }
+  return null;
 }

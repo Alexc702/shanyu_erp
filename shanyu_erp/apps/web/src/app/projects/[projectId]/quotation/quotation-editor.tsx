@@ -10,6 +10,7 @@ import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Popover,
@@ -23,10 +24,12 @@ import {
 } from "@/lib/quotation-client";
 import {
   formatDisplayNumber,
+  formatQuotationItemName,
   formatQuotationScopeName,
   formatQuotationUnit,
   orderQuotationScopes,
   quotationLineCategory,
+  quotationLinesForDisplay,
   quotationOptionGroup,
   quotationOptionModelLabel,
   quotationOptionQuantityForToggle,
@@ -34,17 +37,19 @@ import {
 } from "@/lib/quotation-view-model";
 
 interface QuotationEditorProps {
-  readonly buildingArea: string;
+  readonly outerFrameArea: string;
   readonly canViewCosts: boolean;
   readonly initialQuotation: HalfPackageQuotation;
   readonly leadDesignerName: string;
+  readonly returnReason: string | null;
 }
 
 export function QuotationEditor({
-  buildingArea,
+  outerFrameArea,
   canViewCosts,
   initialQuotation,
   leadDesignerName,
+  returnReason,
 }: QuotationEditorProps) {
   const initialScopes = orderQuotationScopes(initialQuotation.scopes);
   const [quotation, setQuotation] = useState(initialQuotation);
@@ -58,6 +63,10 @@ export function QuotationEditor({
   const [message, setMessage] = useState("已从服务端恢复草稿");
   const [error, setError] = useState<string | null>(null);
   const editable = quotation.status === "DRAFT";
+  const compactReadOnly =
+    !editable &&
+    (quotation.adjustmentStatus === "PENDING_APPROVAL" ||
+      quotation.status === "APPROVED");
   const orderedScopes = useMemo(
     () => orderQuotationScopes(quotation.scopes),
     [quotation.scopes],
@@ -65,6 +74,9 @@ export function QuotationEditor({
   const activeScope =
     orderedScopes.find((scope) => scope.id === activeScopeId) ??
     orderedScopes[0];
+  const activeLines = activeScope
+    ? quotationLinesForDisplay(activeScope.lines, compactReadOnly)
+    : [];
 
   async function saveLine(
     line: HalfPackageQuotationLine,
@@ -112,7 +124,7 @@ export function QuotationEditor({
       <header className="quotation-header">
         <div>
           <nav className="quotation-breadcrumb" aria-label="面包屑">
-            <Link href={`/projects/${quotation.projectId}`}>{quotation.projectName}</Link>
+            <Link href={`/projects/${quotation.projectId}`}>{quotation.projectAddress}</Link>
             <span>/</span><span>半包报价</span><span>/</span><strong>{formatQuotationScopeName(activeScope.name)}</strong>
           </nav>
           <h1>{quotationScopeTitle(activeScope)}</h1>
@@ -142,18 +154,30 @@ export function QuotationEditor({
           {editable ? (
             <Button asChild size="sm">
               <Link href={`/projects/${quotation.projectId}/quotation/submit`}>
-                提交何老板审批
+                确认生成报价单
               </Link>
             </Button>
           ) : (
             <Button asChild size="sm" variant="outline">
               <Link href={`/projects/${quotation.projectId}/quotation/versions`}>
-                查看版本记录
+                项目版本管理
               </Link>
             </Button>
           )}
         </div>
       </header>
+
+      {returnReason ? (
+        <Card className="border-destructive/30 bg-destructive/5 py-0 shadow-none">
+          <CardContent className="grid gap-1 p-4">
+            <strong className="type-entity text-destructive">老板打回原因</strong>
+            <p className="type-body m-0">{returnReason}</p>
+            <p className="type-support m-0 text-muted-foreground">
+              当前草稿已保留上一版折扣与抹零；修改报价内容并重新确认生成后，可继续调整折扣与抹零。
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {error ? <div className="quotation-error" role="alert">{error}</div> : null}
 
@@ -171,7 +195,7 @@ export function QuotationEditor({
                 type="button"
               >
                 <span><strong>{formatQuotationScopeName(scope.name)}</strong><small>{scope.spaceType ? "空间" : "项目通用"}</small></span>
-                <span>{scopeItemCountLabel(scope)}</span>
+                <span>{scopeItemCountLabel(scope, compactReadOnly)}</span>
               </button>
             );
           })}
@@ -191,7 +215,7 @@ export function QuotationEditor({
             <div className="quotation-parameters">
               {scopeParameters(
                 activeScope,
-                buildingArea,
+                outerFrameArea,
                 quotation.templateVersion,
                 leadDesignerName,
               ).map((parameter) => (
@@ -207,7 +231,6 @@ export function QuotationEditor({
           <div className="quotation-table-wrap">
             <table className="quotation-table">
               <colgroup>
-                <col className="quotation-col-select" />
                 <col className="quotation-col-category" />
                 <col className="quotation-col-item" />
                 <col className="quotation-col-unit" />
@@ -218,13 +241,22 @@ export function QuotationEditor({
               </colgroup>
               <thead>
                 <tr>
-                  <th aria-label="选择" />
                   <th>分类</th><th>工程项目</th><th>单位</th><th>数量</th>
                   <th>单价</th><th>金额</th><th>施工说明</th>
                 </tr>
               </thead>
               <tbody>
-                {activeScope.lines.map((line) => {
+                {activeScope.name === "管理费" ? (
+                  <tr className="selected">
+                    <td>管理费</td>
+                    <td><div className="quotation-item-name"><span><strong>管理费</strong><small>按半包直接费 10% 自动计算</small></span></div></td>
+                    <td>套</td>
+                    <td><span className="automatic-quantity">1</span></td>
+                    <td>—</td>
+                    <td className="quotation-amount">¥ {formatQuotationMoney(activeScope.subtotal)}</td>
+                    <td className="quotation-remarks">半包直接费 × 10%</td>
+                  </tr>
+                ) : activeLines.map((line) => {
                   const automatic = line.quantitySource !== "MANUAL";
                   const hasDraftQuantity = Object.hasOwn(draftQuantities, line.id);
                   const draftValue = hasDraftQuantity
@@ -237,13 +269,13 @@ export function QuotationEditor({
                   const showGroup = group !== null && !renderedGroups.has(group);
                   if (group) renderedGroups.add(group);
                   const groupLines = group
-                    ? activeScope.lines.filter((item) => quotationOptionGroup(item.itemName) === group)
+                    ? activeLines.filter((item) => quotationOptionGroup(item.itemName) === group)
                     : [];
                   return (
                     <Fragment key={line.id}>
                       {showGroup && group ? (
                         <tr className="quotation-group-row">
-                          <td className="quotation-group-category" colSpan={2}>
+                          <td className="quotation-group-category">
                             {quotationLineCategory(line.itemName, line.sectionName, activeScope.spaceType)}
                           </td>
                           <td>
@@ -276,26 +308,10 @@ export function QuotationEditor({
                         line.selected,
                       ) ? (
                       <tr className={line.selected ? "selected" : ""}>
-                        <td className="quotation-selection-cell">
-                          <Checkbox
-                            aria-label={`选择 ${line.itemName}`}
-                            checked={line.selected}
-                            disabled={saving || !editable}
-                            onCheckedChange={(checked) =>
-                              saveLine(
-                                line,
-                                checked === true,
-                                automatic || checked !== true
-                                  ? null
-                                  : (draftQuantities[line.id] ?? line.quantity),
-                              )
-                            }
-                          />
-                        </td>
                         <td>{quotationLineCategory(line.itemName, line.sectionName, activeScope.spaceType)}</td>
                         <td>
                           <div className="quotation-item-name">
-                            <span><strong>{line.itemName}</strong>{automatic ? <small>{quantitySourceLabel(line.quantitySource)}</small> : null}</span>
+                            <span><strong>{formatQuotationItemName(line.itemName)}</strong>{automatic ? <small>{quantitySourceLabel(line.quantitySource)}</small> : null}</span>
                           </div>
                         </td>
                         <td>{formatQuotationUnit(line.unit)}</td>
@@ -304,7 +320,7 @@ export function QuotationEditor({
                             <span className="automatic-quantity">{formatDisplayNumber(line.quantity)}</span>
                           ) : (
                             <input
-                              aria-label={`${line.itemName} 数量`}
+                              aria-label={`${formatQuotationItemName(line.itemName)} 数量`}
                               className="quantity-input"
                               disabled={saving || !editable}
                               inputMode="decimal"
@@ -340,7 +356,11 @@ export function QuotationEditor({
           <section>
             <p className="quotation-summary-title">当前分区</p>
             <strong>已计价 ¥ {formatQuotationMoney(activeScope.subtotal)}</strong>
-            <small>{emptyQuantityCount(activeScope)} 项数量为空＝{emptyQuantityNote(activeScope)}</small>
+            <small>
+              {compactReadOnly
+                ? `${activeLines.length} 项已报价`
+                : `${emptyQuantityCount(activeScope)} 项数量为空＝${emptyQuantityNote(activeScope)}`}
+            </small>
           </section>
           <section>
             <p className="quotation-total-label">半包实时总价</p>
@@ -387,7 +407,7 @@ function MultiSelectControl({
                 disabled={disabled}
                 onCheckedChange={(checked) => onToggle(line, checked === true)}
               />
-              <span>{line.itemName}</span>
+              <span>{formatQuotationItemName(line.itemName)}</span>
             </label>
           ))}
         </div>
@@ -420,12 +440,13 @@ function scopeRuleDescription(scope: HalfPackageQuotationScope): string {
     return "独立阳台与客餐厅包阳台分别归属、计量、汇总和导出";
   }
   if (sectionName.includes("油漆工程")) {
-    return "3 项数量均直接读取项目建筑面积";
+    return "3 项数量均直接读取项目外框面积";
   }
   if (sectionName.includes("水电工程")) {
-    return "面积型项目读取建筑面积；其余项目数量留空，由主案设计师按方案填写";
+    return "面积型项目读取外框面积；其余项目数量留空，由主案设计师按方案填写";
   }
-  return "第 1 项按实际车数手填；第 2、3 项按项目建筑面积自动填写";
+  if (sectionName === "管理费") return "按半包直接费 10% 自动计算";
+  return "第 1 项按实际车数手填；第 2、3 项按项目外框面积自动填写";
 }
 
 function quotationScopeTitle(scope: HalfPackageQuotationScope): string {
@@ -448,7 +469,7 @@ function quotationScopeTitle(scope: HalfPackageQuotationScope): string {
 
 function scopeParameters(
   scope: HalfPackageQuotationScope,
-  buildingArea: string,
+  outerFrameArea: string,
   templateVersion: number,
   leadDesignerName: string,
 ): readonly { readonly label: string; readonly value: string }[] {
@@ -467,7 +488,7 @@ function scopeParameters(
   const sectionName = primarySectionName(scope);
   const common = [
     { label: "作用范围", value: "项目级通用工程" },
-    { label: "建筑面积", value: `${formatDisplayNumber(buildingArea)}㎡` },
+    { label: "外框面积", value: `${formatDisplayNumber(outerFrameArea)}㎡` },
   ];
   if (sectionName.includes("油漆工程")) {
     return [
@@ -505,9 +526,13 @@ function hasIncludedBalconyItems(scope: HalfPackageQuotationScope): boolean {
   return scope.lines.some((line) => line.sectionName.includes("阳台工程"));
 }
 
-function scopeItemCountLabel(scope: HalfPackageQuotationScope): string {
+function scopeItemCountLabel(
+  scope: HalfPackageQuotationScope,
+  compactReadOnly: boolean,
+): string {
+  if (scope.name === "管理费") return "1";
   const counts = new Map<string, number>();
-  for (const line of scope.lines) {
+  for (const line of quotationLinesForDisplay(scope.lines, compactReadOnly)) {
     counts.set(line.sectionName, (counts.get(line.sectionName) ?? 0) + 1);
   }
   return [...counts.values()].join("+");
@@ -540,7 +565,7 @@ function quantitySourceLabel(source: HalfPackageQuotationLine["quantitySource"])
   return {
     LINE_REFERENCE: "自动 · 引用工程项",
     MANUAL: "手工填写",
-    PROJECT_BUILDING_AREA: "自动 · 项目建筑面积",
+    PROJECT_OUTER_FRAME_AREA: "自动 · 项目外框面积",
     SPACE_AREA: "自动 · 空间面积",
     SPACE_PERIMETER_HEIGHT: "自动 · 周长 × 层高",
   }[source];

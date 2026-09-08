@@ -2,10 +2,13 @@ import type {
   HalfPackageApprovalDecision,
   HalfPackageExportFormat,
   HalfPackageExportResponse,
+  HalfPackageCostMargin,
+  HalfPackageCostMarginResponse,
   HalfPackageVersionCompareResponse,
   HalfPackageQuotation,
   HalfPackageQuotationResponse,
   UpdateHalfPackageQuotationLineRequest,
+  UpdateHalfPackageAdjustmentRequest,
 } from "@shanyu/contracts";
 
 import { apiUrl } from "./api-url";
@@ -84,16 +87,56 @@ export async function decideQuotation(
   );
 }
 
-export async function cloneQuotationVersion(
+export async function continueEditingQuotation(
   projectId: string,
   quotationId: string,
   fetcher: Fetcher = fetch,
 ): Promise<HalfPackageQuotation> {
   return quotationMutation(
-    `${apiUrl}/projects/${projectId}/half-package-quotation/versions/${quotationId}/clone`,
+    `${apiUrl}/projects/${projectId}/half-package-quotation/versions/${quotationId}/continue-editing`,
     {},
     fetcher,
   );
+}
+
+export async function updateQuotationAdjustment(
+  projectId: string,
+  quotationId: string,
+  input: UpdateHalfPackageAdjustmentRequest,
+  fetcher: Fetcher = fetch,
+): Promise<HalfPackageQuotation> {
+  const response = await fetcher(
+    `${apiUrl}/projects/${projectId}/half-package-quotation/versions/${quotationId}/adjustment`,
+    {
+      body: JSON.stringify(input),
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      method: "PATCH",
+    },
+  );
+  if (!response.ok) throw await responseError(response, "保存折扣与抹零失败");
+  return ((await response.json()) as HalfPackageQuotationResponse).quotation;
+}
+
+export async function updateQuotationMarginBenchmark(
+  projectId: string,
+  quotationId: string,
+  marginBenchmarkPercent: string,
+  fetcher: Fetcher = fetch,
+): Promise<HalfPackageCostMargin> {
+  const response = await fetcher(
+    `${apiUrl}/projects/${projectId}/half-package-quotation/versions/${quotationId}/margin-benchmark`,
+    {
+      body: JSON.stringify({ marginBenchmarkPercent }),
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      method: "PATCH",
+    },
+  );
+  if (!response.ok) {
+    throw await responseError(response, "保存基准毛利率失败");
+  }
+  return ((await response.json()) as HalfPackageCostMarginResponse).costMargin;
 }
 
 export async function createQuotationExport(

@@ -44,6 +44,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiUrl } from "@/lib/api-url";
+import { continueEditingQuotation } from "@/lib/quotation-client";
 
 interface SpaceManagerProps {
   readonly projectId: string;
@@ -67,13 +68,14 @@ export const spaceTypeLabels: Record<SpaceType, string> = {
 
 export function SpaceManager({ projectId, quotation, spaces }: SpaceManagerProps) {
   const router = useRouter();
+  const [currentQuotation, setCurrentQuotation] = useState(quotation);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<ManagerView>({ kind: "LIST" });
   const [deleteTarget, setDeleteTarget] = useState<ProjectSpace | null>(null);
   const [isPending, setIsPending] = useState(false);
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState(false);
-  const canAdjust = quotation.status === "DRAFT";
+  const canAdjust = currentQuotation.status === "DRAFT";
   const hasWrappedBalcony = spaces.some(
     (space) => space.type === "LIVING_DINING" && space.includesBalcony,
   );
@@ -91,6 +93,23 @@ export function SpaceManager({ projectId, quotation, spaces }: SpaceManagerProps
     setOpen(false);
     setView({ kind: "LIST" });
     router.refresh();
+  }
+
+  async function prepareAdjustment() {
+    setIsPending(true);
+    setMessage("");
+    try {
+      const draft = await continueEditingQuotation(
+        projectId,
+        currentQuotation.id,
+      );
+      setCurrentQuotation(draft);
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "无法建立新草稿");
+    } finally {
+      setIsPending(false);
+    }
   }
 
   async function remove(event: MouseEvent<HTMLButtonElement>) {
@@ -115,7 +134,7 @@ export function SpaceManager({ projectId, quotation, spaces }: SpaceManagerProps
   }
 
   const deleteSelectedCount = deleteTarget
-    ? quotation.scopes
+    ? currentQuotation.scopes
         .find((scope) => scope.projectSpaceId === deleteTarget.id)
         ?.lines.filter((line) => line.selected).length ?? 0
     : 0;
@@ -152,7 +171,7 @@ export function SpaceManager({ projectId, quotation, spaces }: SpaceManagerProps
                       <span className="type-body">{Number(space.perimeter).toFixed(2)}</span>
                       <span className="type-body">{Number(space.height).toFixed(2)}</span>
                       <div className="flex justify-end gap-1">
-                        <Button aria-label={`重命名${space.displayName}`} onClick={() => setView({ kind: "RENAME", space })} size="icon" variant="ghost"><PencilLine /></Button>
+                        <Button aria-label={`修改${space.displayName}`} onClick={() => setView({ kind: "RENAME", space })} size="icon" variant="ghost"><PencilLine /></Button>
                         <Button aria-label={`删除${space.displayName}`} disabled={spaces.length === 1} onClick={() => setDeleteTarget(space)} size="icon" variant="ghost"><Trash2 className="text-destructive" /></Button>
                       </div>
                     </div>
@@ -185,14 +204,21 @@ export function SpaceManager({ projectId, quotation, spaces }: SpaceManagerProps
               <span className="mb-2 grid size-10 place-items-center rounded-full bg-warning-soft text-warning"><LockKeyhole className="size-5" /></span>
               <DialogTitle>当前报价暂不可调整空间</DialogTitle>
               <DialogDescription>
-                {quotation.status === "PENDING_APPROVAL"
-                  ? "当前半包报价正在审批。请先由老板退回草稿，再调整项目空间。"
-                  : "当前报价已形成历史版本。请复制为新版本并进入草稿状态后调整空间。"}
+                {currentQuotation.status === "APPROVED"
+                  ? "当前报价已批准。请先由老板打回，再调整项目空间。"
+                  : "调整空间将自动建立新草稿，当前已生成报价单随即失效，修改后需再次确认生成。"}
               </DialogDescription>
             </DialogHeader>
+            {message ? <p className="type-body text-destructive" role="alert">{message}</p> : null}
             <DialogFooter>
-              <Button onClick={() => changeOpen(false)} variant="outline">知道了</Button>
-              <Button asChild><a href={`/projects/${projectId}/quotation/versions`}>查看版本记录</a></Button>
+              <Button disabled={isPending} onClick={() => changeOpen(false)} variant="outline">取消</Button>
+              {currentQuotation.status === "APPROVED" ? (
+                <Button asChild><a href={`/projects/${projectId}/quotation/versions`}>项目版本管理</a></Button>
+              ) : (
+                <Button disabled={isPending} onClick={() => void prepareAdjustment()}>
+                  {isPending ? "正在建立草稿…" : "确认并调整空间"}
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         )}
@@ -319,11 +345,11 @@ function RenameSpaceDialog({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const input: SpaceInput = {
-      area: space.area,
+      area: String(form.get("area") ?? ""),
       displayName: String(form.get("displayName") ?? ""),
-      height: space.height,
+      height: String(form.get("height") ?? ""),
       includesBalcony: space.includesBalcony,
-      perimeter: space.perimeter,
+      perimeter: String(form.get("perimeter") ?? ""),
       type: space.type,
     };
     setIsPending(true);
@@ -335,10 +361,10 @@ function RenameSpaceDialog({
         headers: { "content-type": "application/json" },
         method: "PATCH",
       });
-      if (!response.ok) throw await responseError(response, "重命名失败");
+      if (!response.ok) throw await responseError(response, "修改失败");
       onFinish();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "重命名失败");
+      setMessage(error instanceof Error ? error.message : "修改失败");
     } finally {
       setIsPending(false);
     }
@@ -346,12 +372,17 @@ function RenameSpaceDialog({
 
   return (
     <DialogContent className="max-w-lg border-border">
-      <DialogHeader><DialogTitle>修改空间名称</DialogTitle><DialogDescription>{spaceTypeLabels[space.type]} · 当前名称“{space.displayName}”</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>修改空间</DialogTitle><DialogDescription>{spaceTypeLabels[space.type]} · 自动工程项将按新参数重算，手工数量保持不变。</DialogDescription></DialogHeader>
       <form className="space-y-5" onSubmit={submit}>
-        <Field label="显示名称"><Input defaultValue={space.displayName} maxLength={6} minLength={1} name="displayName" required /></Field>
-        <p className="type-support text-muted-foreground">新名称会用于当前半包草稿；历史版本保留原名称。</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="显示名称"><Input defaultValue={space.displayName} maxLength={6} minLength={1} name="displayName" required /></Field>
+          <Field label="面积（㎡）"><Input defaultValue={space.area} inputMode="decimal" name="area" required /></Field>
+          <Field label="周长（m）"><Input defaultValue={space.perimeter} inputMode="decimal" name="perimeter" required /></Field>
+          <Field label="层高（m）"><Input defaultValue={space.height} inputMode="decimal" name="height" required /></Field>
+        </div>
+        <p className="type-support text-muted-foreground">修改同步至当前半包草稿；历史报价版本保留原名称和参数。</p>
         {message ? <p className="type-body text-destructive" role="alert">{message}</p> : null}
-        <DialogFooter><Button disabled={isPending} onClick={onBack} type="button" variant="outline">返回列表</Button><Button disabled={isPending}>{isPending ? "保存中…" : "保存名称"}</Button></DialogFooter>
+        <DialogFooter><Button disabled={isPending} onClick={onBack} type="button" variant="outline">返回列表</Button><Button disabled={isPending}>{isPending ? "保存中…" : "保存修改"}</Button></DialogFooter>
       </form>
     </DialogContent>
   );

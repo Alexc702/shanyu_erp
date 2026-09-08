@@ -237,10 +237,16 @@ export class ProjectsService {
 }
 
 function normalizeProject(input: CreateProjectRequest): CreateProjectRequest {
-  const name = normalizedRequiredText(input.name, "项目名称", 100);
-  const customerName = normalizedRequiredText(input.customerName, "客户", 100);
-  const address = normalizedRequiredText(input.address, "地址", 500);
-  const buildingArea = normalizedPositiveDecimal(input.buildingArea, "建筑面积");
+  const projectAddress = normalizedRequiredText(
+    input.projectAddress,
+    "项目地址",
+    500,
+  );
+  const customerName = normalizedRequiredText(input.customerName, "客户", 20);
+  if (weightedCustomerNameLength(customerName) > 20) {
+    throw new BadRequestException("客户名称最多 10 个中文或 20 个英文字符");
+  }
+  const outerFrameArea = normalizedOuterFrameArea(input.outerFrameArea);
   if (
     typeof input.leadDesignerId !== "string" ||
     !input.leadDesignerId ||
@@ -255,11 +261,10 @@ function normalizeProject(input: CreateProjectRequest): CreateProjectRequest {
     throw new ConflictException("空间名称在项目内必须唯一");
   }
   return {
-    address,
-    buildingArea,
     customerName,
     leadDesignerId: input.leadDesignerId,
-    name,
+    outerFrameArea,
+    projectAddress,
     spaces,
   };
 }
@@ -318,4 +323,22 @@ function normalizedPositiveDecimal(value: unknown, label: string): string {
     throw new BadRequestException(`${label}须为最多 4 位小数的正数`);
   }
   return value;
+}
+
+function normalizedOuterFrameArea(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !/^\d{1,5}(?:\.\d{1,2})?$/.test(value) ||
+    Number(value) <= 0
+  ) {
+    throw new BadRequestException("外框面积最多 5 位整数并保留 2 位小数");
+  }
+  return value;
+}
+
+function weightedCustomerNameLength(value: string): number {
+  return [...value].reduce(
+    (length, character) => length + (character.codePointAt(0)! <= 0x7f ? 1 : 2),
+    0,
+  );
 }

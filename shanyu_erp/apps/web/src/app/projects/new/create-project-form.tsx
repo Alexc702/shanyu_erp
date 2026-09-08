@@ -100,14 +100,13 @@ export function CreateProjectForm({
     try {
       const response = await fetch(`${apiUrl}/projects`, {
         body: JSON.stringify({
-          address: form.get("address"),
-          buildingArea: form.get("buildingArea"),
           customerName: form.get("customerName"),
           leadDesignerId:
             currentUser.role === "LEAD_DESIGNER"
               ? currentUser.id
               : form.get("leadDesignerId"),
-          name: form.get("name"),
+          outerFrameArea: form.get("outerFrameArea"),
+          projectAddress: form.get("projectAddress"),
           spaces: spaces.map((space) => ({
             area: space.area,
             displayName: space.displayName,
@@ -145,9 +144,9 @@ export function CreateProjectForm({
           <div><p className="eyebrow">01</p><h2>项目信息</h2></div>
         </div>
         <div className="project-field-grid">
-          <label>项目名称<input name="name" required /></label>
-          <label>客户<input name="customerName" required /></label>
-          <label>建筑面积（㎡）<input inputMode="decimal" name="buildingArea" required /></label>
+          <label className="project-address-field">项目地址<input maxLength={500} name="projectAddress" required /></label>
+          <label className="project-customer-field">客户<input maxLength={20} name="customerName" onInput={validateCustomerName} required /></label>
+          <label className="project-area-field">外框面积（㎡）<input inputMode="decimal" max="99999.99" name="outerFrameArea" pattern="\d{1,5}(\.\d{1,2})?" required /></label>
           {hasOwnerPermissions(currentUser.role) ? (
             <label>主案设计师
               <select name="leadDesignerId" required defaultValue="">
@@ -160,7 +159,6 @@ export function CreateProjectForm({
           ) : (
             <label>主案设计师<input disabled value={currentUser.displayName} /></label>
           )}
-          <label className="wide-field">项目地址<input name="address" required /></label>
         </div>
       </section>
 
@@ -204,9 +202,9 @@ export function CreateProjectForm({
 
       <div className="project-submit-row">
         <ul className="check-list">
-          <li>项目名称、客户与地址为必填</li>
+          <li>项目地址、客户与外框面积为必填</li>
           <li>空间名称须为 1–6 字且项目内唯一</li>
-          <li>面积、周长、层高用于已确认数量规则</li>
+          <li>外框面积、空间面积、周长、层高用于已确认数量规则</li>
           <li>客餐厅包阳台与独立阳台分别计量</li>
         </ul>
         <span className="form-message" role="status">{message}</span>
@@ -252,4 +250,15 @@ function draftSpace(type: SpaceType, displayName: string): SpaceDraft {
     perimeter: "",
     type,
   };
+}
+
+function validateCustomerName(event: FormEvent<HTMLInputElement>) {
+  const input = event.currentTarget;
+  const length = [...input.value].reduce(
+    (total, character) => total + (/^[\x00-\x7F]$/.test(character) ? 1 : 2),
+    0,
+  );
+  input.setCustomValidity(
+    length > 20 ? "客户名称最多 10 个中文或 20 个英文字符" : "",
+  );
 }

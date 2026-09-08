@@ -2,10 +2,13 @@ import type { HalfPackageQuotation } from "@shanyu/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  continueEditingQuotation,
   createQuotationExport,
   formatQuotationMoney,
   quotationLineUpdateForQuantity,
   saveQuotationLine,
+  updateQuotationAdjustment,
+  updateQuotationMarginBenchmark,
 } from "./quotation-client";
 
 describe("quotation client", () => {
@@ -127,15 +130,115 @@ describe("quotation client", () => {
       createQuotationExport("quotation-id", "PDF", fetcher),
     ).rejects.toThrow("报价尚未批准");
   });
+
+  it("continues editing an existing generated version with the browser session", async () => {
+    const fetcher = vi.fn<Fetcher>(async () =>
+      new Response(JSON.stringify({ quotation }), {
+        headers: { "content-type": "application/json" },
+        status: 201,
+      }),
+    );
+
+    await expect(
+      continueEditingQuotation("project-id", "quotation-id", fetcher),
+    ).resolves.toEqual(quotation);
+    expect(fetcher.mock.calls[0]?.[0]).toContain(
+      "/projects/project-id/half-package-quotation/versions/quotation-id/continue-editing",
+    );
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
+      credentials: "include",
+      method: "POST",
+    });
+  });
+
+  it("saves a quote adjustment with its optimistic revision and reason", async () => {
+    const fetcher = vi.fn<Fetcher>(async () =>
+      new Response(JSON.stringify({ quotation }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    );
+    const input = {
+      action: "SUBMIT_FOR_APPROVAL" as const,
+      discountRate: "0.9500",
+      expectedRevision: 3,
+      reason: "客户确认折扣",
+      writeOff: "100.0000",
+    };
+
+    await expect(
+      updateQuotationAdjustment(
+        "project-id",
+        "quotation-id",
+        input,
+        fetcher,
+      ),
+    ).resolves.toEqual(quotation);
+    expect(fetcher.mock.calls[0]?.[0]).toContain(
+      "/projects/project-id/half-package-quotation/versions/quotation-id/adjustment",
+    );
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
+      credentials: "include",
+      method: "PATCH",
+    });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual(input);
+  });
+
+  it("updates the quotation gross-margin benchmark with credentials", async () => {
+    const costMargin = {
+      costVersion: { id: "catalog-id", versionNumber: 4 },
+      expectedCost: "70.0000",
+      grossMarginRate: "0.3000",
+      grossProfit: "30.0000",
+      id: "quotation-id",
+      marginBenchmarkRate: "0.3200",
+      projectAddress: "测试项目",
+      projectId: "project-id",
+      salesAmount: "100.0000",
+      scopes: [],
+      status: "QUOTED" as const,
+      versionNumber: 1,
+    };
+    const fetcher = vi.fn<Fetcher>(async () =>
+      new Response(JSON.stringify({ costMargin }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    );
+
+    await expect(
+      updateQuotationMarginBenchmark(
+        "project-id",
+        "quotation-id",
+        "32",
+        fetcher,
+      ),
+    ).resolves.toEqual(costMargin);
+    expect(fetcher.mock.calls[0]?.[0]).toContain(
+      "/projects/project-id/half-package-quotation/versions/quotation-id/margin-benchmark",
+    );
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
+      credentials: "include",
+      method: "PATCH",
+    });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      marginBenchmarkPercent: "32",
+    });
+  });
 });
 
 const quotation: HalfPackageQuotation = {
+  adjustmentReason: null,
+  adjustmentStatus: "AWAITING_SUBMISSION",
+  adjustedTotal: "136.4000",
   directCost: "124.0000",
+  discountRate: "1.0000",
   id: "quotation-id",
   managementFee: "12.4000",
   managementRate: "0.1000",
+  isCurrent: true,
   projectId: "project-id",
-  projectName: "静悦府",
+  projectAddress: "上海市静安区测试路 1 号",
   revision: 3,
   scopes: [],
   status: "DRAFT",
@@ -143,6 +246,7 @@ const quotation: HalfPackageQuotation = {
   templateVersion: 1,
   total: "136.4000",
   versionNumber: 1,
+  writeOff: "0.0000",
 };
 
 type Fetcher = (

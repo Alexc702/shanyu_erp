@@ -26,6 +26,7 @@ RUN pnpm --filter @shanyu/contracts build \
     && pnpm --filter @shanyu/web build
 RUN pnpm --filter @shanyu/api deploy --prod --legacy /out/api \
     && cp -R migrations /out/api/migrations \
+    && cp -R apps/api/assets /out/api/assets \
     && cp scripts/run-migrations.mjs /out/api/scripts/run-migrations.mjs
 
 FROM node:${NODE_VERSION}-bookworm-slim AS api

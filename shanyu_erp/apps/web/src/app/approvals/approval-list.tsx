@@ -44,7 +44,7 @@ export function ApprovalList({
         (leadDesigner === "ALL" ||
           item.leadDesignerName === leadDesigner) &&
         (!keyword ||
-          item.projectName.toLocaleLowerCase("zh-CN").includes(keyword) ||
+          item.projectAddress.toLocaleLowerCase("zh-CN").includes(keyword) ||
           item.customerName.toLocaleLowerCase("zh-CN").includes(keyword)),
     );
   }, [leadDesigner, query, quotations]);
@@ -61,11 +61,11 @@ export function ApprovalList({
         <div className="grid gap-1">
           <h1 className="type-page-title">报价审批</h1>
           <p className="type-table-body">
-            仅展示当前有效的待审批项目，以项目报价与毛利水平作为审批依据
+            仅展示当前有效的已报价项目，以项目报价与毛利水平作为审批依据
           </p>
         </div>
         <Badge className="px-2.5 py-1" variant="warning">
-          {quotations.length} 项待审批
+          {quotations.length} 项已报价
         </Badge>
       </header>
 
@@ -100,7 +100,7 @@ export function ApprovalList({
           ))}
         </select>
         <span className="type-support ml-auto text-muted-foreground">
-          按提交时间倒序
+          按确认时间倒序
         </span>
       </div>
 
@@ -123,7 +123,7 @@ export function ApprovalList({
           <TableHeader>
             <TableRow className="border-border bg-muted hover:bg-muted">
               <TableHead className="h-[42px]">项目 / 客户</TableHead>
-              <TableHead className="h-[42px]">提交信息</TableHead>
+              <TableHead className="h-[42px]">确认信息</TableHead>
               <TableHead className="h-[42px] whitespace-normal">
                 项目报价 / 对客收入
               </TableHead>
@@ -139,7 +139,7 @@ export function ApprovalList({
               <TableRow className="h-[88px] border-border" key={quotation.id}>
                 <TableCell className="whitespace-normal px-3 py-3">
                   <strong className="type-entity block">
-                    {quotation.projectName}
+                    {quotation.projectAddress}
                   </strong>
                   <span className="type-support mt-1 block text-muted-foreground">
                     {quotation.customerName}
@@ -182,7 +182,7 @@ export function ApprovalList({
         </Table>
         {visible.length === 0 ? (
           <div className="type-body flex h-40 items-center justify-center text-muted-foreground">
-            当前筛选条件下没有待审批报价
+            当前筛选条件下没有已报价项目
           </div>
         ) : null}
         <footer className="flex h-12 items-center justify-between border-t border-border px-3">

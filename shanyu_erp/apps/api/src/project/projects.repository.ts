@@ -7,7 +7,17 @@ import type {
 
 export const PROJECTS_REPOSITORY = Symbol("PROJECTS_REPOSITORY");
 
-export interface NewProject extends Omit<ProjectDetail, "leadDesigner"> {
+export interface NewProject
+  extends Omit<
+    ProjectDetail,
+    | "createdAt"
+    | "leadDesigner"
+    | "quotationAmount"
+    | "quotationId"
+    | "quotationStatus"
+    | "quotationVersion"
+    | "updatedAt"
+  > {
   readonly createdByUserId: string;
   readonly leadDesignerId: string;
 }

@@ -29,6 +29,7 @@ import {
 } from "../src/quotation/quotation.controller";
 import { QuotationExporter } from "../src/quotation/quotation-exporter";
 import {
+  type ConfirmedQuotationAdjustment,
   type NewQuotationDraft,
   type NewQuotationExport,
   QUOTATION_REPOSITORY,
@@ -159,9 +160,10 @@ describe("half-package quotation HTTP interface", () => {
     expect(ownerCost.body.costMargin).toMatchObject({
       costVersion: { id: template.id, versionNumber: 1 },
       expectedCost: "80.0000",
-      grossMarginRate: "0.3548",
-      grossProfit: "44.0000",
-      salesAmount: "124.0000",
+      grossMarginRate: "0.4135",
+      grossProfit: "56.4000",
+      marginBenchmarkRate: "0.3000",
+      salesAmount: "136.4000",
     });
     expect(ownerCost.body.costMargin.scopes[0].lines[0]).toMatchObject({
       costAmount: "80.0000",
@@ -173,6 +175,23 @@ describe("half-package quotation HTTP interface", () => {
       .get(`/projects/${project.id}/half-package-quotation/cost-margin`)
       .set("Cookie", cookie)
       .expect(403);
+    await request(app.getHttpServer())
+      .patch(
+        `/projects/${project.id}/half-package-quotation/versions/${ownerCost.body.costMargin.id}/margin-benchmark`,
+      )
+      .set("Cookie", cookie)
+      .send({ marginBenchmarkPercent: "35" })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(
+        `/projects/${project.id}/half-package-quotation/versions/${ownerCost.body.costMargin.id}/margin-benchmark`,
+      )
+      .set("Cookie", ownerCookie)
+      .send({ marginBenchmarkPercent: "35" })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.costMargin.marginBenchmarkRate).toBe("0.3500");
+      });
   });
 
   it("lets the owner enter but hides project existence from woodwork and unrelated leads", async () => {
@@ -195,7 +214,7 @@ describe("half-package quotation HTTP interface", () => {
         .get(`/projects/${project.id}/half-package-quotation/cost-margin`)
         .set("Cookie", cookie)
         .expect(403);
-      expect(JSON.stringify(deniedCost.body)).not.toContain(project.name);
+      expect(JSON.stringify(deniedCost.body)).not.toContain(project.projectAddress);
     }
   });
 
@@ -210,27 +229,85 @@ describe("half-package quotation HTTP interface", () => {
       .expect(400);
   });
 
-  it("enforces submit, owner approval and approved-only customer export", async () => {
+  it("submits discount approval before export and enforces owner-only final approval", async () => {
     const leadCookie = await login("alex", "lead-password");
     const opened = await request(app.getHttpServer())
       .get(`/projects/${project.id}/half-package-quotation`)
       .set("Cookie", leadCookie)
       .expect(200);
     const quotationId = opened.body.quotation.id as string;
+    const lineId = opened.body.quotation.scopes[0]?.lines[0]?.id as
+      | string
+      | undefined;
+    if (!lineId) throw new Error("报价响应缺少工程项");
+    const saved = await request(app.getHttpServer())
+      .patch(`/projects/${project.id}/half-package-quotation/lines/${lineId}`)
+      .set("Cookie", leadCookie)
+      .send({
+        expectedRevision: opened.body.quotation.revision,
+        quantity: "2.0000",
+        selected: true,
+      })
+      .expect(200);
 
-    await request(app.getHttpServer())
+    const quoted = await request(app.getHttpServer())
       .post(`/projects/${project.id}/half-package-quotation/submit`)
       .set("Cookie", leadCookie)
-      .send({ expectedRevision: opened.body.quotation.revision })
+      .send({ expectedRevision: saved.body.quotation.revision })
       .expect(201)
       .expect(({ body }) => {
-        expect(body.quotation.status).toBe("PENDING_APPROVAL");
+        expect(body.quotation.status).toBe("QUOTED");
       });
     await request(app.getHttpServer())
       .post(`/approvals/half-package/${quotationId}/decision`)
       .set("Cookie", leadCookie)
       .send({ action: "APPROVED", reason: null })
       .expect(403);
+    await request(app.getHttpServer())
+      .post(`/approvals/half-package/${quotationId}/exports`)
+      .set("Cookie", leadCookie)
+      .send({ format: "PDF" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(
+        `/projects/${project.id}/half-package-quotation/versions/${quotationId}/adjustment`,
+      )
+      .set("Cookie", leadCookie)
+      .send({
+        action: "SUBMIT_FOR_APPROVAL",
+        discountRate: "0.9500",
+        expectedRevision: quoted.body.quotation.revision,
+        reason: "  ",
+        writeOff: "1.0000",
+      })
+      .expect(400);
+
+    const adjusted = await request(app.getHttpServer())
+      .patch(
+        `/projects/${project.id}/half-package-quotation/versions/${quotationId}/adjustment`,
+      )
+      .set("Cookie", leadCookie)
+      .send({
+        action: "SUBMIT_FOR_APPROVAL",
+        discountRate: "0.9500",
+        expectedRevision: quoted.body.quotation.revision,
+        reason: "客户确认九五折并抹零",
+        writeOff: "1.0000",
+      })
+      .expect(200);
+    expect(adjusted.body.quotation).toMatchObject({
+      adjustedTotal: "128.5800",
+      adjustmentStatus: "PENDING_APPROVAL",
+      discountRate: "0.9500",
+      writeOff: "1.0000",
+    });
+
+    await request(app.getHttpServer())
+      .post(`/approvals/half-package/${quotationId}/exports`)
+      .set("Cookie", leadCookie)
+      .send({ format: "PDF" })
+      .expect(409);
 
     const ownerCookie = await login("owner", "owner-password");
     await request(app.getHttpServer())
@@ -241,9 +318,9 @@ describe("half-package quotation HTTP interface", () => {
         expect(body.quotations).toEqual([
           expect.objectContaining({
             expectedCost: expect.any(String),
-            grossMarginRate: null,
+            grossMarginRate: expect.any(String),
             grossProfit: expect.any(String),
-            salesAmount: expect.any(String),
+            salesAmount: "128.5800",
             thirdPartyPurchaseAmount: null,
           }),
         ]);
@@ -257,7 +334,14 @@ describe("half-package quotation HTTP interface", () => {
       .post(`/approvals/half-package/${quotationId}/decision`)
       .set("Cookie", ownerCookie)
       .send({ action: "APPROVED", reason: null })
-      .expect(201);
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.quotation).toMatchObject({
+          adjustmentStatus: "CONFIRMED",
+          status: "APPROVED",
+        });
+      });
+
     for (const expected of [
       {
         contentType: "application/pdf",
@@ -273,7 +357,7 @@ describe("half-package quotation HTTP interface", () => {
     ] as const) {
       const createdExport = await request(app.getHttpServer())
         .post(`/approvals/half-package/${quotationId}/exports`)
-        .set("Cookie", ownerCookie)
+        .set("Cookie", leadCookie)
         .send({ format: expected.format })
         .expect(201);
       const exported = createdExport.body.export as {
@@ -286,7 +370,7 @@ describe("half-package quotation HTTP interface", () => {
 
       const downloaded = await request(app.getHttpServer())
         .get(exported.downloadPath)
-        .set("Cookie", ownerCookie)
+        .set("Cookie", leadCookie)
         .buffer(true)
         .parse(bufferResponse)
         .expect(200)
@@ -303,7 +387,8 @@ describe("half-package quotation HTTP interface", () => {
         .get(exported.downloadPath)
         .expect(401);
     }
-  }, 15_000);
+
+  }, 30_000);
 
   async function login(account: string, password: string): Promise<string> {
     const response = await request(app.getHttpServer())
@@ -330,20 +415,23 @@ describe("half-package quotation PostgreSQL concurrency", () => {
 
       const database = realApp.get(DatabaseClient);
       const userId = randomUUID();
+      const ownerId = randomUUID();
       const account = `quote-race-${userId.slice(0, 8)}`;
+      const ownerAccount = `quote-owner-${ownerId.slice(0, 8)}`;
       const password = "quotation-concurrency-password";
       let projectId: string | null = null;
 
       try {
         await database.query(
           `INSERT INTO users (id, account, display_name, role, status)
-           VALUES ($1, $2, '并发测试主案', 'LEAD_DESIGNER', 'ACTIVE')`,
-          [userId, account],
+           VALUES ($1, $2, '并发测试主案', 'LEAD_DESIGNER', 'ACTIVE'),
+                  ($3, $4, '并发测试老板', 'OWNER', 'ACTIVE')`,
+          [userId, account, ownerId, ownerAccount],
         );
         await database.query(
           `INSERT INTO user_credentials (user_id, password_hash)
-           VALUES ($1, $2)`,
-          [userId, await hashPassword(password)],
+           VALUES ($1, $3), ($2, $3)`,
+          [userId, ownerId, await hashPassword(password)],
         );
 
         const loginResponse = await request(realApp.getHttpServer())
@@ -352,16 +440,21 @@ describe("half-package quotation PostgreSQL concurrency", () => {
           .expect(200);
         const cookie = loginResponse.headers["set-cookie"]?.[0];
         if (!cookie) throw new Error("并发测试登录后缺少会话 Cookie");
+        const ownerLoginResponse = await request(realApp.getHttpServer())
+          .post("/auth/login")
+          .send({ identifier: ownerAccount, password, rememberMe: false })
+          .expect(200);
+        const ownerCookie = ownerLoginResponse.headers["set-cookie"]?.[0];
+        if (!ownerCookie) throw new Error("并发测试老板登录后缺少会话 Cookie");
 
         const createdProject = await request(realApp.getHttpServer())
           .post("/projects")
           .set("Cookie", cookie)
           .send({
-            address: "并发测试地址",
-            buildingArea: "100.0000",
+            outerFrameArea: "100.00",
             customerName: "并发测试客户",
             leadDesignerId: userId,
-            name: `并发测试-${userId.slice(0, 6)}`,
+            projectAddress: `并发测试-${userId.slice(0, 6)}`,
             spaces: [
               {
                 area: "20.0000",
@@ -388,13 +481,85 @@ describe("half-package quotation PostgreSQL concurrency", () => {
           Array.from({ length: 10 }, () => 200),
         );
         const quotations = responses.map(
-          (response) => response.body.quotation as { id: string; scopes: unknown[] },
+          (response) => response.body.quotation as {
+            id: string;
+            revision: number;
+            scopes: unknown[];
+          },
         );
         expect(new Set(quotations.map((quotation) => quotation.id)).size).toBe(1);
         expect(quotations[0]?.scopes.length).toBeGreaterThan(0);
         for (const quotation of quotations.slice(1)) {
           expect(quotation.scopes).toEqual(quotations[0]?.scopes);
         }
+
+        const initial = quotations[0];
+        const projectSpace = createdProject.body.project.spaces[0] as
+          | { id: string }
+          | undefined;
+        const manualLine = initial?.scopes
+          .flatMap((scope) =>
+            (scope as { lines: Array<{ id: string; quantitySource: string }> })
+              .lines,
+          )
+          .find((line) => line.quantitySource === "MANUAL");
+        if (!initial || !projectSpace || !manualLine) {
+          throw new Error("空间参数测试缺少报价、空间或手工工程项");
+        }
+        const manuallyUpdated = await request(realApp.getHttpServer())
+          .patch(
+            `/projects/${projectId}/half-package-quotation/lines/${manualLine.id}`,
+          )
+          .set("Cookie", cookie)
+          .send({
+            expectedRevision: initial.revision,
+            quantity: "3.0000",
+            selected: true,
+          })
+          .expect(200);
+        await request(realApp.getHttpServer())
+          .patch(`/projects/${projectId}/spaces/${projectSpace.id}`)
+          .set("Cookie", cookie)
+          .send({
+            area: "25.0000",
+            displayName: "主卧",
+            height: "3.0000",
+            includesBalcony: false,
+            perimeter: "20.0000",
+            type: "BEDROOM",
+          })
+          .expect(200);
+        const recalculated = await request(realApp.getHttpServer())
+          .get(`/projects/${projectId}/half-package-quotation`)
+          .set("Cookie", cookie)
+          .expect(200);
+        const recalculatedLines = (
+          recalculated.body.quotation.scopes as Array<{
+            lines: Array<{
+              id: string;
+              itemName: string;
+              quantity: string | null;
+            }>;
+          }>
+        ).flatMap((scope) => scope.lines) as Array<{
+          id: string;
+          itemName: string;
+          quantity: string | null;
+        }>;
+        expect(
+          recalculatedLines.find((line) => line.itemName === "顶面基层处理")
+            ?.quantity,
+        ).toBe("25.0000");
+        expect(
+          recalculatedLines.find((line) => line.itemName === "墙面基层处理")
+            ?.quantity,
+        ).toBe("60.0000");
+        expect(
+          recalculatedLines.find((line) => line.id === manualLine.id)?.quantity,
+        ).toBe("3.0000");
+        expect(recalculated.body.quotation.revision).toBe(
+          manuallyUpdated.body.quotation.revision + 1,
+        );
 
         await request(realApp.getHttpServer())
           .get(`/projects/${projectId}/half-package-quotation/versions`)
@@ -404,18 +569,120 @@ describe("half-package quotation PostgreSQL concurrency", () => {
             expect(body.versions).toHaveLength(1);
             expect(body.versions[0]).toMatchObject({ versionNumber: 1 });
           });
+
+        const first = quotations[0];
+        if (!first) throw new Error("并发请求未返回报价");
+        const quoted = await request(realApp.getHttpServer())
+          .post(`/projects/${projectId}/half-package-quotation/submit`)
+          .set("Cookie", cookie)
+          .send({ expectedRevision: recalculated.body.quotation.revision })
+          .expect(201)
+          .expect(({ body }) => {
+            expect(body.quotation).toMatchObject({
+              id: first.id,
+              isCurrent: true,
+              status: "QUOTED",
+              versionNumber: 1,
+            });
+          });
+        const adjusted = await request(realApp.getHttpServer())
+          .patch(
+            `/projects/${projectId}/half-package-quotation/versions/${first.id}/adjustment`,
+          )
+          .set("Cookie", cookie)
+          .send({
+            action: "SUBMIT_FOR_APPROVAL",
+            discountRate: "0.9500",
+            expectedRevision: quoted.body.quotation.revision,
+            reason: "客户确认九五折并抹零",
+            writeOff: "1.0000",
+          })
+          .expect(200);
+        const returned = await request(realApp.getHttpServer())
+          .post(`/approvals/half-package/${first.id}/decision`)
+          .set("Cookie", ownerCookie)
+          .send({ action: "RETURNED", reason: "补充工程项并调整折扣" })
+          .expect(201);
+        await request(realApp.getHttpServer())
+          .post(
+            `/projects/${projectId}/half-package-quotation/versions/${returned.body.quotation.id}/continue-editing`,
+          )
+          .set("Cookie", cookie)
+          .expect(201)
+          .expect(({ body }) => {
+            expect(body.quotation).toMatchObject({
+              adjustedTotal: adjusted.body.quotation.adjustedTotal,
+              adjustmentReason: "客户确认九五折并抹零",
+              discountRate: "0.9500",
+              isCurrent: true,
+              status: "DRAFT",
+              versionNumber: 3,
+              writeOff: "1.0000",
+            });
+            expect(body.quotation.id).not.toBe(first.id);
+          });
+        await request(realApp.getHttpServer())
+          .post(`/approvals/half-package/${first.id}/decision`)
+          .set("Cookie", ownerCookie)
+          .send({ action: "APPROVED", reason: null })
+          .expect(409);
+        const currentResult = await database.query<{ count: string }>(
+          `SELECT count(*)::text AS count
+             FROM half_package_quotations
+            WHERE project_id = $1 AND is_current`,
+          [projectId],
+        );
+        expect(currentResult.rows[0]?.count).toBe("1");
       } finally {
         if (projectId) {
           await database.query(
-            "DELETE FROM half_package_quotations WHERE project_id = $1",
+            `DELETE FROM half_package_approval_decisions
+              WHERE quotation_id IN (
+                SELECT id FROM half_package_quotations WHERE project_id = $1
+              )`,
             [projectId],
           );
+          await database.query(
+            `DELETE FROM half_package_exports
+              WHERE quotation_id IN (
+                SELECT id FROM half_package_quotations WHERE project_id = $1
+              )`,
+            [projectId],
+          );
+          const versions = await database.query<{ id: string; status: string }>(
+            `SELECT id, status
+               FROM half_package_quotations
+              WHERE project_id = $1
+              ORDER BY version_number DESC`,
+            [projectId],
+          );
+          for (const version of versions.rows) {
+            if (version.status !== "DRAFT") {
+              await database.query(
+                `UPDATE half_package_quotations
+                    SET parent_version_id = NULL,
+                        status = 'DRAFT',
+                        submitted_at = NULL,
+                        submitted_by_user_id = NULL,
+                        is_current = false
+                  WHERE id = $1`,
+                [version.id],
+              );
+            }
+            await database.query(
+              "DELETE FROM half_package_quotations WHERE id = $1",
+              [version.id],
+            );
+          }
           await database.query("DELETE FROM projects WHERE id = $1", [projectId]);
         }
-        await database.query("DELETE FROM audit_events WHERE actor_user_id = $1", [
-          userId,
+        await database.query(
+          "DELETE FROM audit_events WHERE actor_user_id = ANY($1::uuid[])",
+          [[userId, ownerId]],
+        );
+        await database.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [
+          [userId, ownerId],
         ]);
-        await database.query("DELETE FROM users WHERE id = $1", [userId]);
         await realApp.close();
       }
     },
@@ -447,8 +714,10 @@ class StaticQuotationRepository implements QuotationRepository {
     return this.draft ? [structuredClone(this.draft)] : [];
   }
 
-  async listPendingApproval(): Promise<readonly QuotationDraft[]> {
-    return this.draft?.status === "PENDING_APPROVAL"
+  async listQuoted(): Promise<readonly QuotationDraft[]> {
+    return this.draft?.status === "QUOTED" &&
+      this.draft.adjustmentStatus === "PENDING_APPROVAL" &&
+      this.draft.isCurrent
       ? [structuredClone(this.draft)]
       : [];
   }
@@ -476,6 +745,41 @@ class StaticQuotationRepository implements QuotationRepository {
     return structuredClone(input);
   }
 
+  async saveAdjustment(
+    _quotationId: string,
+    discountRate: string,
+    writeOff: string,
+    adjustedTotal: string,
+    grossProfit: string,
+    grossMarginRate: string | null,
+    actorUserId: string,
+    reason: string | null,
+  ): Promise<QuotationDraft> {
+    if (!this.draft) throw new Error("missing quotation");
+    this.draft = {
+      ...this.draft,
+      adjustedTotal,
+      adjustmentReason: reason,
+      adjustmentStatus: "PENDING_APPROVAL",
+      discountRate,
+      grossMarginRate,
+      grossProfit,
+      revision: this.draft.revision + 1,
+      submittedByUserId: actorUserId,
+      writeOff,
+    };
+    return structuredClone(this.draft);
+  }
+
+  async updateMarginBenchmarkRate(
+    _quotationId: string,
+    marginBenchmarkRate: string,
+  ): Promise<QuotationDraft> {
+    if (!this.draft) throw new Error("missing quotation");
+    this.draft = { ...this.draft, marginBenchmarkRate };
+    return structuredClone(this.draft);
+  }
+
   async submitDraft(
     _quotationId: string,
     actorUserId: string,
@@ -483,7 +787,7 @@ class StaticQuotationRepository implements QuotationRepository {
     if (!this.draft) throw new Error("missing draft");
     this.draft = {
       ...this.draft,
-      status: "PENDING_APPROVAL",
+      status: "QUOTED",
       submittedAt: new Date("2026-08-30T00:00:00Z"),
       submittedByUserId: actorUserId,
     };
@@ -495,32 +799,45 @@ class StaticQuotationRepository implements QuotationRepository {
     actorUserId: string,
     action: QuotationDecisionAction,
     reason: string | null,
+    adjustment?: ConfirmedQuotationAdjustment,
   ): Promise<QuotationDraft> {
     if (!this.draft) throw new Error("missing quotation");
     this.draft = {
       ...this.draft,
+      ...(adjustment ?? {}),
+      adjustmentReason: adjustment?.reason ?? this.draft.adjustmentReason,
+      adjustmentStatus: action === "APPROVED" ? "CONFIRMED" : "AWAITING_SUBMISSION",
       decidedAt: new Date("2026-08-30T01:00:00Z"),
       decidedByUserId: actorUserId,
       decisionAction: action,
       decisionReason: reason,
+      id: `${this.draft.id}-${action.toLowerCase()}`,
+      parentVersionId: this.draft.id,
       status: action === "RETURNED" ? "RETURNED" : "APPROVED",
+      versionNumber: this.draft.versionNumber + 1,
     };
-    return structuredClone(this.draft);
+    return structuredClone(this.draft!);
   }
 
-  async createDraftFromVersion(
+  async continueEditing(
     source: QuotationDraft,
     actorUserId: string,
   ): Promise<QuotationDraft> {
+    const preserveAdjustment = source.status === "RETURNED";
     this.draft = {
       ...structuredClone(source),
+      adjustedTotal: preserveAdjustment ? source.adjustedTotal : source.total,
+      adjustmentReason: preserveAdjustment ? source.adjustmentReason : null,
+      adjustmentStatus: "AWAITING_SUBMISSION",
       createdByUserId: actorUserId,
+      discountRate: preserveAdjustment ? source.discountRate : "1.0000",
       id: `${source.id}-copy`,
       parentVersionId: source.id,
       status: "DRAFT",
       submittedAt: null,
       submittedByUserId: null,
       versionNumber: source.versionNumber + 1,
+      writeOff: preserveAdjustment ? source.writeOff : "0.0000",
     };
     return structuredClone(this.draft);
   }
@@ -566,12 +883,16 @@ const woodwork: SessionUser = {
 };
 
 const project: ProjectDetail = {
-  address: "地址",
-  buildingArea: "130.0000",
+  createdAt: "2026-08-30T00:00:00.000Z",
   customerName: "客户",
   id: "44444444-4444-4444-8444-444444444444",
   leadDesigner: lead,
-  name: "静悦府（演示）",
+  outerFrameArea: "130.0000",
+  projectAddress: "静悦府（演示）",
+  quotationAmount: null,
+  quotationId: null,
+  quotationStatus: null,
+  quotationVersion: null,
   spaces: [
     {
       area: "18.0000",
@@ -584,6 +905,7 @@ const project: ProjectDetail = {
       type: "BEDROOM",
     },
   ],
+  updatedAt: "2026-08-30T00:00:00.000Z",
 };
 
 const template: QuotationTemplate = {

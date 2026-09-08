@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import type {
+  HalfPackageQuotationStatus,
   ProjectDetail,
   ProjectSpace,
   ProjectSummary,
@@ -21,8 +22,7 @@ import {
 } from "./projects.repository";
 
 interface ProjectRow {
-  address: string;
-  building_area: string;
+  created_at: Date;
   customer_name: string;
   id: string;
   lead_account: string;
@@ -30,7 +30,13 @@ interface ProjectRow {
   lead_designer_id: string;
   lead_phone: string | null;
   lead_role: UserRole;
-  name: string;
+  outer_frame_area: string;
+  project_address: string;
+  quotation_amount: string | null;
+  quotation_id: string | null;
+  quotation_status: HalfPackageQuotationStatus | null;
+  quotation_version: number | null;
+  updated_at: Date;
 }
 
 interface SpaceRow {
@@ -80,15 +86,14 @@ export class PgProjectsRepository implements ProjectsRepository {
       await this.database.transaction(async (database) => {
         await database.query(
           `INSERT INTO projects
-             (id, name, customer_name, address, building_area,
+             (id, project_address, customer_name, outer_frame_area,
               lead_designer_id, created_by_user_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           VALUES ($1, $2, $3, $4, $5, $6)`,
           [
             input.id,
-            input.name,
+            input.projectAddress,
             input.customerName,
-            input.address,
-            input.buildingArea,
+            input.outerFrameArea,
             input.leadDesignerId,
             input.createdByUserId,
           ],
@@ -164,9 +169,9 @@ export class PgProjectsRepository implements ProjectsRepository {
   ): Promise<SpaceAdjustmentState> {
     const result = await this.database.query<{ status: string }>(
       `SELECT status
-         FROM half_package_quotations
+       FROM half_package_quotations
         WHERE project_id = $1
-        ORDER BY (status = 'DRAFT') DESC, version_number DESC
+          AND is_current
         LIMIT 1`,
       [projectId],
     );
@@ -245,13 +250,205 @@ export class PgProjectsRepository implements ProjectsRepository {
         if (!updated) return undefined;
         await database.query(
           `UPDATE half_package_quotation_spaces qs
-              SET name = $3
+              SET name = $3, area = $4, perimeter = $5, height = $6
              FROM half_package_quotations q
             WHERE q.id = qs.quotation_id
               AND q.project_id = $1
               AND q.status = 'DRAFT'
+              AND q.is_current
               AND qs.project_space_id = $2`,
-          [projectId, input.id, input.displayName],
+          [
+            projectId,
+            input.id,
+            input.displayName,
+            input.area,
+            input.perimeter,
+            input.height,
+          ],
+        );
+        await database.query(
+          `UPDATE half_package_quotation_lines l
+              SET calculated_quantity = CASE
+                    WHEN NOT l.selected THEN NULL
+                    WHEN l.quantity_rule_kind = 'SPACE_AREA' THEN $3
+                    WHEN l.quantity_rule_kind = 'SPACE_PERIMETER_HEIGHT'
+                      THEN round($4::numeric * $5::numeric, 4)
+                    ELSE l.calculated_quantity
+                  END
+             FROM half_package_quotation_spaces qs
+             JOIN half_package_quotations q ON q.id = qs.quotation_id
+            WHERE l.quotation_space_id = qs.id
+              AND q.project_id = $1
+              AND q.status = 'DRAFT'
+              AND q.is_current
+              AND qs.project_space_id = $2
+              AND l.quantity_rule_kind IN ('SPACE_AREA', 'SPACE_PERIMETER_HEIGHT')`,
+          [projectId, input.id, input.area, input.perimeter, input.height],
+        );
+        await database.query(
+          `UPDATE half_package_quotation_lines l
+              SET calculated_quantity = CASE
+                    WHEN l.selected THEN ref.calculated_quantity
+                    ELSE NULL
+                  END
+             FROM half_package_quotation_lines ref,
+                  half_package_quotation_spaces qs,
+                  half_package_quotations q
+            WHERE ref.id = l.referenced_line_id
+              AND qs.id = l.quotation_space_id
+              AND q.id = qs.quotation_id
+              AND q.project_id = $1
+              AND q.status = 'DRAFT'
+              AND q.is_current
+              AND qs.project_space_id = $2
+              AND l.quantity_rule_kind = 'LINE_REFERENCE'`,
+          [projectId, input.id],
+        );
+        await database.query(
+          `UPDATE half_package_quotation_lines l
+              SET sale_amount = CASE
+                    WHEN l.selected AND coalesce(l.manual_quantity, l.calculated_quantity) IS NOT NULL
+                      THEN round(coalesce(l.manual_quantity, l.calculated_quantity) * l.sale_unit_price, 4)
+                    ELSE NULL
+                  END,
+                  cost_amount = CASE
+                    WHEN l.selected AND coalesce(l.manual_quantity, l.calculated_quantity) IS NOT NULL
+                      THEN round(coalesce(l.manual_quantity, l.calculated_quantity) * l.cost_unit_price, 4)
+                    ELSE NULL
+                  END,
+                  gross_profit = CASE
+                    WHEN l.selected AND coalesce(l.manual_quantity, l.calculated_quantity) IS NOT NULL
+                      THEN round(
+                        coalesce(l.manual_quantity, l.calculated_quantity)
+                        * (l.sale_unit_price - l.cost_unit_price),
+                        4
+                      )
+                    ELSE NULL
+                  END,
+                  gross_margin_rate = CASE
+                    WHEN l.selected AND coalesce(l.manual_quantity, l.calculated_quantity) IS NOT NULL
+                      THEN round((l.sale_unit_price - l.cost_unit_price) / l.sale_unit_price, 4)
+                    ELSE NULL
+                  END
+             FROM half_package_quotation_spaces qs
+             JOIN half_package_quotations q ON q.id = qs.quotation_id
+            WHERE l.quotation_space_id = qs.id
+              AND q.project_id = $1
+              AND q.status = 'DRAFT'
+              AND q.is_current
+              AND qs.project_space_id = $2`,
+          [projectId, input.id],
+        );
+        await database.query(
+          `WITH scope_totals AS (
+             SELECT qs.id,
+                    coalesce(sum(l.sale_amount), 0)::numeric(16,4) AS subtotal,
+                    coalesce(sum(l.cost_amount), 0)::numeric(16,4) AS expected_cost
+               FROM half_package_quotation_spaces qs
+               JOIN half_package_quotations q ON q.id = qs.quotation_id
+          LEFT JOIN half_package_quotation_lines l ON l.quotation_space_id = qs.id
+              WHERE q.project_id = $1
+                AND q.status = 'DRAFT'
+                AND q.is_current
+                AND qs.project_space_id = $2
+              GROUP BY qs.id
+           )
+           UPDATE half_package_quotation_spaces qs
+              SET subtotal = totals.subtotal,
+                  expected_cost = totals.expected_cost,
+                  gross_profit = round(totals.subtotal - totals.expected_cost, 4),
+                  gross_margin_rate = CASE
+                    WHEN totals.subtotal = 0 THEN NULL
+                    ELSE round((totals.subtotal - totals.expected_cost) / totals.subtotal, 4)
+                  END
+             FROM scope_totals totals
+            WHERE qs.id = totals.id`,
+          [projectId, input.id],
+        );
+        await database.query(
+          `WITH totals AS (
+             SELECT q.id,
+                    coalesce(sum(qs.subtotal), 0)::numeric(16,4) AS direct_cost,
+                    coalesce(sum(qs.expected_cost), 0)::numeric(16,4) AS expected_cost
+               FROM half_package_quotations q
+          LEFT JOIN half_package_quotation_spaces qs ON qs.quotation_id = q.id
+              WHERE q.project_id = $1
+                AND q.status = 'DRAFT'
+                AND q.is_current
+              GROUP BY q.id
+           )
+           UPDATE half_package_quotations q
+              SET direct_cost = totals.direct_cost,
+                  expected_cost = totals.expected_cost,
+                  management_fee = round(totals.direct_cost * q.management_rate, 4),
+                  total = round(
+                    totals.direct_cost + round(totals.direct_cost * q.management_rate, 4),
+                    4
+                  ),
+                  adjusted_total = greatest(
+                    round(
+                      (
+                        totals.direct_cost
+                        + round(totals.direct_cost * q.management_rate, 4)
+                      ) * q.discount_rate - q.write_off,
+                      4
+                    ),
+                    0
+                  ),
+                  gross_profit = round(
+                    greatest(
+                      round(
+                        (
+                          totals.direct_cost
+                          + round(totals.direct_cost * q.management_rate, 4)
+                        ) * q.discount_rate - q.write_off,
+                        4
+                      ),
+                      0
+                    ) - totals.expected_cost,
+                    4
+                  ),
+                  gross_margin_rate = CASE
+                    WHEN greatest(
+                      round(
+                        (
+                          totals.direct_cost
+                          + round(totals.direct_cost * q.management_rate, 4)
+                        ) * q.discount_rate - q.write_off,
+                        4
+                      ),
+                      0
+                    ) = 0 THEN NULL
+                    ELSE round(
+                      (
+                        greatest(
+                          round(
+                            (
+                              totals.direct_cost
+                              + round(totals.direct_cost * q.management_rate, 4)
+                            ) * q.discount_rate - q.write_off,
+                            4
+                          ),
+                          0
+                        ) - totals.expected_cost
+                      ) / greatest(
+                        round(
+                          (
+                            totals.direct_cost
+                            + round(totals.direct_cost * q.management_rate, 4)
+                          ) * q.discount_rate - q.write_off,
+                          4
+                        ),
+                        0
+                      ),
+                      4
+                    )
+                  END,
+                  revision = revision + 1,
+                  updated_at = current_timestamp
+             FROM totals
+            WHERE q.id = totals.id`,
+          [projectId],
         );
         return updated;
       });
@@ -274,9 +471,9 @@ export class PgProjectsRepository implements ProjectsRepository {
         status: string;
       }>(
         `SELECT id, status
-           FROM half_package_quotations
+         FROM half_package_quotations
           WHERE project_id = $1
-          ORDER BY (status = 'DRAFT') DESC, version_number DESC
+            AND is_current
           LIMIT 1
           FOR UPDATE`,
         [projectId],
@@ -311,11 +508,26 @@ export class PgProjectsRepository implements ProjectsRepository {
            UPDATE half_package_quotations q
               SET direct_cost = totals.direct_cost,
                   expected_cost = totals.expected_cost,
-                  gross_profit = round(totals.direct_cost - totals.expected_cost, 4),
+                  adjusted_total = round(
+                    totals.direct_cost + round(totals.direct_cost * q.management_rate, 4),
+                    4
+                  ),
+                  gross_profit = round(
+                    totals.direct_cost + round(totals.direct_cost * q.management_rate, 4)
+                    - totals.expected_cost,
+                    4
+                  ),
                   gross_margin_rate = CASE
                     WHEN totals.direct_cost = 0 THEN NULL
                     ELSE round(
-                      (totals.direct_cost - totals.expected_cost) / totals.direct_cost,
+                      (
+                        totals.direct_cost
+                        + round(totals.direct_cost * q.management_rate, 4)
+                        - totals.expected_cost
+                      ) / (
+                        totals.direct_cost
+                        + round(totals.direct_cost * q.management_rate, 4)
+                      ),
                       4
                     )
                   END,
@@ -327,7 +539,7 @@ export class PgProjectsRepository implements ProjectsRepository {
                   revision = revision + 1,
                   updated_at = current_timestamp
              FROM totals
-            WHERE q.id = $1 AND q.status = 'DRAFT'`,
+            WHERE q.id = $1 AND q.status = 'DRAFT' AND q.is_current`,
           [quotation.id],
         );
       }
@@ -378,18 +590,29 @@ async function reorderQuotationScopes(
   );
 }
 
-const projectSelect = `SELECT p.id, p.name, p.customer_name, p.address,
-                              p.building_area, p.lead_designer_id,
-                              u.account AS lead_account,
-                              u.display_name AS lead_display_name,
-                              u.phone AS lead_phone, u.role AS lead_role
-                         FROM projects p
-                         JOIN users u ON u.id = p.lead_designer_id`;
+const projectSelect = `SELECT p.id, p.project_address, p.customer_name,
+                               p.outer_frame_area, p.lead_designer_id,
+                               p.created_at, p.updated_at,
+                               current_quote.id AS quotation_id,
+                               current_quote.version_number AS quotation_version,
+                               current_quote.status AS quotation_status,
+                               current_quote.adjusted_total AS quotation_amount,
+                               u.account AS lead_account,
+                               u.display_name AS lead_display_name,
+                               u.phone AS lead_phone, u.role AS lead_role
+                          FROM projects p
+                          JOIN users u ON u.id = p.lead_designer_id
+                     LEFT JOIN LATERAL (
+                               SELECT q.id, q.version_number, q.status,
+                                      q.adjusted_total
+                                 FROM half_package_quotations q
+                                WHERE q.project_id = p.id AND q.is_current
+                                LIMIT 1
+                               ) current_quote ON true`;
 
 function toProjectSummary(row: ProjectRow): ProjectSummary {
   return {
-    address: row.address,
-    buildingArea: row.building_area,
+    createdAt: row.created_at.toISOString(),
     customerName: row.customer_name,
     id: row.id,
     leadDesigner: {
@@ -399,7 +622,13 @@ function toProjectSummary(row: ProjectRow): ProjectSummary {
       phone: row.lead_phone,
       role: row.lead_role,
     },
-    name: row.name,
+    outerFrameArea: row.outer_frame_area,
+    projectAddress: row.project_address,
+    quotationAmount: row.quotation_amount,
+    quotationId: row.quotation_id,
+    quotationStatus: row.quotation_status,
+    quotationVersion: row.quotation_version,
+    updatedAt: row.updated_at.toISOString(),
   };
 }
 

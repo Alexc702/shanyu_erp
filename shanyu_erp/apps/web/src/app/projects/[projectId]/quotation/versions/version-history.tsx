@@ -2,7 +2,6 @@
 
 import type {
   AuditEventView,
-  HalfPackageExportFormat,
   HalfPackageQuotationVersionSummary,
   HalfPackageVersionDifference,
   ProjectDetail,
@@ -12,9 +11,7 @@ import {
   ArrowLeft,
   ArrowLeftRight,
   Clock3,
-  Download,
   Eye,
-  FileDown,
   Info,
   LockKeyhole,
   ScrollText,
@@ -27,11 +24,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   Table,
   TableBody,
   TableCell,
@@ -39,14 +31,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { apiUrl } from "@/lib/api-url";
 import { hasOwnerPermissions } from "@/lib/permissions";
 import {
   compareQuotationVersions,
-  createQuotationExport,
   formatQuotationMoney,
 } from "@/lib/quotation-client";
 import { formatQuotationScopeName } from "@/lib/quotation-view-model";
+
+import { ExportMenu } from "../../export-menu";
 
 interface VersionHistoryProps {
   readonly auditEvents: readonly AuditEventView[];
@@ -72,7 +64,7 @@ export function VersionHistory({
   const [comparisonLabel, setComparisonLabel] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const exportable = isApproved(currentVersion.status);
+  const exportable = isExportable(currentVersion);
   const versionIds = new Set(versions.map((version) => version.id));
   const projectEvents = auditEvents
     .filter(
@@ -102,25 +94,6 @@ export function VersionHistory({
     }
   }
 
-  async function exportFile(
-    quotationId: string,
-    format: HalfPackageExportFormat,
-  ) {
-    setWorking(true);
-    setError(null);
-    try {
-      const record = await createQuotationExport(quotationId, format);
-      const link = document.createElement("a");
-      link.href = `${apiUrl}${record.downloadPath}`;
-      link.download = record.fileName;
-      link.click();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "导出失败");
-    } finally {
-      setWorking(false);
-    }
-  }
-
   return (
     <main className="grid gap-3 p-5 xl:p-7">
       <header className="grid gap-2">
@@ -129,7 +102,7 @@ export function VersionHistory({
           href={`/projects/${project.id}`}
         >
           <ArrowLeft className="size-3.5" />
-          项目管理 / {project.name} / 项目版本管理
+          项目管理 / {project.projectAddress} / 项目版本管理
         </Link>
 
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -142,7 +115,7 @@ export function VersionHistory({
               </Badge>
             </div>
             <p className="type-support m-0 text-muted-foreground">
-              {project.name} · {project.customerName} · 主案 {project.leadDesigner.displayName} ·
+              {project.projectAddress} · {project.customerName} · 主案 {project.leadDesigner.displayName} ·
               当前有效版本 V{currentVersion.versionNumber}
             </p>
           </div>
@@ -163,7 +136,8 @@ export function VersionHistory({
             </Button>
             <ExportMenu
               disabled={!exportable || working}
-              onExport={(format) => exportFile(currentVersion.id, format)}
+              fileNameStem={`${project.projectAddress}_半包报价单_V${currentVersion.versionNumber}`}
+              quotationId={currentVersion.id}
             />
           </div>
         </div>
@@ -172,7 +146,7 @@ export function VersionHistory({
       <div className="type-support flex items-center gap-2 rounded-lg bg-info-soft px-3 py-2.5">
         <Info className="size-4 shrink-0 text-primary" />
         <span>
-          版本由新建项目、保存草稿、提交审批及审批状态变化自动生成。
+          版本由新建项目、确认生成报价单、继续编辑及审批状态变化自动生成。
         </span>
       </div>
 
@@ -269,11 +243,12 @@ export function VersionHistory({
                               查看快照
                             </Link>
                           </Button>
-                          {isApproved(version.status) ? (
+                          {isExportable(version) ? (
                             <ExportMenu
                               compact
                               disabled={working}
-                              onExport={(format) => exportFile(version.id, format)}
+                              fileNameStem={`${project.projectAddress}_半包报价单_V${version.versionNumber}`}
+                              quotationId={version.id}
                             />
                           ) : null}
                         </div>
@@ -291,9 +266,9 @@ export function VersionHistory({
               角色与状态决定可用操作
             </strong>
             <span>
-              草稿/已退回：主案继续编辑、保存或提交；待审批：主案可继续编辑并撤回，老板可批准或退回；已审批：仅老板可打回。
+              草稿可编辑并确认生成；已报价可导出、调整折扣抹零或继续编辑；已退回可继续编辑；已批准仅老板可打回。
             </span>
-            <span>审批操作必须校验当前有效版本；对已撤回申请的旧页面操作由服务端拒绝。</span>
+            <span>审批操作必须校验当前有效版本；对已失效版本的旧页面操作由服务端拒绝。</span>
           </div>
 
           {differences ? (
@@ -353,12 +328,16 @@ export function VersionHistory({
               <div className="flex items-center justify-between gap-2">
                 <h2 className="type-section-title m-0">客户文件与导出</h2>
                 <Badge variant={exportable ? "success" : "secondary"}>
-                  {exportable ? "可导出" : "尚未批准"}
+                  {exportable
+                    ? "可导出"
+                    : currentVersion.adjustmentStatus === "PENDING_APPROVAL"
+                      ? "审批中"
+                      : "尚未生成"}
                 </Badge>
               </div>
               <strong className="type-entity">客户版 PDF / XLSX</strong>
               <p className="type-support m-0 text-muted-foreground">
-                项目 {project.name} · 报价 V{currentVersion.versionNumber} · 模板 V
+                项目 {project.projectAddress} · 报价 V{currentVersion.versionNumber} · 模板 V
                 {currentTemplateVersion ?? "—"}
               </p>
               <div className="type-support flex items-start gap-2 rounded-md bg-info-soft px-2.5 py-2">
@@ -367,8 +346,9 @@ export function VersionHistory({
               </div>
               <ExportMenu
                 disabled={!exportable || working}
+                fileNameStem={`${project.projectAddress}_半包报价单_V${currentVersion.versionNumber}`}
                 fullWidth
-                onExport={(format) => exportFile(currentVersion.id, format)}
+                quotationId={currentVersion.id}
               />
             </CardContent>
           </Card>
@@ -468,16 +448,18 @@ function CurrentVersionCard({
             <Link href={`/projects/${projectId}/quotation`}>继续编辑当前草稿</Link>
           </Button>
         ) : null}
-        {version.status === "PENDING_APPROVAL" && hasOwnerPermissions(user.role) ? (
+        {version.status === "QUOTED" && hasOwnerPermissions(user.role) ? (
           <Button asChild className="w-full">
-            <Link href={`/approvals/${version.id}`}>处理待审批版本</Link>
+            <Link href={`/approvals/${version.id}`}>处理已报价版本</Link>
           </Button>
         ) : null}
-        {isApproved(version.status) && hasOwnerPermissions(user.role) ? (
+        {version.status === "APPROVED" && hasOwnerPermissions(user.role) ? (
           <>
-            <Button className="w-full" disabled variant="destructive">
-              <ShieldAlert />
-              打回并说明原因
+            <Button asChild className="w-full" variant="destructive">
+              <Link href={`/approvals/${version.id}`}>
+                <ShieldAlert />
+                打回并说明原因
+              </Link>
             </Button>
             <p className="type-support m-0 text-muted-foreground">
               打回后应自动生成新的“已退回”版本；当前快照永久保留。
@@ -486,44 +468,6 @@ function CurrentVersionCard({
         ) : null}
       </CardContent>
     </Card>
-  );
-}
-
-function ExportMenu({
-  compact = false,
-  disabled,
-  fullWidth = false,
-  onExport,
-}: {
-  readonly compact?: boolean;
-  readonly disabled: boolean;
-  readonly fullWidth?: boolean;
-  readonly onExport: (format: HalfPackageExportFormat) => void;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          className={fullWidth ? "w-full" : undefined}
-          disabled={disabled}
-          size={compact ? "sm" : "default"}
-          variant={compact ? "outline" : "default"}
-        >
-          {compact ? <Download /> : <FileDown />}
-          {compact ? "导出" : "导出客户文件"}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="grid w-48 gap-1 p-2">
-        <Button className="justify-start" onClick={() => onExport("PDF")} variant="ghost">
-          <FileDown />
-          导出 PDF
-        </Button>
-        <Button className="justify-start" onClick={() => onExport("XLSX")} variant="ghost">
-          <FileDown />
-          导出 Excel
-        </Button>
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -571,27 +515,32 @@ function auditEventForVersion(
 }
 
 function projectStage(status: HalfPackageQuotationVersionSummary["status"]): string {
-  return isApproved(status) ? "项目阶段 · 报价完成" : "项目阶段 · 报价中";
+  return status === "APPROVED" ? "项目阶段 · 报价完成" : "项目阶段 · 报价中";
 }
 
 function statusLabel(status: HalfPackageQuotationVersionSummary["status"]): string {
   if (status === "DRAFT") return "草稿";
-  if (status === "RETURNED" || status === "VOID") return "已退回";
-  if (status === "APPROVED" || status === "SUPERSEDED") return "已审批";
-  return "待审批";
+  if (status === "RETURNED") return "已退回";
+  if (status === "APPROVED") return "已批准";
+  return "已报价";
 }
 
 function statusVariant(
   status: HalfPackageQuotationVersionSummary["status"],
 ): "destructive" | "secondary" | "success" | "warning" {
-  if (status === "RETURNED" || status === "VOID") return "destructive";
-  if (status === "APPROVED" || status === "SUPERSEDED") return "success";
+  if (status === "RETURNED") return "destructive";
+  if (status === "APPROVED") return "success";
   if (status === "DRAFT") return "secondary";
   return "warning";
 }
 
-function isApproved(status: HalfPackageQuotationVersionSummary["status"]): boolean {
-  return status === "APPROVED" || status === "SUPERSEDED";
+function isExportable(version: HalfPackageQuotationVersionSummary): boolean {
+  return version.isCurrent && (
+    (version.status === "QUOTED" &&
+      version.adjustmentStatus === "AWAITING_SUBMISSION") ||
+    (version.status === "APPROVED" &&
+      version.adjustmentStatus === "CONFIRMED")
+  );
 }
 
 function sourceVersion(versionNumber: number): string {
@@ -603,15 +552,12 @@ function changeSummary(version: HalfPackageQuotationVersionSummary): string {
     return version.decisionReason ? `退回：${version.decisionReason}` : "审批退回修改";
   }
   if (version.status === "APPROVED") {
-    return version.decisionAction === "SPECIAL_APPROVED"
-      ? `特批通过${version.decisionReason ? `：${version.decisionReason}` : ""}`
-      : "批准整单；锁定客户输出";
+    return "批准整单；锁定客户输出";
   }
-  if (version.status === "SUPERSEDED") return "历史审批快照";
   if (version.status === "DRAFT") {
     return version.versionNumber === 1 ? "新建项目自动生成" : "自动生成草稿版本";
   }
-  return "主案提交整单审批";
+  return "主案确认生成报价单";
 }
 
 function snapshotHref(projectId: string, quotationId: string): string {
@@ -639,10 +585,11 @@ function formatShortTime(value: string): string {
 function auditActionLabel(action: string): string {
   return {
     QUOTATION_APPROVED: "批准整单",
+    QUOTATION_ADJUSTMENT_UPDATED: "调整折扣与抹零",
     QUOTATION_DRAFT_CREATED: "新建报价版本",
+    QUOTATION_EDITING_CONTINUED: "继续编辑并生成草稿",
+    QUOTATION_GENERATED: "确认生成报价单",
     QUOTATION_RETURNED: "退回修改",
-    QUOTATION_SPECIAL_APPROVED: "特批整单",
-    QUOTATION_SUBMITTED: "提交审批",
     QUOTATION_VERSION_COMPARED: "对比版本",
   }[action] ?? action;
 }
@@ -659,10 +606,13 @@ function auditVersionFlow(event: AuditEventView): string {
 
 function fieldLabel(field: HalfPackageVersionDifference["field"]): string {
   return {
+    COST_UNIT_PRICE: "成本单价",
+    DISCOUNT_RATE: "折扣",
     QUANTITY: "数量",
     SALE_UNIT_PRICE: "销售单价",
     SELECTED: "选择状态",
     TOTAL: "报价合计",
+    WRITE_OFF: "抹零",
   }[field];
 }
 
@@ -672,8 +622,14 @@ function differenceValue(
 ): string {
   if (value === null) return "—";
   if (field === "SELECTED") return value === "true" ? "已选" : "未选";
-  if (field === "SALE_UNIT_PRICE" || field === "TOTAL") {
+  if (
+    field === "COST_UNIT_PRICE" ||
+    field === "SALE_UNIT_PRICE" ||
+    field === "TOTAL" ||
+    field === "WRITE_OFF"
+  ) {
     return `¥ ${formatQuotationMoney(value)}`;
   }
+  if (field === "DISCOUNT_RATE") return `${(Number(value) * 100).toFixed(2)}%`;
   return Number(value).toFixed(2);
 }

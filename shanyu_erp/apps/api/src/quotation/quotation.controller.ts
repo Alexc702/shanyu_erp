@@ -21,6 +21,8 @@ import type {
   HalfPackageSubmissionCheckResponse,
   HalfPackageVersionCompareResponse,
   SubmitHalfPackageQuotationRequest,
+  UpdateHalfPackageAdjustmentRequest,
+  UpdateHalfPackageMarginBenchmarkRequest,
   UpdateHalfPackageQuotationLineRequest,
 } from "@shanyu/contracts";
 import type { Response } from "express";
@@ -99,14 +101,49 @@ export class QuotationController {
     return this.quotationService.compareVersions(actor, fromId, toId);
   }
 
-  @Post("versions/:quotationId/clone")
-  async cloneVersion(
+  @Post("versions/:quotationId/continue-editing")
+  async continueEditing(
     @Headers("cookie") cookieHeader: string | undefined,
     @Param("quotationId") quotationId: string,
   ): Promise<HalfPackageQuotationResponse> {
     const actor = await this.currentUser(cookieHeader);
     return {
-      quotation: await this.quotationService.cloneVersion(actor, quotationId),
+      quotation: await this.quotationService.continueEditing(actor, quotationId),
+    };
+  }
+
+  @Patch("versions/:quotationId/adjustment")
+  async updateAdjustment(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("quotationId") quotationId: string,
+    @Body() body: unknown,
+  ): Promise<HalfPackageQuotationResponse> {
+    const actor = await this.currentUser(cookieHeader);
+    return {
+      quotation: await this.quotationService.updateAdjustment(
+        actor,
+        quotationId,
+        adjustmentInput(body),
+      ),
+    };
+  }
+
+  @Patch("versions/:quotationId/margin-benchmark")
+  async updateMarginBenchmark(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("projectId") projectId: string,
+    @Param("quotationId") quotationId: string,
+    @Body() body: unknown,
+  ): Promise<HalfPackageCostMarginResponse> {
+    const input = marginBenchmarkInput(body);
+    const actor = await this.currentUser(cookieHeader);
+    return {
+      costMargin: await this.quotationService.updateMarginBenchmark(
+        actor,
+        projectId,
+        quotationId,
+        input.marginBenchmarkPercent,
+      ),
     };
   }
 
@@ -289,6 +326,37 @@ function submitInput(body: unknown): SubmitHalfPackageQuotationRequest {
     throw new BadRequestException("提交信息不完整");
   }
   return { expectedRevision: Number(candidate.expectedRevision) };
+}
+
+function adjustmentInput(body: unknown): UpdateHalfPackageAdjustmentRequest {
+  const candidate = body as Record<string, unknown> | null;
+  if (
+    !candidate ||
+    !["SUBMIT_FOR_APPROVAL", "CONFIRM"].includes(String(candidate.action)) ||
+    typeof candidate.discountRate !== "string" ||
+    typeof candidate.writeOff !== "string" ||
+    (candidate.reason !== null && typeof candidate.reason !== "string") ||
+    typeof candidate.expectedRevision !== "number"
+  ) {
+    throw new BadRequestException("折扣与抹零信息不完整");
+  }
+  return {
+    action: candidate.action as UpdateHalfPackageAdjustmentRequest["action"],
+    discountRate: candidate.discountRate,
+    expectedRevision: candidate.expectedRevision,
+    reason: candidate.reason as string | null,
+    writeOff: candidate.writeOff,
+  };
+}
+
+function marginBenchmarkInput(
+  body: unknown,
+): UpdateHalfPackageMarginBenchmarkRequest {
+  const candidate = body as Record<string, unknown> | null;
+  if (!candidate || typeof candidate.marginBenchmarkPercent !== "string") {
+    throw new BadRequestException("基准毛利率信息不完整");
+  }
+  return { marginBenchmarkPercent: candidate.marginBenchmarkPercent };
 }
 
 function decisionInput(body: unknown): DecideHalfPackageQuotationRequest {

@@ -30,6 +30,22 @@ describe("AuditQueryService", () => {
     ).resolves.toEqual(events);
   });
 
+  it("hides read-only technical events from the global business log", async () => {
+    const events = [
+      auditEvent("QUOTATION_COST_MARGIN_VIEWED"),
+      auditEvent("QUOTATION_VERSION_COMPARED"),
+      auditEvent("QUOTATION_EXPORTED"),
+    ];
+    const repository: AuditQueryRepository = { async list() { return events; } };
+    const service = new AuditQueryService(new AccessPolicy(), repository);
+
+    await expect(
+      service.list({ ...owner, account: "admin", role: "ADMIN" }, {}),
+    ).resolves.toEqual([
+      auditEvent("QUOTATION_EXPORTED"),
+    ]);
+  });
+
   it("returns only account audit details inside user management", async () => {
     const events: AuditEventView[] = [
       auditEvent("USER_UPDATED"),
@@ -42,11 +58,11 @@ describe("AuditQueryService", () => {
     ]);
   });
 
-  it("denies global audit access to owners and other non-administrator roles", () => {
+  it("denies global audit access to owners and other non-administrator roles", async () => {
     const repository: AuditQueryRepository = { async list() { return []; } };
     const service = new AuditQueryService(new AccessPolicy(), repository);
-    expect(() => service.list(owner, {})).toThrow(ForbiddenException);
-    expect(() => service.list(lead, {})).toThrow(ForbiddenException);
+    await expect(service.list(owner, {})).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.list(lead, {})).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
 

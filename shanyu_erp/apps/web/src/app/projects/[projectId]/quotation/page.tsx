@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import {
   fetchHalfPackageQuotation,
   fetchProject,
+  fetchQuotationVersions,
   fetchSession,
 } from "@/lib/api-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
@@ -26,9 +27,10 @@ export default async function QuotationPage({ params }: QuotationPageProps) {
     notFound();
   }
   const { projectId } = await params;
-  const [quotation, project] = await Promise.all([
+  const [quotation, project, versions] = await Promise.all([
     fetchHalfPackageQuotation(cookieHeader, projectId),
     fetchProject(cookieHeader, projectId),
+    fetchQuotationVersions(cookieHeader, projectId),
   ]);
   if (!quotation || !project) {
     notFound();
@@ -37,10 +39,18 @@ export default async function QuotationPage({ params }: QuotationPageProps) {
   return (
     <AppShell active="quotation" user={session.user}>
       <QuotationEditor
-        buildingArea={project.buildingArea}
+        outerFrameArea={project.outerFrameArea}
         canViewCosts={hasOwnerAccess}
         initialQuotation={quotation}
         leadDesignerName={project.leadDesigner.displayName}
+        returnReason={
+          versions?.find(
+            (version) =>
+              version.id === quotation.id ||
+              (version.status === "RETURNED" &&
+                version.versionNumber === quotation.versionNumber - 1),
+          )?.decisionReason ?? null
+        }
       />
     </AppShell>
   );

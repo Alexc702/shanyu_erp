@@ -4,10 +4,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fetchProjects, fetchSession } from "@/lib/api-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
+
+import { ProjectList } from "./project-list";
 
 export default async function ProjectsPage() {
   const cookieHeader = (await cookies()).toString();
@@ -45,45 +46,7 @@ export default async function ProjectsPage() {
             <p>创建第一个项目并配置空间。</p>
           </section>
         ) : (
-          <section className="panel project-table-panel">
-            <div className="project-table-toolbar" aria-label="项目筛选">
-              <input className="filter-control filter-search" placeholder="搜索项目 / 客户 / 地址" />
-              <button className="filter-control" type="button">全部状态</button>
-              <button className="filter-control" type="button">全部版本</button>
-              <button className="filter-control" type="button">最近更新</button>
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>项目 / 客户</th>
-                    <th>地址</th>
-                    <th>建筑面积</th>
-                    <th>主案设计师</th>
-                    <th>报价状态</th>
-                    <th>半包金额</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {projects.map((project) => (
-                    <tr key={project.id}>
-                      <td>
-                        <strong>{project.name}</strong>
-                        <span className="table-secondary">{project.customerName}</span>
-                      </td>
-                      <td>{project.address}</td>
-                      <td>{Number(project.buildingArea).toFixed(2)} ㎡</td>
-                      <td>{project.leadDesigner.displayName}</td>
-                      <td><Badge variant="secondary">项目已创建</Badge></td>
-                      <td>—</td>
-                      <td><Link className="text-link" href={`/projects/${project.id}`}>打开项目</Link></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <ProjectList projects={projects} />
         )}
       </main>
     </AppShell>

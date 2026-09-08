@@ -1,6 +1,6 @@
 export type QuantityRule =
   | { readonly kind: "MANUAL" }
-  | { readonly kind: "PROJECT_BUILDING_AREA" }
+  | { readonly kind: "PROJECT_OUTER_FRAME_AREA" }
   | { readonly kind: "SPACE_AREA" }
   | { readonly kind: "SPACE_PERIMETER_HEIGHT" }
   | {
@@ -26,9 +26,11 @@ export interface QuotationCalculationScopeInput {
 }
 
 export interface QuotationCalculationInput {
-  readonly buildingArea: string;
+  readonly discountRate: string;
   readonly managementRate: string;
+  readonly outerFrameArea: string;
   readonly scopes: readonly QuotationCalculationScopeInput[];
+  readonly writeOff: string;
 }
 
 export interface QuotationCalculationLineResult {
@@ -50,6 +52,7 @@ export interface QuotationCalculationScopeResult {
 }
 
 export interface QuotationCalculationResult {
+  readonly adjustedTotal: string;
   readonly directCost: string;
   readonly expectedCost: string;
   readonly grossMarginRate: string | null;
@@ -63,9 +66,9 @@ const scale = 10_000n;
 
 export class HalfPackageCalculator {
   calculate(input: QuotationCalculationInput): QuotationCalculationResult {
-    const buildingArea = parseDecimal4(input.buildingArea);
+    const outerFrameArea = parseDecimal4(input.outerFrameArea);
     const scopes = input.scopes.map((scope) =>
-      this.calculateScope(scope, buildingArea),
+      this.calculateScope(scope, outerFrameArea),
     );
     const directCost = scopes.reduce(
       (sum, scope) => sum + parseDecimal4(scope.subtotal),
@@ -75,29 +78,36 @@ export class HalfPackageCalculator {
       (sum, scope) => sum + parseDecimal4(scope.expectedCost),
       0n,
     );
-    const grossProfit = directCost - expectedCost;
     const managementFee = multiply4(
       directCost,
       parseDecimal4(input.managementRate),
     );
+    const total = directCost + managementFee;
+    const adjustedTotal = maximum(
+      multiply4(total, parseDecimal4(input.discountRate)) -
+        parseDecimal4(input.writeOff),
+      0n,
+    );
+    const grossProfit = adjustedTotal - expectedCost;
 
     return {
+      adjustedTotal: formatDecimal4(adjustedTotal),
       directCost: formatDecimal4(directCost),
       expectedCost: formatDecimal4(expectedCost),
       grossMarginRate:
-        directCost === 0n
+        adjustedTotal === 0n
           ? null
-          : formatDecimal4(divide4(grossProfit, directCost)),
+          : formatDecimal4(divide4(grossProfit, adjustedTotal)),
       grossProfit: formatDecimal4(grossProfit),
       managementFee: formatDecimal4(managementFee),
       scopes,
-      total: formatDecimal4(directCost + managementFee),
+      total: formatDecimal4(total),
     };
   }
 
   private calculateScope(
     scope: QuotationCalculationScopeInput,
-    buildingArea: bigint,
+    outerFrameArea: bigint,
   ): QuotationCalculationScopeResult {
     const linesById = new Map(
       scope.lines.map((line) => [line.id, line] as const),
@@ -127,7 +137,7 @@ export class HalfPackageCalculator {
       const quantity = quantityForRule(
         line,
         scope,
-        buildingArea,
+        outerFrameArea,
         resolveQuantity,
       );
       resolving.delete(lineId);
@@ -190,7 +200,7 @@ export class HalfPackageCalculator {
 function quantityForRule(
   line: QuotationCalculationLineInput,
   scope: QuotationCalculationScopeInput,
-  buildingArea: bigint,
+  outerFrameArea: bigint,
   resolveQuantity: (lineId: string) => bigint | null,
 ): bigint | null {
   switch (line.quantityRule.kind) {
@@ -198,8 +208,8 @@ function quantityForRule(
       return line.manualQuantity === null
         ? null
         : parseDecimal4(line.manualQuantity);
-    case "PROJECT_BUILDING_AREA":
-      return buildingArea;
+    case "PROJECT_OUTER_FRAME_AREA":
+      return outerFrameArea;
     case "SPACE_AREA":
       return optionalDecimal4(scope.area);
     case "SPACE_PERIMETER_HEIGHT": {
@@ -247,4 +257,8 @@ function divide4(numerator: bigint, denominator: bigint): bigint {
   const absolute = negative ? -numerator : numerator;
   const quotient = (absolute * scale + denominator / 2n) / denominator;
   return negative ? -quotient : quotient;
+}
+
+function maximum(left: bigint, right: bigint): bigint {
+  return left > right ? left : right;
 }

@@ -28,6 +28,8 @@ import { formatQuotationMoney } from "@/lib/quotation-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
 import { formatQuotationScopeName } from "@/lib/quotation-view-model";
 
+import { MarginBenchmarkControl } from "./margin-benchmark-control";
+
 interface CostMarginPageProps {
   readonly params: Promise<{ projectId: string }>;
   readonly searchParams: Promise<{ quotationId?: string }>;
@@ -64,24 +66,31 @@ export default async function CostMarginPage({
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="grid gap-1">
             <nav className="quotation-breadcrumb" aria-label="面包屑">
-              <Link href={`/projects/${projectId}`}>{costMargin.projectName}</Link>
+              <Link href={`/projects/${projectId}`}>{costMargin.projectAddress}</Link>
               <span>/</span>
               <Link href={`/projects/${projectId}/quotation`}>半包报价</Link>
               <span>/</span>
               <strong>预计成本毛利</strong>
             </nav>
             <h1 className="type-page-title m-0 tracking-tight">
-              {costMargin.projectName} · 半包预计成本毛利
+              {costMargin.projectAddress} · 半包预计成本毛利
             </h1>
             <p className="type-body m-0 text-muted-foreground">
               一期均为预计口径，不与后续实际财务混用
             </p>
           </div>
-          <Button asChild className="h-9 border-border" variant="outline">
-            <Link href={detailsHref}>
-              查看工程项成本明细
-            </Link>
-          </Button>
+          <div className="flex flex-wrap items-end gap-3">
+            <MarginBenchmarkControl
+              initialRate={costMargin.marginBenchmarkRate}
+              projectId={projectId}
+              quotationId={costMargin.id}
+            />
+            <Button asChild className="h-9 border-border" variant="outline">
+              <Link href={detailsHref}>
+                查看工程项成本明细
+              </Link>
+            </Button>
+          </div>
         </header>
 
         <section
@@ -107,7 +116,7 @@ export default async function CostMarginPage({
           <CostMetric
             emphasis={costMargin.grossProfit.startsWith("-") ? "danger" : "success"}
             label="预计毛利率"
-            note="不含管理费与税金"
+            note="含半包管理费，不含税金"
             value={formatMarginRate(costMargin.grossMarginRate)}
           />
         </section>
@@ -134,7 +143,11 @@ export default async function CostMarginPage({
             </TableHeader>
             <TableBody>
               {scopes.map((scope) => {
-                const status = marginStatus(scope.salesAmount, scope.grossProfit);
+                const status = marginStatus(
+                  scope.salesAmount,
+                  scope.grossMarginRate,
+                  costMargin.marginBenchmarkRate,
+                );
                 return (
                   <TableRow className="border-border" key={scope.id}>
                     <TableCell className="h-[54px] px-4 font-medium">
@@ -159,10 +172,12 @@ export default async function CostMarginPage({
                             ? "destructive"
                             : status === "未计价"
                               ? "secondary"
-                              : "success"
+                              : status === "低于基准"
+                                ? "warning"
+                                : "success"
                         }
                       >
-                        {status === "已计算" ? "正常" : status}
+                        {status}
                       </Badge>
                     </TableCell>
                   </TableRow>

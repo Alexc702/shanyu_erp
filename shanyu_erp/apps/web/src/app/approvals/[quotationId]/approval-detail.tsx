@@ -60,7 +60,10 @@ export function ApprovalDetail({
   const [returnReason, setReturnReason] = useState("");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pending = quotation.status === "PENDING_APPROVAL";
+  const pending =
+    quotation.status === "QUOTED" &&
+    quotation.adjustmentStatus === "PENDING_APPROVAL";
+  const canReturn = pending || quotation.status === "APPROVED";
   const modules: readonly ModuleRow[] = [
     {
       cost: costMargin.expectedCost,
@@ -113,13 +116,13 @@ export function ApprovalDetail({
             返回报价审批
           </Link>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="type-page-title">{quotation.projectName}</h1>
+            <h1 className="type-page-title">{quotation.projectAddress}</h1>
             <Badge variant={pending ? "warning" : "success"}>
               {statusLabel(quotation.status)}
             </Badge>
           </div>
         </div>
-        {pending ? (
+        {canReturn ? (
           <div className="workflow-actions">
             <Button
               className="h-10 border-destructive text-destructive hover:bg-destructive-soft hover:text-destructive"
@@ -130,14 +133,16 @@ export function ApprovalDetail({
               <RotateCcw />
               打回修改
             </Button>
-            <Button
-              className="h-10 px-5"
-              disabled={working}
-              onClick={() => decide("APPROVED", null)}
-            >
-              <Check />
-              批准
-            </Button>
+            {pending ? (
+              <Button
+                className="h-10 px-5"
+                disabled={working}
+                onClick={() => decide("APPROVED", null)}
+              >
+                <Check />
+                批准
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </header>
@@ -156,15 +161,15 @@ export function ApprovalDetail({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="type-entity">项目基础信息</h2>
             <span className="type-support text-muted-foreground">
-              当前有效版本 V{quotation.versionNumber} · 提交于 {formatDateTime(quotation.submittedAt)}
+              当前有效版本 V{quotation.versionNumber} · 确认于 {formatDateTime(quotation.submittedAt)}
             </span>
           </div>
           <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2 xl:grid-cols-4">
             <ProjectField label="客户" value={project.customerName} />
-            <ProjectField label="地址" value={project.address} />
+            <ProjectField label="项目地址" value={project.projectAddress} />
             <ProjectField
-              label="建筑面积"
-              value={`${formatArea(project.buildingArea)} M²`}
+              label="外框面积"
+              value={`${formatArea(project.outerFrameArea)} M²`}
             />
             <ProjectField
               label="主案设计师"
@@ -173,7 +178,7 @@ export function ApprovalDetail({
             <ProjectField label="木作设计师" value="未指派" />
             <ProjectField label="报价版本" value={`V${quotation.versionNumber}`} />
             <ProjectField
-              label="提交时间"
+              label="确认时间"
               value={formatDateTime(quotation.submittedAt)}
             />
             <ProjectField label="报价状态" value={statusLabel(quotation.status)} />
@@ -196,7 +201,7 @@ export function ApprovalDetail({
           />
           <BusinessMetric
             label="预计成本"
-            note="当前待审批版本"
+            note={`当前${statusLabel(quotation.status)}版本`}
             value={`¥${displayMoney(costMargin.expectedCost)}`}
           />
           <BusinessMetric
@@ -235,7 +240,7 @@ export function ApprovalDetail({
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
           <h2 className="type-entity">报价模块</h2>
           <span className="type-support text-muted-foreground">
-            点击模块查看当前待审批版本的报价与成本明细
+            点击模块查看当前有效版本的报价与成本明细
           </span>
         </div>
         <Table className="min-w-[980px] table-fixed">
@@ -315,7 +320,7 @@ export function ApprovalDetail({
       </Card>
 
       <p className="type-support m-0 rounded-lg bg-primary-soft px-3 py-3 font-medium text-primary">
-        批准或打回修改时校验当前有效版本；若申请已撤回，系统拒绝操作。打回修改必须填写原因并生成已退回版本。
+        批准或打回修改时校验当前有效版本；若版本已失效，系统拒绝操作。打回修改必须填写原因并生成已退回版本。
       </p>
 
       <Dialog onOpenChange={setReturnOpen} open={returnOpen}>
@@ -323,7 +328,7 @@ export function ApprovalDetail({
           <DialogHeader className="gap-2">
             <DialogTitle>打回报价 V{quotation.versionNumber}</DialogTitle>
             <DialogDescription>
-              打回后将生成“已退回”版本，主案设计师可按原因继续修改并再次提交。
+              打回后将生成“已退回”版本，主案设计师可按原因继续修改并再次确认生成报价单。
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
@@ -465,13 +470,9 @@ function moneyTone(value: string): string {
 
 function statusLabel(status: HalfPackageQuotation["status"]): string {
   return {
-    APPROVED: "已审批",
+    APPROVED: "已批准",
     DRAFT: "草稿",
-    PENDING_APPROVAL: "待审批",
-    PENDING_PRICING: "待定价",
-    PENDING_SUPPLEMENT: "待补充",
+    QUOTED: "已报价",
     RETURNED: "已退回",
-    SUPERSEDED: "已替代",
-    VOID: "已作废",
   }[status];
 }

@@ -68,13 +68,13 @@ export default async function CostDetailsPage({
         <header className="cost-margin-header">
           <div>
             <nav className="quotation-breadcrumb" aria-label="面包屑">
-              <Link href={`/projects/${projectId}`}>{costMargin.projectName}</Link>
+              <Link href={`/projects/${projectId}`}>{costMargin.projectAddress}</Link>
               <span>/</span>
               <Link href={costMarginHref(projectId, quotationId)}>预计成本毛利</Link>
               <span>/</span>
               <strong>工程项成本明细</strong>
             </nav>
-            <h1>{costMargin.projectName} · 工程项成本明细</h1>
+            <h1>{costMargin.projectAddress} · 工程项成本明细</h1>
             <p>价格与成本均为报价版本快照</p>
           </div>
           <Badge variant="warning">
@@ -179,13 +179,9 @@ function scopeHref(scopeId: string, quotationId?: string): string {
 
 function statusLabel(status: string): string {
   return {
-    APPROVED: "已审批",
+    APPROVED: "已批准",
     DRAFT: "草稿",
-    PENDING_APPROVAL: "待审批",
-    PENDING_PRICING: "待定价",
-    PENDING_SUPPLEMENT: "待补充",
+    QUOTED: "已报价",
     RETURNED: "已退回",
-    SUPERSEDED: "已替代",
-    VOID: "已作废",
   }[status] ?? status;
 }

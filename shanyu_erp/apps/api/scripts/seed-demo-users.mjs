@@ -91,15 +91,13 @@ try {
   const demoProjectId = "44444444-4444-4444-8444-444444444444";
   await client.query(
     `INSERT INTO projects
-       (id, name, customer_name, address, building_area,
+       (id, project_address, customer_name, outer_frame_area,
         lead_designer_id, created_by_user_id)
-     VALUES ($1, '静悦府（演示）', '林先生', '上海市静安区测试路 1 号',
-             130.0000, $2, $3)
+     VALUES ($1, '上海市静安区测试路 1 号', '林先生', 130.0000, $2, $3)
      ON CONFLICT (id) DO UPDATE
-       SET name = EXCLUDED.name,
+       SET project_address = EXCLUDED.project_address,
            customer_name = EXCLUDED.customer_name,
-           address = EXCLUDED.address,
-           building_area = EXCLUDED.building_area,
+           outer_frame_area = EXCLUDED.outer_frame_area,
            lead_designer_id = EXCLUDED.lead_designer_id,
            updated_at = current_timestamp`,
     [demoProjectId, leadId, ownerId],
@@ -157,15 +155,13 @@ try {
   const acceptanceProjectId = "99999999-9999-4999-8999-999999999999";
   await client.query(
     `INSERT INTO projects
-       (id, name, customer_name, address, building_area,
+       (id, project_address, customer_name, outer_frame_area,
         lead_designer_id, created_by_user_id)
-     VALUES ($1, '云栖名苑（V1验收）', '陈先生', '杭州市滨江区云栖名苑 8-2-602',
-             130.0000, $2, $3)
+     VALUES ($1, '杭州市滨江区云栖名苑 8-2-602', '陈先生', 130.0000, $2, $3)
      ON CONFLICT (id) DO UPDATE
-       SET name = EXCLUDED.name,
+       SET project_address = EXCLUDED.project_address,
            customer_name = EXCLUDED.customer_name,
-           address = EXCLUDED.address,
-           building_area = EXCLUDED.building_area,
+           outer_frame_area = EXCLUDED.outer_frame_area,
            lead_designer_id = EXCLUDED.lead_designer_id,
            updated_at = current_timestamp`,
     [acceptanceProjectId, leadId, ownerId],

@@ -15,16 +15,18 @@ describe("cost margin view model", () => {
     expect(formatMarginRate(null)).toBe("—");
   });
 
-  it("uses only objective calculation states without an invented warning threshold", () => {
-    expect(marginStatus("0.0000", "0.0000")).toBe("未计价");
-    expect(marginStatus("100.0000", "20.0000")).toBe("已计算");
-    expect(marginStatus("100.0000", "-1.0000")).toBe("负毛利");
+  it("compares every priced scope with the configured gross-margin benchmark", () => {
+    expect(marginStatus("0.0000", null, "0.3000")).toBe("未计价");
+    expect(marginStatus("100.0000", "0.3200", "0.3000")).toBe("正常");
+    expect(marginStatus("100.0000", "0.2800", "0.3000")).toBe("低于基准");
+    expect(marginStatus("100.0000", "-0.0100", "0.3000")).toBe("负毛利");
   });
 
   it("orders every common range and project space for the detail navigation", () => {
     const scopes = [
       scope("十二、其他工程", null),
       scope("主卫", "BATHROOM"),
+      scope("管理费", null),
       scope("客餐厅", "LIVING_DINING"),
       scope("一、砌墙工程", null),
       scope("主卧", "BEDROOM"),
@@ -39,6 +41,7 @@ describe("cost margin view model", () => {
       "十、油漆工程",
       "十一、水电工程",
       "十二、其他工程",
+      "管理费",
     ]);
   });
 });
