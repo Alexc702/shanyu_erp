@@ -8,6 +8,8 @@ import type {
 } from "@shanyu/contracts";
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   LockKeyhole,
   PencilLine,
@@ -45,6 +47,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiUrl } from "@/lib/api-url";
 import { continueEditingQuotation } from "@/lib/quotation-client";
+import { moveSpace } from "@/lib/space-order";
 
 interface SpaceManagerProps {
   readonly projectId: string;
@@ -75,6 +78,7 @@ export function SpaceManager({ projectId, quotation, spaces }: SpaceManagerProps
   const [isPending, setIsPending] = useState(false);
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState(false);
+  const [orderedSpaces, setOrderedSpaces] = useState(() => [...spaces]);
   const canAdjust = currentQuotation.status === "DRAFT";
   const hasWrappedBalcony = spaces.some(
     (space) => space.type === "LIVING_DINING" && space.includesBalcony,
@@ -82,9 +86,31 @@ export function SpaceManager({ projectId, quotation, spaces }: SpaceManagerProps
 
   function changeOpen(nextOpen: boolean) {
     setOpen(nextOpen);
+    if (nextOpen) {
+      setOrderedSpaces([...spaces]);
+    }
     if (!nextOpen) {
       setView({ kind: "LIST" });
       setMessage("");
+    }
+  }
+
+  async function saveOrder() {
+    setIsPending(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${apiUrl}/projects/${projectId}/spaces/order`, {
+        body: JSON.stringify({ spaceIds: orderedSpaces.map((space) => space.id) }),
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        method: "PUT",
+      });
+      if (!response.ok) throw await responseError(response, "空间排序保存失败");
+      finish();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "空间排序保存失败");
+    } finally {
+      setIsPending(false);
     }
   }
 
@@ -160,17 +186,19 @@ export function SpaceManager({ projectId, quotation, spaces }: SpaceManagerProps
                   <Button onClick={() => setView({ kind: "ADD" })} size="sm"><Plus />增加空间</Button>
                 </div>
                 <div className="overflow-hidden rounded-lg border border-border">
-                  <div className="type-table-head hidden grid-cols-[100px_minmax(120px,1fr)_90px_90px_90px_130px] gap-3 bg-muted/55 px-4 py-2 text-muted-foreground md:grid">
+                  <div className="type-table-head hidden grid-cols-[100px_minmax(120px,1fr)_90px_90px_90px_190px] gap-3 bg-muted/55 px-4 py-2 text-muted-foreground md:grid">
                     <span>类型</span><span>显示名称</span><span>面积㎡</span><span>周长m</span><span>层高m</span><span className="text-right">操作</span>
                   </div>
-                  {spaces.map((space) => (
-                    <div className="grid gap-3 border-t border-border px-4 py-3 first:border-t-0 md:grid-cols-[100px_minmax(120px,1fr)_90px_90px_90px_130px] md:items-center" key={space.id}>
+                  {orderedSpaces.map((space, index) => (
+                    <div className="grid gap-3 border-t border-border px-4 py-3 first:border-t-0 md:grid-cols-[100px_minmax(120px,1fr)_90px_90px_90px_190px] md:items-center" key={space.id}>
                       <span className="type-body text-muted-foreground">{spaceTypeLabels[space.type]}</span>
                       <div className="flex items-center gap-2"><span className="font-medium">{space.displayName}</span>{space.includesBalcony ? <Badge variant="outline">包阳台</Badge> : null}</div>
                       <span className="type-body">{Number(space.area).toFixed(2)}</span>
                       <span className="type-body">{Number(space.perimeter).toFixed(2)}</span>
                       <span className="type-body">{Number(space.height).toFixed(2)}</span>
                       <div className="flex justify-end gap-1">
+                        <Button aria-label={`上移${space.displayName}`} disabled={index === 0 || isPending} onClick={() => setOrderedSpaces((current) => moveSpace(current, index, -1))} size="icon" variant="ghost"><ArrowUp /></Button>
+                        <Button aria-label={`下移${space.displayName}`} disabled={index === orderedSpaces.length - 1 || isPending} onClick={() => setOrderedSpaces((current) => moveSpace(current, index, 1))} size="icon" variant="ghost"><ArrowDown /></Button>
                         <Button aria-label={`修改${space.displayName}`} onClick={() => setView({ kind: "RENAME", space })} size="icon" variant="ghost"><PencilLine /></Button>
                         <Button aria-label={`删除${space.displayName}`} disabled={spaces.length === 1} onClick={() => setDeleteTarget(space)} size="icon" variant="ghost"><Trash2 className="text-destructive" /></Button>
                       </div>
@@ -179,8 +207,9 @@ export function SpaceManager({ projectId, quotation, spaces }: SpaceManagerProps
                 </div>
               </div>
               <DialogFooter className="border-t border-border px-6 py-4">
-                <p className="type-support mr-auto text-muted-foreground">仅草稿状态可调整；项目至少保留一个空间。</p>
-                <Button onClick={() => changeOpen(false)} variant="outline">完成</Button>
+                <p className="type-support mr-auto text-muted-foreground">仅当前草稿可保存；排序同步至半包报价及客户版导出。</p>
+                <Button disabled={isPending} onClick={() => changeOpen(false)} variant="outline">取消</Button>
+                <Button disabled={isPending} onClick={() => void saveOrder()}>{isPending ? "保存中…" : "保存调整"}</Button>
               </DialogFooter>
             </DialogContent>
           ) : view.kind === "ADD" ? (

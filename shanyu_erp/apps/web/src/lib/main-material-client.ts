@@ -29,6 +29,21 @@ export async function selectMainMaterial(
   );
 }
 
+export async function updateMainMaterialDemand(
+  projectId: string,
+  lineId: string,
+  input: {
+    readonly baseQuantity: string;
+    readonly expectedRevision: number;
+    readonly lossRate: string;
+  },
+): Promise<MainMaterialQuotationView> {
+  return quotationRequest(
+    `${apiUrl}/projects/${projectId}/main-material-quotation/lines/${lineId}/demand`,
+    { body: JSON.stringify(input), method: "PATCH" },
+  );
+}
+
 export async function addMainMaterialLine(
   projectId: string,
   input: {
@@ -75,6 +90,17 @@ export async function refreshMainMaterialCatalog(
     `${apiUrl}/projects/${projectId}/main-material-quotation/catalog-update`,
     { body: JSON.stringify({ expectedRevision }), method: "POST" },
   );
+}
+
+export async function fetchMainMaterialQuotationCatalog(
+  projectId: string,
+): Promise<PublishedMainMaterialCatalogView> {
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/main-material-quotation/catalog`,
+    { credentials: "include" },
+  );
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return ((await response.json()) as PublishedMainMaterialCatalogResponse).catalog;
 }
 
 export async function validateMainMaterialWorkbook(

@@ -20,6 +20,7 @@ export interface AuditRecord {
     | "MAIN_MATERIAL_SELECTION_UPDATED"
     | "PROJECT_CREATED"
     | "QUOTATION_DRAFT_CREATED"
+    | "QUOTATION_DRAFT_REPAIRED"
     | "QUOTATION_COST_MARGIN_VIEWED"
     | "QUOTATION_APPROVED"
     | "QUOTATION_EXPORTED"
@@ -37,7 +38,8 @@ export interface AuditRecord {
     | "QUOTATION_SCOPES_SYNCED"
     | "SPACE_CREATED"
     | "SPACE_UPDATED"
-    | "SPACE_DELETED";
+    | "SPACE_DELETED"
+    | "SPACES_REORDERED";
   readonly actorUserId: string | null;
   readonly afterState?: Readonly<Record<string, unknown>> | null;
   readonly beforeState?: Readonly<Record<string, unknown>> | null;

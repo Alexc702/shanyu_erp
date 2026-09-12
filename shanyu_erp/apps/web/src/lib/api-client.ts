@@ -144,6 +144,19 @@ export async function fetchMainMaterialQuotation(
   return ((await response.json()) as MainMaterialQuotationResponse).quotation;
 }
 
+export async function fetchMainMaterialQuotationCatalog(
+  cookieHeader: string,
+  projectId: string,
+): Promise<PublishedMainMaterialCatalogView | null> {
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/main-material-quotation/catalog`,
+    { cache: "no-store", headers: { cookie: cookieHeader } },
+  );
+  if ([401, 403, 404, 409].includes(response.status)) return null;
+  if (!response.ok) throw new Error(`Main material quotation catalog request failed with status ${response.status}`);
+  return ((await response.json()) as PublishedMainMaterialCatalogResponse).catalog;
+}
+
 export async function fetchMainMaterialQuotationVersion(
   cookieHeader: string,
   projectId: string,

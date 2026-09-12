@@ -125,8 +125,9 @@ export class QuotationService {
     const project = await this.authorizedProject(actor, projectId);
     const existing = await this.quotationRepository.findDraft(projectId);
     if (existing) {
+      const repaired = await this.repairAcceptanceDraft(actor, existing);
       return toView(
-        await this.addMissingProjectScopes(actor, project, existing),
+        await this.addMissingProjectScopes(actor, project, repaired),
       );
     }
     const latest = await this.quotationRepository.findLatest(projectId);
@@ -269,19 +270,12 @@ export class QuotationService {
     }
     const baseCheck = await this.submissionCheck(draft);
     const mainMaterial = await this.mainMaterialRepository.getQuotationById(draft.id);
-    const missingMainMaterial = mainMaterial?.lines.filter(
-      (line) => line.origin === "AUTO_TILE" && !line.itemVersionId,
-    ) ?? [];
-    const check = missingMainMaterial.length
+    const mainMaterialBlockers = submissionMainMaterialBlockers(mainMaterial);
+    const check = mainMaterialBlockers.length
       ? {
           ...baseCheck,
-          blockerCount: baseCheck.blockerCount + missingMainMaterial.length,
-          blockers: [
-            ...baseCheck.blockers,
-            ...missingMainMaterial.map(
-              (line) => `${line.scopeName}的${line.demandName}尚未选择主材型号`,
-            ),
-          ],
+          blockerCount: baseCheck.blockerCount + mainMaterialBlockers.length,
+          blockers: [...baseCheck.blockers, ...mainMaterialBlockers],
         }
       : baseCheck;
     return check;
@@ -307,19 +301,12 @@ export class QuotationService {
     }
     const baseCheck = await this.submissionCheck(draft);
     const mainMaterial = await this.mainMaterialRepository.getQuotationById(draft.id);
-    const missingMainMaterial = mainMaterial?.lines.filter(
-      (line) => line.origin === "AUTO_TILE" && !line.itemVersionId,
-    ) ?? [];
-    const check = missingMainMaterial.length
+    const mainMaterialBlockers = submissionMainMaterialBlockers(mainMaterial);
+    const check = mainMaterialBlockers.length
       ? {
           ...baseCheck,
-          blockerCount: baseCheck.blockerCount + missingMainMaterial.length,
-          blockers: [
-            ...baseCheck.blockers,
-            ...missingMainMaterial.map(
-              (line) => `${line.scopeName}的${line.demandName}尚未选择主材型号`,
-            ),
-          ],
+          blockerCount: baseCheck.blockerCount + mainMaterialBlockers.length,
+          blockers: [...baseCheck.blockers, ...mainMaterialBlockers],
         }
       : baseCheck;
     if (check.blockerCount > 0) {
@@ -520,17 +507,18 @@ export class QuotationService {
       source,
       actor.id,
     );
+    const repaired = await this.repairAcceptanceDraft(actor, created);
     await this.auditRepository.append({
       action: "QUOTATION_EDITING_CONTINUED",
       actorUserId: actor.id,
-      afterState: { version: created.versionNumber },
+      afterState: { version: repaired.versionNumber },
       beforeState: { version: source.versionNumber },
       occurredAt: new Date(),
       result: "SUCCESS",
-      targetId: created.id,
+      targetId: repaired.id,
       targetType: "HALF_PACKAGE_QUOTATION",
     });
-    return toView(created);
+    return toView(repaired);
   }
 
   async updateAdjustment(
@@ -850,6 +838,67 @@ export class QuotationService {
     return saved;
   }
 
+  private async repairAcceptanceDraft(
+    actor: SessionUser,
+    draft: QuotationDraft,
+  ): Promise<QuotationDraft> {
+    const needsBalconyTemplate = draft.scopes.some(
+      (scope) =>
+        scope.spaceType === "BALCONY" &&
+        scope.lines.some((line) => line.sectionCode !== "LIVING_DINING"),
+    );
+    const template = needsBalconyTemplate
+      ? await this.quotationRepository.findTemplate(
+          draft.templateVersionId,
+          draft.ruleVersionId,
+        )
+      : null;
+    if (needsBalconyTemplate && !template) {
+      throw new ConflictException("报价固定引用的主材库版本不存在");
+    }
+
+    const repairedScopeIds: string[] = [];
+    const scopes = draft.scopes.map((scope) => {
+      const repaired = repairAcceptanceScope(scope, template);
+      if (repaired !== scope) repairedScopeIds.push(scope.id);
+      return repaired;
+    });
+    if (repairedScopeIds.length === 0) {
+      return this.calculate(draft);
+    }
+
+    const calculated = this.calculate({
+      ...draft,
+      revision: draft.revision + 1,
+      scopes,
+    });
+    let saved: QuotationDraft;
+    try {
+      saved = await this.quotationRepository.repairDraft(
+        calculated,
+        repairedScopeIds,
+        draft.revision,
+      );
+    } catch (error) {
+      if (error instanceof QuotationRevisionConflictError) {
+        throw new ConflictException("报价已被其他操作更新，请刷新后重试");
+      }
+      throw error;
+    }
+    await this.mainMaterialRepository.initializeAndSyncDraft(draft.projectId);
+    const synchronized =
+      (await this.quotationRepository.findDraft(draft.projectId)) ?? saved;
+    await this.auditRepository.append({
+      action: "QUOTATION_DRAFT_REPAIRED",
+      actorUserId: actor.id,
+      occurredAt: new Date(),
+      result: "SUCCESS",
+      targetId: synchronized.id,
+      targetType: "HALF_PACKAGE_QUOTATION",
+    });
+    return synchronized;
+  }
+
   private calculate(draft: QuotationDraft): QuotationDraft {
     const result = this.calculator.calculate({
       discountRate: draft.discountRate,
@@ -1056,7 +1105,7 @@ function buildScope(
   sortOrder: number,
   items: readonly QuotationTemplateItem[],
 ): QuotationDraftScope {
-  const baseLines = items.map((item) => ({
+  const baseLines = items.flatMap((item) => acceptanceItemVariants(item.itemName).map((itemName) => ({
     amount: null,
     calculatedQuantity: null,
     costAmount: null,
@@ -1064,7 +1113,7 @@ function buildScope(
     grossMarginRate: null,
     grossProfit: null,
     id: randomUUID(),
-    itemName: item.itemName,
+    itemName,
     manualQuantity: null,
     quantityRule: { kind: "MANUAL" } as QuantityRule,
     remarks: item.remarks,
@@ -1075,7 +1124,7 @@ function buildScope(
     sortOrder: item.sortOrder,
     unit: item.unit,
     versionItemId: item.id,
-  }));
+  })));
   const linesWithRules: QuotationDraftLine[] = baseLines.map((line) => {
     const quantityRule = quantityRuleFor(line, baseLines);
     return {
@@ -1109,6 +1158,111 @@ function buildScope(
     sortOrder,
     spaceType,
     subtotal: "0.0000",
+  };
+}
+
+function repairAcceptanceScope(
+  scope: QuotationDraftScope,
+  template: QuotationTemplate | null,
+): QuotationDraftScope {
+  if (
+    scope.spaceType === "BALCONY" &&
+    scope.lines.some((line) => line.sectionCode !== "LIVING_DINING")
+  ) {
+    if (!template) throw new Error("独立阳台修复缺少报价模板");
+    const rebuilt = buildScope(
+      scope.name,
+      scope.projectSpaceId,
+      scope.spaceType,
+      scope.area,
+      scope.perimeter,
+      scope.height,
+      scope.sortOrder,
+      itemsForSpace(template.items, "BALCONY", ["LIVING_DINING"]),
+    );
+    return { ...rebuilt, id: scope.id };
+  }
+
+  let changed = false;
+  let lines = scope.lines.map((line) => {
+    const itemName = acceptanceItemName(line.itemName);
+    if (itemName !== line.itemName) changed = true;
+    if (
+      acceptanceManualItemNames.has(itemName) &&
+      line.quantityRule.kind !== "MANUAL"
+    ) {
+      changed = true;
+      return {
+        ...line,
+        amount: null,
+        calculatedQuantity: null,
+        costAmount: null,
+        grossMarginRate: null,
+        grossProfit: null,
+        itemName,
+        manualQuantity: null,
+        quantityRule: { kind: "MANUAL" } as const,
+        selected: false,
+      };
+    }
+    return itemName === line.itemName ? line : { ...line, itemName };
+  });
+  const linesById = new Map(lines.map((line) => [line.id, line] as const));
+  lines = lines.map((line) => {
+    if (line.quantityRule.kind !== "LINE_REFERENCE") return line;
+    const referenced = linesById.get(line.quantityRule.referencedLineId);
+    if (!referenced || line.selected === referenced.selected) return line;
+    changed = true;
+    return {
+      ...line,
+      amount: null,
+      calculatedQuantity: null,
+      costAmount: null,
+      grossMarginRate: null,
+      grossProfit: null,
+      manualQuantity: null,
+      selected: referenced.selected,
+    };
+  });
+  const existingKeys = new Set(lines.map((line) =>
+    `${line.sectionCode}:${line.itemName}`,
+  ));
+  for (const line of [...lines]) {
+    const counterpartName = smallTileCounterpartName(line.itemName);
+    if (!counterpartName) continue;
+    const key = `${line.sectionCode}:${counterpartName}`;
+    if (existingKeys.has(key)) continue;
+    lines.push(duplicateManualLine(line, counterpartName));
+    existingKeys.add(key);
+    changed = true;
+  }
+  lines = [...lines].sort((left, right) => left.sortOrder - right.sortOrder);
+  return changed ? { ...scope, lines } : scope;
+}
+
+function duplicateManualLine(
+  line: QuotationDraftLine,
+  itemName: string,
+): QuotationDraftLine {
+  return {
+    amount: null,
+    calculatedQuantity: null,
+    costAmount: null,
+    costUnitPrice: line.costUnitPrice,
+    grossMarginRate: null,
+    grossProfit: null,
+    id: randomUUID(),
+    itemName,
+    manualQuantity: null,
+    quantityRule: { kind: "MANUAL" },
+    remarks: line.remarks,
+    saleUnitPrice: line.saleUnitPrice,
+    sectionCode: line.sectionCode,
+    sectionName: line.sectionName,
+    selected: false,
+    sortOrder: line.sortOrder,
+    unit: line.unit,
+    versionItemId: line.versionItemId,
   };
 }
 
@@ -1162,12 +1316,6 @@ function quantityRuleFor(
       kind: "LINE_REFERENCE",
       referencedLineId: referenced.id,
     };
-  }
-  if (
-    line.sectionCode === "KITCHEN_BATHROOM" &&
-    line.itemName === "防水石膏板吊平顶"
-  ) {
-    return { kind: "SPACE_AREA" };
   }
   return { kind: "MANUAL" };
 }
@@ -1226,7 +1374,7 @@ function sectionCodesForSpace(
     case "BATHROOM":
       return ["KITCHEN_BATHROOM"];
     case "BALCONY":
-      return ["BALCONY"];
+      return ["LIVING_DINING"];
   }
 }
 
@@ -1598,6 +1746,26 @@ function keyedMainMaterialLines(
   }));
 }
 
+function submissionMainMaterialBlockers(
+  quotation: MainMaterialQuotation | null,
+): string[] {
+  if (!quotation) return [];
+  const blockers = quotation.lines
+    .filter((line) => line.origin === "AUTO_TILE" && !line.itemVersionId)
+    .map((line) => `${line.scopeName}的${line.demandName}尚未选择主材型号`);
+  const hasFloor = quotation.lines.some((line) =>
+    line.categoryCode === "FLOOR" && line.itemVersionId &&
+    line.itemName === "木地板" && line.brand !== "辅材",
+  );
+  const hasFloorAccessory = quotation.lines.some((line) =>
+    line.categoryCode === "FLOOR" && line.itemVersionId && line.brand === "辅材",
+  );
+  if (hasFloor && !hasFloorAccessory) {
+    blockers.push("已选择木地板，请至少选择一项辅材");
+  }
+  return blockers;
+}
+
 function materialSelectionLabel(
   line: MainMaterialQuotation["lines"][number] | undefined,
 ): string | null {
@@ -1619,9 +1787,42 @@ const electricalBuildingAreaItems = new Set([
 
 const spaceAreaItemNames = new Set([
   "成品保护",
-  "600*1200mm地砖（水泥砂浆粘贴）",
   "顶面基层处理",
 ]);
+
+const acceptanceItemNames = new Map([
+  ["70*200mm小砖（胶泥粘帖）", "50*200mm小砖（胶泥粘帖）"],
+  ["70*300mm小砖（胶泥粘帖）", "60*200mm小砖（胶泥粘帖）"],
+]);
+
+const smallTileOptionNames = new Set([
+  "100*100mm小砖（水泥砂浆粘贴）",
+  "200*200mm小砖（水泥砂浆粘贴）",
+  "100*100mm小砖（胶泥粘帖）",
+  "200*200mm小砖（胶泥粘帖）",
+]);
+
+function acceptanceItemVariants(itemName: string): readonly string[] {
+  const acceptedName = acceptanceItemName(itemName);
+  const counterpartName = smallTileCounterpartName(acceptedName);
+  return counterpartName ? [acceptedName, counterpartName] : [acceptedName];
+}
+
+function smallTileCounterpartName(itemName: string): string | null {
+  if (!smallTileOptionNames.has(itemName)) return null;
+  return itemName.includes("水泥砂浆粘贴")
+    ? itemName.replace("水泥砂浆粘贴", "胶泥粘帖")
+    : itemName.replace("胶泥粘帖", "水泥砂浆粘贴");
+}
+
+const acceptanceManualItemNames = new Set([
+  "600*1200mm地砖（水泥砂浆粘贴）",
+  "防水石膏板吊平顶",
+]);
+
+function acceptanceItemName(itemName: string): string {
+  return acceptanceItemNames.get(itemName) ?? itemName;
+}
 
 const otherBuildingAreaItems = new Set([
   "装潢垃圾清理费",

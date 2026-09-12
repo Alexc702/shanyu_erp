@@ -6,6 +6,7 @@ import {
   formatDisplayNumber,
   formatQuotationScopeName,
   formatQuotationUnit,
+  orderQuotationOptionLines,
   orderQuotationScopes,
   quotationLineCategory,
   quotationOptionQuantityForToggle,
@@ -28,7 +29,7 @@ describe("quotation view model", () => {
     expect(formatQuotationUnit("M")).toBe("M");
   });
 
-  it("orders wall, project spaces, paint, electrical, and other", () => {
+  it("preserves the server scope order", () => {
     const scopes = [
       scope("十一、水电工程", null),
       scope("次卫", "BATHROOM"),
@@ -44,20 +45,9 @@ describe("quotation view model", () => {
       scope("十二、其他工程", null),
     ];
 
-    expect(orderQuotationScopes(scopes).map((item) => item.name)).toEqual([
-      "一、砌墙工程",
-      "客餐厅",
-      "主卧",
-      "次卧",
-      "衣帽间",
-      "主卫",
-      "次卫",
-      "厨房",
-      "生活阳台",
-      "十、油漆工程",
-      "十一、水电工程",
-      "十二、其他工程",
-    ]);
+    expect(orderQuotationScopes(scopes).map((item) => item.name)).toEqual(
+      scopes.map((item) => item.name),
+    );
   });
 
   it("隐藏项目级范围名称前的 Excel 章节编号", () => {
@@ -75,6 +65,8 @@ describe("quotation view model", () => {
       "900*1800mm地砖（水泥砂浆粘贴）",
       "木纹砖长条150*900（水泥砂浆粘贴）",
       "木纹砖长条200*1200（水泥砂浆粘贴）",
+      "100*100mm小砖（水泥砂浆粘贴）",
+      "200*200mm小砖（水泥砂浆粘贴）",
     ];
     const adhesiveOptions = [
       "200*700mm小砖（胶泥粘帖）",
@@ -82,13 +74,15 @@ describe("quotation view model", () => {
       "600*1200mm墙砖（胶泥粘帖）",
       "750*1500mm墙砖（胶泥粘帖）",
       "900*1800mm墙砖（胶泥粘帖）",
+      "100*100mm小砖（胶泥粘帖）",
+      "200*200mm小砖（胶泥粘帖）",
     ];
 
     expect(cementMortarOptions.map(quotationOptionGroup)).toEqual(
-      Array(7).fill("水泥砂浆粘贴"),
+      Array(9).fill("水泥砂浆粘贴"),
     );
     expect(adhesiveOptions.map(quotationOptionGroup)).toEqual(
-      Array(5).fill("胶泥粘帖"),
+      Array(7).fill("胶泥粘帖"),
     );
     expect(cementMortarOptions.map(quotationOptionModelLabel)).toEqual([
       "800×800",
@@ -98,6 +92,8 @@ describe("quotation view model", () => {
       "900×1800",
       "木纹砖长条150×900",
       "木纹砖长条200×1200",
+      "100×100",
+      "200×200",
     ]);
     expect(adhesiveOptions.map(quotationOptionModelLabel)).toEqual([
       "200×700",
@@ -105,6 +101,8 @@ describe("quotation view model", () => {
       "600×1200",
       "750×1500",
       "900×1800",
+      "100×100",
+      "200×200",
     ]);
     expect(quotationOptionGroup("瓜子片豆石精找平")).toBe("找平做法");
     expect(quotationOptionGroup("包管道（1根）")).toBeNull();
@@ -115,6 +113,24 @@ describe("quotation view model", () => {
     expect(formatQuotationItemName("800*800mm墙砖（胶泥粘帖）")).toBe(
       "800*800mm墙砖",
     );
+  });
+
+  it("keeps selected tile rows beneath their matching construction method", () => {
+    const lines = [
+      { id: "cement-large", itemName: "750*1500mm地砖（水泥砂浆粘贴）" },
+      { id: "adhesive-small-100", itemName: "100*100mm小砖（胶泥粘帖）" },
+      { id: "cement-small-100", itemName: "100*100mm小砖（水泥砂浆粘贴）" },
+      { id: "adhesive-small-200", itemName: "200*200mm小砖（胶泥粘帖）" },
+      { id: "cement-small-200", itemName: "200*200mm小砖（水泥砂浆粘贴）" },
+    ];
+
+    expect(orderQuotationOptionLines(lines).map((line) => line.id)).toEqual([
+      "cement-large",
+      "cement-small-100",
+      "cement-small-200",
+      "adhesive-small-100",
+      "adhesive-small-200",
+    ]);
   });
 
   it("shows only selected lines below every Excel multi-select group", () => {

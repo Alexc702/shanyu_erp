@@ -21,6 +21,10 @@ import type {
   AuditRecord,
   AuditRepository,
 } from "../src/access/audit.repository";
+import type {
+  MainMaterialQuotation,
+  MainMaterialRepository,
+} from "../src/main-material/main-material.repository";
 import { HalfPackageCalculator } from "../src/quotation/half-package-calculator";
 import type {
   NewQuotationDraft,
@@ -59,13 +63,13 @@ describe("QuotationService", () => {
     const quotation = await service.getOrCreateDraft(lead, project.id);
 
     expect(quotation).toMatchObject({
-      directCost: "20182.2000",
-      managementFee: "2018.2200",
+      directCost: "10582.2000",
+      managementFee: "1058.2200",
       projectId: project.id,
       revision: 0,
       status: "DRAFT",
       templateVersion: 1,
-      total: "22200.4200",
+      total: "11640.4200",
     });
     expect(quotation.scopes.map((scope) => scope.name)).toEqual([
       "一、砌墙工程",
@@ -78,11 +82,11 @@ describe("QuotationService", () => {
     ]);
     expect(quotation.scopes.find((scope) => scope.name === "主卧")?.lines).toMatchObject([
       {
-        amount: "2880.0000",
+        amount: null,
         itemName: "600*1200mm地砖（水泥砂浆粘贴）",
-        quantity: "18.0000",
-        quantitySource: "SPACE_AREA",
-        selected: true,
+        quantity: null,
+        quantitySource: "MANUAL",
+        selected: false,
       },
       {
         amount: "846.0000",
@@ -110,6 +114,134 @@ describe("QuotationService", () => {
 
     await service.getOrCreateDraft(owner, project.id);
     expect(repository.createdCount).toBe(1);
+  });
+
+  it("applies the six acceptance catalog rules to new drafts", async () => {
+    repository.project = {
+      ...project,
+      spaces: [
+        space("bedroom", "BEDROOM", "主卧"),
+        space("bathroom", "BATHROOM", "主卫"),
+      ],
+    };
+    repository.template = {
+      ...template,
+      items: [
+        ...template.items,
+        item(
+          "kitchen-bathroom-ceiling",
+          "KITCHEN_BATHROOM",
+          "防水石膏板吊平顶",
+          "M2",
+          "120.0000",
+        ),
+        item(
+          "brick-70-200",
+          "KITCHEN_BATHROOM",
+          "70*200mm小砖（胶泥粘帖）",
+          "M2",
+          "120.0000",
+        ),
+        item(
+          "brick-70-300",
+          "KITCHEN_BATHROOM",
+          "70*300mm小砖（胶泥粘帖）",
+          "M2",
+          "120.0000",
+        ),
+        item(
+          "brick-100",
+          "KITCHEN_BATHROOM",
+          "100*100mm小砖（胶泥粘帖）",
+          "M2",
+          "120.0000",
+        ),
+        item(
+          "brick-200",
+          "KITCHEN_BATHROOM",
+          "200*200mm小砖（胶泥粘帖）",
+          "M2",
+          "120.0000",
+        ),
+      ],
+    };
+
+    const quotation = await service.getOrCreateDraft(lead, project.id);
+    const lines = quotation.scopes.flatMap((scope) => scope.lines);
+    for (const itemName of [
+      "600*1200mm地砖（水泥砂浆粘贴）",
+      "防水石膏板吊平顶",
+    ]) {
+      expect(lines.find((line) => line.itemName === itemName)).toMatchObject({
+        amount: null,
+        quantity: null,
+        quantitySource: "MANUAL",
+        selected: false,
+      });
+    }
+    expect(lines.map((line) => line.itemName)).toEqual(
+      expect.arrayContaining([
+        "50*200mm小砖（胶泥粘帖）",
+        "60*200mm小砖（胶泥粘帖）",
+        "100*100mm小砖（水泥砂浆粘贴）",
+        "200*200mm小砖（水泥砂浆粘贴）",
+        "100*100mm小砖（胶泥粘帖）",
+        "200*200mm小砖（胶泥粘帖）",
+      ]),
+    );
+    expect(lines.map((line) => line.itemName)).not.toEqual(
+      expect.arrayContaining([
+        "70*200mm小砖（胶泥粘帖）",
+        "70*300mm小砖（胶泥粘帖）",
+      ]),
+    );
+  });
+
+  it("repairs legacy automatic quantities only on the current draft", async () => {
+    const created = await service.getOrCreateDraft(lead, project.id);
+    const target = repository.draft?.scopes
+      .flatMap((scope) => scope.lines)
+      .find((line) => line.itemName === "600*1200mm地砖（水泥砂浆粘贴）");
+    if (!repository.draft || !target) throw new Error("测试草稿缺少待修复项");
+    const historicalSnapshot = structuredClone({
+      ...repository.draft,
+      status: "APPROVED" as const,
+    });
+    repository.draft = {
+      ...repository.draft,
+      scopes: repository.draft.scopes.map((scope) => ({
+        ...scope,
+        lines: scope.lines.map((line) =>
+          line.id === target.id
+            ? {
+                ...line,
+                amount: "2880.0000",
+                calculatedQuantity: "18.0000",
+                selected: true,
+                quantityRule: { kind: "SPACE_AREA" as const },
+              }
+            : line,
+        ),
+      })),
+    };
+
+    const repaired = await service.getOrCreateDraft(lead, project.id);
+    expect(repaired.revision).toBe(created.revision + 1);
+    expect(
+      repaired.scopes.flatMap((scope) => scope.lines).find((line) => line.id === target.id),
+    ).toMatchObject({
+      amount: null,
+      quantity: null,
+      quantitySource: "MANUAL",
+      selected: false,
+    });
+    expect(repository.repairCount).toBe(1);
+    expect(historicalSnapshot.status).toBe("APPROVED");
+    expect(audits.at(-1)).toMatchObject({
+      action: "QUOTATION_DRAFT_REPAIRED",
+      targetId: repaired.id,
+      targetType: "HALF_PACKAGE_QUOTATION",
+    });
   });
 
   it("returns the same draft when its first requests arrive concurrently", async () => {
@@ -161,7 +293,7 @@ describe("QuotationService", () => {
       主卫: 1,
       厨房: 1,
       "客餐厅（包阳台）": 3,
-      生活阳台: 1,
+      生活阳台: 2,
       衣帽间: 3,
     });
     expect(
@@ -175,7 +307,7 @@ describe("QuotationService", () => {
     ).toEqual(
       quotation.scopes
         .find((scope) => scope.name === "客餐厅（包阳台）")
-        ?.lines.filter((line) => line.sectionName === "七、阳台工程")
+        ?.lines.filter((line) => line.sectionName === "二、客餐厅工程")
         .map(({ itemName, quantitySource, saleUnitPrice }) => ({
           itemName,
           quantitySource,
@@ -267,7 +399,7 @@ describe("QuotationService", () => {
       quantity: "2.5000",
       selected: true,
     });
-    expect(updated.total).toBe("22370.9200");
+    expect(updated.total).toBe("11810.9200");
     expect(audits.at(-1)).toMatchObject({
       action: "QUOTATION_LINE_UPDATED",
       actorUserId: lead.id,
@@ -363,10 +495,10 @@ describe("QuotationService", () => {
     const costMargin = await service.getCostMargin(owner, project.id);
     expect(costMargin).toMatchObject({
       costVersion: { id: template.id, versionNumber: 1 },
-      expectedCost: "20282.2000",
-      grossMarginRate: "0.0934",
-      grossProfit: "2088.7200",
-      salesAmount: "22370.9200",
+      expectedCost: "10682.2000",
+      grossMarginRate: "0.0956",
+      grossProfit: "1128.7200",
+      salesAmount: "11810.9200",
     });
     expect(costMargin.scopes[0]?.lines[0]).toMatchObject({
       costAmount: "100.0000",
@@ -394,8 +526,8 @@ describe("QuotationService", () => {
     };
     await expect(service.getCostMargin(owner, project.id)).resolves.toMatchObject({
       costVersion: { id: template.id, versionNumber: 1 },
-      expectedCost: "20282.2000",
-      grossProfit: "2088.7200",
+      expectedCost: "10682.2000",
+      grossProfit: "1128.7200",
     });
   });
 
@@ -440,6 +572,45 @@ describe("QuotationService", () => {
     expect(audits.at(-1)).toMatchObject({ action: "QUOTATION_GENERATED" });
   });
 
+  it("blocks confirmation when a selected wood floor has no auxiliary material", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const mainMaterial: MainMaterialQuotation = {
+      catalog: { id: "catalog", name: "主材库", versionNumber: 1 },
+      directCost: "218.0000",
+      expectedCost: "100.0000",
+      id: draft.id,
+      lines: [{
+        assetIds: [], baseQuantity: null, brand: "北极鹿", categoryCode: "FLOOR",
+        colors: [], costAmount: "100.0000", costUnitPrice: "100.0000",
+        demandName: "木地板", demandSpec: "1215*167*15/1.2mm", id: "floor-line",
+        itemName: "木地板", itemVersionId: "floor-item", lossRate: "0.0000",
+        materialId: "MAT-FLOOR-BK-01", model: "BK-01", origin: "MANUAL",
+        quantity: "1.0000", saleAmount: "218.0000", saleUnitPrice: "218.0000",
+        scopeName: "项目级", selectedColor: null, series: "", spec: "1215*167*15/1.2mm",
+        unit: "m²",
+      }],
+      managementFee: "21.8000",
+      projectId: project.id,
+      revision: draft.revision,
+      status: "DRAFT",
+      total: "239.8000",
+    };
+    const mainMaterialRepository = {
+      getQuotationById: async () => mainMaterial,
+      initializeAndSyncDraft: async () => mainMaterial,
+    } as unknown as MainMaterialRepository;
+    const floorService = new QuotationService(
+      new AccessPolicy(), repository, { append: async (record) => { audits.push(record); } },
+      new HalfPackageCalculator(), undefined, mainMaterialRepository,
+    );
+
+    const check = await floorService.checkSubmission(lead, project.id);
+    expect(check.blockers).toContain("已选择木地板，请至少选择一项辅材");
+    await expect(
+      floorService.submit(lead, project.id, draft.revision),
+    ).rejects.toThrow("已选择木地板，请至少选择一项辅材");
+  });
+
   it("lists pending approvals with the current business margin snapshot", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const quoted = await service.submit(lead, project.id, draft.revision);
@@ -454,10 +625,10 @@ describe("QuotationService", () => {
 
     await expect(service.listPendingApprovals(owner)).resolves.toEqual([
       expect.objectContaining({
-        expectedCost: "20182.2000",
+        expectedCost: "10582.2000",
         grossMarginRate: "0.0909",
-        grossProfit: "2018.2200",
-        salesAmount: "22200.4200",
+        grossProfit: "1058.2200",
+        salesAmount: "11640.4200",
         thirdPartyPurchaseAmount: null,
       }),
     ]);
@@ -476,7 +647,7 @@ describe("QuotationService", () => {
       writeOff: "100.0000",
     });
     expect(leadAdjusted).toMatchObject({
-      adjustedTotal: "20990.3990",
+      adjustedTotal: "10958.3990",
       adjustmentStatus: "PENDING_APPROVAL",
       discountRate: "0.9500",
       revision: 1,
@@ -514,7 +685,7 @@ describe("QuotationService", () => {
       });
     expect(ownerConfirmed).toMatchObject({
       adjustmentStatus: "CONFIRMED",
-      adjustedTotal: "21736.4116",
+      adjustedTotal: "11387.6116",
       status: "APPROVED",
     });
     expect(audits.at(-1)).toMatchObject({
@@ -543,10 +714,10 @@ describe("QuotationService", () => {
     ]);
     expect(quotationSummaryRows(quotedWorkbook.getWorksheet("半包报价单")))
       .toEqual([
-        { amount: 20182.2, label: "直接费", number: "（1）" },
-        { amount: 2018.22, label: "管理费", number: "（2）" },
-        { amount: 1332.03, label: "税金", number: "（3）" },
-        { amount: 23532.45, label: "总造价", number: "（4）" },
+        { amount: 10582.2, label: "直接费", number: "（1）" },
+        { amount: 1058.22, label: "管理费", number: "（2）" },
+        { amount: 698.43, label: "税金", number: "（3）" },
+        { amount: 12338.85, label: "总造价", number: "（4）" },
       ]);
     const quotedHalfPackage = quotedWorkbook.getWorksheet("半包报价单");
     const quotedManagementRow = quotationSummaryRowNumber(
@@ -603,6 +774,8 @@ describe("QuotationService", () => {
     const cover = workbook.getWorksheet("封面");
     expect(cover?.getCell("A4").text).toContain(project.projectAddress);
     expect(cover?.getCell("A4").text).not.toContain("金地天元鸣望-8-2-602");
+    expect(cover?.getCell("A6").text).toBe(shanghaiExportDate(new Date()));
+    expect(worksheetNoteAddresses(cover)).toEqual([]);
     expect(cover?.getImages()).toHaveLength(1);
     expect(cover?.getCell("D4").master.address).toBe("A4");
     expect(cover?.getRow(1).height).toBe(408);
@@ -614,10 +787,13 @@ describe("QuotationService", () => {
     expect(cover?.pageSetup.orientation).toBe("landscape");
     const budget = workbook.getWorksheet("预算说明书");
     expect(budget?.getCell("B18").text).toContain("本报价未包含税金。");
+    expect(budget?.getCell("B19").text).toContain("水管辅材由保利水管质保50年");
+    expect(budget?.getCell("B20").text).toContain("客户签字");
+    expect(worksheetNoteAddresses(budget)).toEqual([]);
     expect(budget?.getCell("B2").master.address).toBe("A2");
-    expect(budget?.getRow(14).height).toBe(68);
-    expect(budget?.getColumn(2).width).toBe(151.576923076923);
-    expect(budget?.pageSetup.printArea).toBe("A1:B19");
+    expect(budget?.getRow(14).height).toBe(56);
+    expect(budget?.getColumn(2).width).toBe(153.545454545455);
+    expect(budget?.pageSetup.printArea).toBe("A1:B20");
     const worksheet = workbook.getWorksheet("半包报价单");
     expect(worksheet?.getCell("A1").value).toBe("基础报价明细表");
     expect(worksheet?.getCell("C2").value).toBe(project.customerName);
@@ -639,11 +815,21 @@ describe("QuotationService", () => {
     expect(worksheet?.getCell("A6").border.bottom?.style).toBe("thin");
     expect(worksheet?.getCell("B6").border.bottom?.style).toBe("thin");
     expect(worksheet?.getCell("E6").value).toBe("M²");
-    expect(worksheet?.getCell("I6").value).toBe(
-      "1、人工费；\n2、垃圾装袋运至小区指定点，如需要运到小区外费用另计。",
+    const halfPackageDetailRows: ExcelJS.Row[] = [];
+    worksheet?.eachRow((row) => {
+      if (typeof row.getCell(1).value === "number" && row.getCell(3).text) {
+        halfPackageDetailRows.push(row);
+      }
+    });
+    expect(halfPackageDetailRows.length).toBeGreaterThan(0);
+    halfPackageDetailRows.forEach((row) =>
+      expect(rowFillColors(row, 9)).toEqual(
+        Array.from({ length: 9 }, () => "FFFFFFFF"),
+      ),
     );
-    expect(worksheet?.getCell("I6").alignment.wrapText).toBe(true);
-    expect(worksheet?.getRow(6).height).toBeGreaterThanOrEqual(31);
+    expect(JSON.stringify(worksheet?.getSheetValues())).not.toContain(
+      "600*1200mm地砖（水泥砂浆粘贴）",
+    );
     expect(worksheet?.getRow(1).height).toBe(50);
     expect(worksheet?.getRow(2).height).toBe(30);
     expect(
@@ -662,10 +848,10 @@ describe("QuotationService", () => {
     expect(worksheet?.getImages()).toHaveLength(1);
     expect(worksheet?.pageSetup.printArea).toMatch(/^A1:I\d+$/);
     expect(quotationSummaryRows(worksheet)).toEqual([
-      { amount: 20182.2, label: "直接费", number: "（1）" },
-      { amount: 2018.22, label: "管理费", number: "（2）" },
-      { amount: 1332.03, label: "税金", number: "（3）" },
-      { amount: 23532.45, label: "总造价", number: "（4）" },
+      { amount: 10582.2, label: "直接费", number: "（1）" },
+      { amount: 1058.22, label: "管理费", number: "（2）" },
+      { amount: 698.43, label: "税金", number: "（3）" },
+      { amount: 12338.85, label: "总造价", number: "（4）" },
     ]);
     expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues()))).not.toContain("成本");
     expect(workbookFormulaCells(workbook)).toEqual([]);
@@ -678,11 +864,11 @@ describe("QuotationService", () => {
     {
       discountRate: "0.9500",
       expected: [
-        { amount: 20182.2, label: "直接费", number: "（1）" },
-        { amount: 2018.22, label: "管理费", number: "（2）" },
-        { amount: -1110.02, label: "折扣和抹零", number: "（3）" },
-        { amount: 1265.42, label: "税金", number: "（4）" },
-        { amount: 22355.82, label: "总造价", number: "（5）" },
+        { amount: 10582.2, label: "直接费", number: "（1）" },
+        { amount: 1058.22, label: "管理费", number: "（2）" },
+        { amount: -582.02, label: "折扣和抹零", number: "（3）" },
+        { amount: 663.5, label: "税金", number: "（4）" },
+        { amount: 11721.9, label: "总造价", number: "（5）" },
       ],
       adjustmentRemark: "获批折扣率 95.00%，抹零 0.00 元。",
       name: "已批准折扣",
@@ -691,11 +877,11 @@ describe("QuotationService", () => {
     {
       discountRate: "1.0000",
       expected: [
-        { amount: 20182.2, label: "直接费", number: "（1）" },
-        { amount: 2018.22, label: "管理费", number: "（2）" },
+        { amount: 10582.2, label: "直接费", number: "（1）" },
+        { amount: 1058.22, label: "管理费", number: "（2）" },
         { amount: -100, label: "折扣和抹零", number: "（3）" },
-        { amount: 1326.03, label: "税金", number: "（4）" },
-        { amount: 23426.45, label: "总造价", number: "（5）" },
+        { amount: 692.43, label: "税金", number: "（4）" },
+        { amount: 12232.85, label: "总造价", number: "（5）" },
       ],
       adjustmentRemark: "获批折扣率 100.00%，抹零 100.00 元。",
       name: "已批准抹零",
@@ -704,11 +890,11 @@ describe("QuotationService", () => {
     {
       discountRate: "0.9500",
       expected: [
-        { amount: 20182.2, label: "直接费", number: "（1）" },
-        { amount: 2018.22, label: "管理费", number: "（2）" },
-        { amount: -1210.02, label: "折扣和抹零", number: "（3）" },
-        { amount: 1259.42, label: "税金", number: "（4）" },
-        { amount: 22249.82, label: "总造价", number: "（5）" },
+        { amount: 10582.2, label: "直接费", number: "（1）" },
+        { amount: 1058.22, label: "管理费", number: "（2）" },
+        { amount: -682.02, label: "折扣和抹零", number: "（3）" },
+        { amount: 657.5, label: "税金", number: "（4）" },
+        { amount: 11615.9, label: "总造价", number: "（5）" },
       ],
       adjustmentRemark: "获批折扣率 95.00%，抹零 100.00 元。",
       name: "已批准折扣和抹零",
@@ -765,7 +951,7 @@ describe("QuotationService", () => {
       "HALF",
       "MAIN",
     ]);
-  }, 60_000);
+  }, 90_000);
 
   it("requires a return reason and keeps pricing adjustments in the next editable version", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
@@ -912,6 +1098,7 @@ class InMemoryQuotationRepository implements QuotationRepository {
   template: QuotationTemplate | null = structuredClone(template);
   templateLookups: [string, string][] = [];
   exports: QuotationExport[] = [];
+  repairCount = 0;
 
   async findProject(): Promise<ProjectDetail | null> {
     return this.project;
@@ -972,6 +1159,12 @@ class InMemoryQuotationRepository implements QuotationRepository {
       this.conflictNextSave = false;
       throw new QuotationRevisionConflictError();
     }
+    this.draft = structuredClone(input);
+    return structuredClone(input);
+  }
+
+  async repairDraft(input: QuotationDraft): Promise<QuotationDraft> {
+    this.repairCount += 1;
     this.draft = structuredClone(input);
     return structuredClone(input);
   }
@@ -1151,6 +1344,40 @@ function workbookFormulaCells(workbook: ExcelJS.Workbook): string[] {
     }),
   ));
   return cells;
+}
+
+function rowFillColors(
+  row: ExcelJS.Row | undefined,
+  lastColumn: number,
+): Array<string | undefined> {
+  return Array.from({ length: lastColumn }, (_, index) => {
+    const fill = row?.getCell(index + 1).fill;
+    return fill?.type === "pattern" ? fill.fgColor?.argb : undefined;
+  });
+}
+
+function worksheetNoteAddresses(
+  worksheet: ExcelJS.Worksheet | undefined,
+): string[] {
+  const addresses: string[] = [];
+  worksheet?.eachRow({ includeEmpty: true }, (row) =>
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      if (cell.note) addresses.push(cell.address);
+    }),
+  );
+  return addresses;
+}
+
+function shanghaiExportDate(value: Date): string {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    day: "numeric",
+    month: "numeric",
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `日期：${part("year")}年${part("month")}月${part("day")}日`;
 }
 
 async function pdfSectionOrder(payload: Buffer): Promise<string[]> {

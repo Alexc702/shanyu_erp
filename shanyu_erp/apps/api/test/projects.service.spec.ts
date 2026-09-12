@@ -297,6 +297,64 @@ describe("ProjectsService", () => {
       targetType: "SPACE",
     });
   });
+
+  it("reorders all spaces and records the previous and next order", async () => {
+    const project = await service.create(owner, {
+      outerFrameArea: "100",
+      customerName: "客户",
+      leadDesignerId: lead.id,
+      projectAddress: "项目地址",
+      spaces: [
+        space("客餐厅", "LIVING_DINING"),
+        space("主卧", "BEDROOM"),
+        space("次卧", "BEDROOM"),
+      ],
+    });
+    const nextIds = [
+      project.spaces[1]!.id,
+      project.spaces[0]!.id,
+      project.spaces[2]!.id,
+    ];
+    const previousIds = project.spaces.map((item) => item.id);
+
+    const reordered = await service.reorderSpaces(owner, project.id, {
+      spaceIds: nextIds,
+    });
+
+    expect(reordered.map((item) => item.id)).toEqual(nextIds);
+    expect(reordered.map((item) => item.sortOrder)).toEqual([0, 1, 2]);
+    expect(audits.at(-1)).toMatchObject({
+      action: "SPACES_REORDERED",
+      afterState: { spaceIds: nextIds },
+      beforeState: { spaceIds: previousIds },
+      targetId: project.id,
+      targetType: "PROJECT",
+    });
+  });
+
+  it("rejects incomplete, duplicate, or locked space orders", async () => {
+    const project = await service.create(owner, {
+      outerFrameArea: "100",
+      customerName: "客户",
+      leadDesignerId: lead.id,
+      projectAddress: "项目地址",
+      spaces: [space("主卧", "BEDROOM"), space("次卧", "BEDROOM")],
+    });
+    const firstId = project.spaces[0]!.id;
+
+    await expect(
+      service.reorderSpaces(owner, project.id, { spaceIds: [firstId] }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.reorderSpaces(owner, project.id, { spaceIds: [firstId, firstId] }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    repository.spaceAdjustmentState = "LOCKED";
+    await expect(
+      service.reorderSpaces(owner, project.id, {
+        spaceIds: project.spaces.map((item) => item.id),
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
 });
 
 class InMemoryProjectsRepository implements ProjectsRepository {
@@ -363,6 +421,21 @@ class InMemoryProjectsRepository implements ProjectsRepository {
     const index = project.spaces.findIndex((space) => space.id === input.id);
     (project.spaces as ProjectSpace[])[index] = input;
     return input;
+  }
+
+  async reorderSpaces(
+    projectId: string,
+    spaceIds: readonly string[],
+  ): Promise<ProjectSpace[]> {
+    const project = this.projects.find((item) => item.id === projectId);
+    if (!project) throw new Error("项目不存在");
+    const spacesById = new Map(project.spaces.map((item) => [item.id, item]));
+    const reordered = spaceIds.map((id, sortOrder) => ({
+      ...spacesById.get(id)!,
+      sortOrder,
+    }));
+    (project as { spaces: ProjectSpace[] }).spaces = reordered;
+    return reordered;
   }
 
   async deleteSpace(projectId: string, spaceId: string): Promise<void> {

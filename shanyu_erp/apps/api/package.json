@@ -10,7 +10,7 @@
     "reconcile:catalog": "node --env-file-if-exists=../../.env scripts/reconcile-half-package-catalog.mjs",
     "lint": "eslint src test --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --pool=forks --maxWorkers=1"
   },
   "dependencies": {
     "@fontsource/noto-sans-sc": "^5.3.0",

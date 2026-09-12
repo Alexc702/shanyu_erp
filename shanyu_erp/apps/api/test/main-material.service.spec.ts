@@ -40,6 +40,24 @@ describe("MainMaterialService", () => {
     expect(quotationView.lines[0]?.item?.costUnitPrice).toBe("0.10");
   });
 
+  it("uses the quotation-bound catalog for selection and excludes unavailable items", async () => {
+    const repository = createRepository();
+    repository.getPublishedCatalog.mockResolvedValue({
+      ...catalog,
+      id: "catalog-v2",
+      items: [{ ...item, catalogVersionId: "catalog-v2", id: "item-v2" }],
+      versionNumber: 2,
+    });
+    const service = createService(repository);
+
+    const view = await service.getQuotationCatalog(lead, project.id);
+
+    expect(repository.getCatalogById).toHaveBeenCalledWith("catalog");
+    expect(view).toMatchObject({ id: "catalog", versionNumber: 1 });
+    expect(view.items.map((candidate) => candidate.id)).toEqual(["item"]);
+    expect(view.items[0]).not.toHaveProperty("costPrice");
+  });
+
   it("creates a validated online-edit batch for the owner and rejects the lead", async () => {
     const repository = createRepository();
     const service = createService(repository);
@@ -99,6 +117,35 @@ describe("MainMaterialService", () => {
     });
     expect(result).toMatchObject({ revision: 2, catalogVersion: { versionNumber: 2 } });
   });
+
+  it("normalizes and saves editable main-material demand quantities", async () => {
+    const repository = createRepository();
+    repository.updateDemandLine.mockResolvedValue({
+      ...quotation,
+      lines: [{ ...quotation.lines[0], baseQuantity: "10.5000", lossRate: "0.1150", quantity: "11.7075" }],
+      revision: 2,
+    });
+    const service = createService(repository);
+
+    const result = await service.updateDemandLine(lead, project.id, "line", {
+      baseQuantity: "10.5",
+      expectedRevision: 1,
+      lossRate: "0.115",
+    });
+
+    expect(repository.updateDemandLine).toHaveBeenCalledWith({
+      baseQuantity: "10.5000",
+      expectedRevision: 1,
+      lineId: "line",
+      lossRate: "0.1150",
+      projectId: project.id,
+    });
+    expect(result.lines[0]).toMatchObject({
+      baseQuantity: "10.5000",
+      lossRate: "0.1150",
+      quantity: "11.7075",
+    });
+  });
 });
 
 function createService(repository = createRepository()) {
@@ -127,18 +174,23 @@ function createRepository() {
   return {
     createImportBatch: vi.fn(async (input) => ({ ...batch, ...input })),
     findImportBatchByHash: vi.fn(async () => null),
+    getCatalogById: vi.fn(async (catalogVersionId: string) =>
+      catalogVersionId === catalog.id ? catalog : null),
     getPublishedCatalog: vi.fn(async () => catalog),
     getQuotationByProject: vi.fn(async () => quotation),
     initializeAndSyncDraft: vi.fn(async () => quotation),
     refreshDraftCatalog: vi.fn(async () => quotation),
+    updateDemandLine: vi.fn(async () => quotation),
     validateDelta: vi.fn(async () => ({ pendingItemCount: 1 })),
   } as unknown as MainMaterialRepository & {
     createImportBatch: ReturnType<typeof vi.fn>;
     findImportBatchByHash: ReturnType<typeof vi.fn>;
+    getCatalogById: ReturnType<typeof vi.fn>;
     getPublishedCatalog: ReturnType<typeof vi.fn>;
     getQuotationByProject: ReturnType<typeof vi.fn>;
     initializeAndSyncDraft: ReturnType<typeof vi.fn>;
     refreshDraftCatalog: ReturnType<typeof vi.fn>;
+    updateDemandLine: ReturnType<typeof vi.fn>;
     validateDelta: ReturnType<typeof vi.fn>;
   };
 }

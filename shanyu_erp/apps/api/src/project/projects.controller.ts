@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
 } from "@nestjs/common";
 import type {
   AddSpaceRequest,
@@ -15,6 +16,7 @@ import type {
   ProjectDetail,
   ProjectSpace,
   ProjectSummary,
+  ReorderSpacesRequest,
   UpdateSpaceRequest,
 } from "@shanyu/contracts";
 
@@ -99,6 +101,25 @@ export class ProjectsController {
         projectId,
         spaceId,
         body as UpdateSpaceRequest,
+      ),
+    };
+  }
+
+  @Put(":projectId/spaces/order")
+  async reorderSpaces(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("projectId") projectId: string,
+    @Body() body: unknown,
+  ): Promise<{ spaces: ProjectSpace[] }> {
+    if (!body || typeof body !== "object") {
+      throw new BadRequestException("空间排序信息格式不正确");
+    }
+    const actor = await this.currentUser(cookieHeader);
+    return {
+      spaces: await this.projectsService.reorderSpaces(
+        actor,
+        projectId,
+        body as ReorderSpacesRequest,
       ),
     };
   }

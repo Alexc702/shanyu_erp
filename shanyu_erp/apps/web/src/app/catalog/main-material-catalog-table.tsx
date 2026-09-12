@@ -26,6 +26,10 @@ import {
   publishMainMaterialWorkbook,
   validateMainMaterialOnlineEdit,
 } from "@/lib/main-material-client";
+import {
+  formatMainMaterialUnit,
+  visibleMainMaterialAttributes,
+} from "@/lib/main-material-view-model";
 
 const categories: readonly { readonly code: MainMaterialCategoryCode; readonly name: string }[] = [
   { code: "TILE", name: "瓷砖" },
@@ -193,7 +197,7 @@ export function MainMaterialCatalogTable({
               <td><strong>{item.brand || "—"}</strong><span className="block text-xs text-muted-foreground">{item.model || item.series || "—"}</span></td>
               <td>{item.itemName || "—"}</td>
               <td>{item.spec || "—"}{item.colors.length ? <span className="block max-w-[260px] truncate text-xs text-muted-foreground">{item.colors.join("、")}</span> : null}</td>
-              <td>{/^m2$/i.test(item.unit) ? "M²" : item.unit}</td>
+              <td>{formatMainMaterialUnit(item.unit)}</td>
               <td>¥ {formatPrice(item.salePrice)}</td>
               {canManage ? <td>¥ {formatPrice(item.costPrice)}</td> : null}
               <td><Badge variant={item.status === "ACTIVE" ? "success" : item.status === "PENDING_DATA" ? "warning" : "secondary"}>{item.status === "ACTIVE" ? "可用" : item.status === "PENDING_DATA" ? "待补资料" : "停用"}</Badge></td>
@@ -254,9 +258,8 @@ export function MainMaterialCatalogTable({
           <DialogHeader><DialogTitle>主材记录详情</DialogTitle><DialogDescription>{detail?.materialId} · 记录版本 {detail?.recordVersion}</DialogDescription></DialogHeader>
           {detail ? <div className="grid gap-4">
             <div className="grid gap-3 sm:grid-cols-3">{detail.assets.length ? detail.assets.map((asset, index) => <div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-muted" key={asset.id}><Image alt={`${detail.brand} ${detail.model} 产品图 ${index + 1}`} className="object-contain" fill sizes="260px" src={`${apiUrl}${asset.path}`} unoptimized /></div>) : <div className="grid aspect-[4/3] place-items-center rounded-lg bg-muted text-muted-foreground"><div className="text-center"><ImageIcon className="mx-auto mb-2" />暂无产品图</div></div>}</div>
-            <div className="grid gap-2 sm:grid-cols-3"><CatalogDetail label="品牌" value={detail.brand} /><CatalogDetail label="系列 / 工艺" value={detail.series} /><CatalogDetail label="型号" value={detail.model} /><CatalogDetail label="品名 / 项目" value={detail.itemName} /><CatalogDetail label="规格" value={detail.spec} /><CatalogDetail label="可选颜色" value={detail.colors.join("、")} /><CatalogDetail label="单位" value={detail.unit} /><CatalogDetail label="销售价" value={detail.salePrice ? `¥ ${formatPrice(detail.salePrice)}` : "—"} />{canManage ? <CatalogDetail label="成本价" value={detail.costPrice ? `¥ ${formatPrice(detail.costPrice)}` : "—"} /> : null}{Object.entries(detail.attributes).filter(([key, value]) => key !== "imageReference" && value).map(([key, value]) => <CatalogDetail key={key} label={attributeLabel(key)} value={value} />)}</div>
+            <div className="grid gap-2 sm:grid-cols-3"><CatalogDetail label="品牌" value={detail.brand} /><CatalogDetail label="系列 / 工艺" value={detail.series} /><CatalogDetail label="型号" value={detail.model} /><CatalogDetail label="品名 / 项目" value={detail.itemName} /><CatalogDetail label="规格" value={detail.spec} /><CatalogDetail label="可选颜色" value={detail.colors.join("、")} /><CatalogDetail label="单位" value={formatMainMaterialUnit(detail.unit)} /><CatalogDetail label="销售价" value={detail.salePrice ? `¥ ${formatPrice(detail.salePrice)}` : "—"} />{canManage ? <CatalogDetail label="成本价" value={detail.costPrice ? `¥ ${formatPrice(detail.costPrice)}` : "—"} /> : null}{visibleMainMaterialAttributes(detail.attributes).map(([key, value]) => <CatalogDetail key={key} label={attributeLabel(key)} value={value} />)}</div>
             {detail.missingFields ? <p className="type-support m-0 rounded-md bg-warning-soft px-3 py-2 text-warning">缺失字段：{detail.missingFields}</p> : null}
-            <div className="rounded-lg border border-border p-3"><h3 className="type-section-title mb-2">来源追溯</h3><div className="grid gap-2 sm:grid-cols-2"><CatalogDetail label="来源文件" value={detail.sourceFile ?? ""} /><CatalogDetail label="来源工作表 / 页" value={detail.sourceSheet ?? ""} /><CatalogDetail label="来源行 / 型号" value={detail.sourceRow ?? ""} /><CatalogDetail label="价格换算说明" value={detail.priceDerivation ?? ""} />{detail.attributes.imageReference ? <CatalogDetail label="产品图引用" value={detail.attributes.imageReference} /> : null}</div></div>
             {detail.remarks ? <div><Label>备注</Label><p className="type-body mb-0 mt-1 rounded-md bg-muted px-3 py-2">{detail.remarks}</p></div> : null}
           </div> : null}
           <DialogFooter><Button onClick={() => setDetail(null)} variant="outline">关闭</Button></DialogFooter>

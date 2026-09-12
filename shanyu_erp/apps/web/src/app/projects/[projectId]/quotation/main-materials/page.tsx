@@ -5,8 +5,8 @@ import { AppShell } from "@/components/app-shell";
 import {
   fetchHalfPackageQuotation,
   fetchMainMaterialQuotation,
+  fetchMainMaterialQuotationCatalog,
   fetchProject,
-  fetchPublishedMainMaterialCatalog,
   fetchSession,
 } from "@/lib/api-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
@@ -31,7 +31,7 @@ export default async function MainMaterialsPage({
   ]);
   if (!project || !halfPackage) notFound();
   const [catalog, quotation] = await Promise.all([
-    fetchPublishedMainMaterialCatalog(cookieHeader),
+    fetchMainMaterialQuotationCatalog(cookieHeader, projectId),
     fetchMainMaterialQuotation(cookieHeader, projectId),
   ]);
   if (!catalog || !quotation) notFound();

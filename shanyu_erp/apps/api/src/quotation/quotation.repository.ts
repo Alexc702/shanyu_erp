@@ -156,6 +156,11 @@ export interface QuotationRepository {
     input: QuotationDraft,
     expectedRevision: number,
   ): Promise<QuotationDraft>;
+  repairDraft(
+    input: QuotationDraft,
+    repairedScopeIds: readonly string[],
+    expectedRevision: number,
+  ): Promise<QuotationDraft>;
   saveAdjustment(
     quotationId: string,
     discountRate: string,

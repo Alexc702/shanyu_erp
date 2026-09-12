@@ -521,6 +521,137 @@ export class PgQuotationRepository implements QuotationRepository {
     return saved;
   }
 
+  async repairDraft(
+    input: QuotationDraft,
+    repairedScopeIds: readonly string[],
+    expectedRevision: number,
+  ): Promise<QuotationDraft> {
+    const repairedScopeIdSet = new Set(repairedScopeIds);
+    await this.database.transaction(async (database) => {
+      const updated = await database.query(
+        `UPDATE half_package_quotations
+            SET direct_cost = $3, expected_cost = $4, gross_profit = $5,
+                gross_margin_rate = $6, management_fee = $7, total = $8,
+                adjusted_total = $9, revision = $10,
+                updated_at = current_timestamp
+          WHERE id = $1 AND project_id = $2 AND status = 'DRAFT'
+            AND is_current AND revision = $11`,
+        [
+          input.id,
+          input.projectId,
+          input.directCost,
+          input.expectedCost,
+          input.grossProfit,
+          input.grossMarginRate,
+          input.managementFee,
+          input.total,
+          input.adjustedTotal,
+          input.revision,
+          expectedRevision,
+        ],
+      );
+      if (updated.rowCount !== 1) {
+        throw new QuotationRevisionConflictError();
+      }
+      for (const scope of input.scopes) {
+        if (!repairedScopeIdSet.has(scope.id)) continue;
+        const scopeUpdate = await database.query(
+          `UPDATE half_package_quotation_spaces
+              SET subtotal = $3, expected_cost = $4, gross_profit = $5,
+                  gross_margin_rate = $6
+            WHERE id = $1 AND quotation_id = $2`,
+          [
+            scope.id,
+            input.id,
+            scope.subtotal,
+            scope.expectedCost,
+            scope.grossProfit,
+            scope.grossMarginRate,
+          ],
+        );
+        if (scopeUpdate.rowCount !== 1) {
+          throw new Error("报价范围不存在");
+        }
+        const existingLines = await database.query<{ id: string }>(
+          `SELECT id
+             FROM half_package_quotation_lines
+            WHERE quotation_space_id = $1
+            FOR UPDATE`,
+          [scope.id],
+        );
+        const existingLineIds = new Set(existingLines.rows.map((line) => line.id));
+        const canPreserveExistingLines = [...existingLineIds].every((id) =>
+          scope.lines.some((line) => line.id === id),
+        );
+        if (canPreserveExistingLines) {
+          for (const line of scope.lines) {
+            if (!existingLineIds.has(line.id)) {
+              await insertLine(database, scope.id, line);
+              continue;
+            }
+            const lineUpdate = await database.query(
+              `UPDATE half_package_quotation_lines
+                  SET version_item_id = $3, section_code = $4, section_name = $5,
+                      item_name = $6, unit = $7, remarks = $8, sort_order = $9,
+                      selected = $10, quantity_rule_kind = $11,
+                      referenced_line_id = $12, manual_quantity = $13,
+                      calculated_quantity = $14, sale_unit_price = $15,
+                      sale_amount = $16, cost_unit_price = $17, cost_amount = $18,
+                      gross_profit = $19, gross_margin_rate = $20
+                WHERE id = $1 AND quotation_space_id = $2`,
+              [
+                line.id,
+                scope.id,
+                line.versionItemId,
+                line.sectionCode,
+                line.sectionName,
+                line.itemName,
+                line.unit,
+                line.remarks,
+                line.sortOrder,
+                line.selected,
+                line.quantityRule.kind,
+                line.quantityRule.kind === "LINE_REFERENCE"
+                  ? line.quantityRule.referencedLineId
+                  : null,
+                line.manualQuantity,
+                line.calculatedQuantity,
+                line.saleUnitPrice,
+                line.amount,
+                line.costUnitPrice,
+                line.costAmount,
+                line.grossProfit,
+                line.grossMarginRate,
+              ],
+            );
+            if (lineUpdate.rowCount !== 1) {
+              throw new Error("报价工程项不存在");
+            }
+          }
+        } else {
+          await database.query(
+            `DELETE FROM main_material_quote_lines
+              WHERE source_half_package_line_id IN (
+                SELECT id FROM half_package_quotation_lines
+                 WHERE quotation_space_id = $1
+              )`,
+            [scope.id],
+          );
+          await database.query(
+            "DELETE FROM half_package_quotation_lines WHERE quotation_space_id = $1",
+            [scope.id],
+          );
+          await insertScopeLines(database, scope);
+        }
+      }
+    });
+    const saved = await this.findDraft(input.projectId);
+    if (!saved) {
+      throw new Error("修复半包报价草稿后无法读取结果");
+    }
+    return saved;
+  }
+
   async saveAdjustment(
     quotationId: string,
     discountRate: string,
@@ -1025,6 +1156,13 @@ async function insertScope(
       scope.sortOrder,
     ],
   );
+  await insertScopeLines(database, scope);
+}
+
+async function insertScopeLines(
+  database: DatabaseExecutor,
+  scope: QuotationDraftScope,
+): Promise<void> {
   const orderedLines = [...scope.lines].sort((left, right) =>
     left.quantityRule.kind === "LINE_REFERENCE" &&
     right.quantityRule.kind !== "LINE_REFERENCE"

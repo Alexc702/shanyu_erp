@@ -113,6 +113,10 @@ export interface AddSpaceRequest extends SpaceInput {
 
 export type UpdateSpaceRequest = SpaceInput;
 
+export interface ReorderSpacesRequest {
+  readonly spaceIds: readonly string[];
+}
+
 export type HalfPackageSectionCode =
   | "WALL"
   | "LIVING_DINING"

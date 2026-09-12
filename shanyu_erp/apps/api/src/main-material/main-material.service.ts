@@ -110,6 +110,24 @@ export class MainMaterialService {
     return toQuotationView(quotation, canViewCosts(actor));
   }
 
+  async getQuotationCatalog(
+    actor: SessionUser,
+    projectId: string,
+  ): Promise<PublishedMainMaterialCatalogView> {
+    await this.authorizedProject(actor, projectId);
+    const quotation = await this.repository.initializeAndSyncDraft(projectId)
+      ?? await this.repository.getQuotationByProject(projectId);
+    if (!quotation) {
+      throw new ConflictException("请先保存半包报价，再开始主材选型");
+    }
+    const catalog = await this.repository.getCatalogById(quotation.catalog.id);
+    if (!catalog) throw new NotFoundException("项目绑定的主材库版本不存在");
+    const items = catalog.items.filter((item) =>
+      item.status === "ACTIVE" && item.salePrice !== null && item.costPrice !== null,
+    );
+    return toCatalogView(catalog, items, canViewCosts(actor));
+  }
+
   async getVersion(
     actor: SessionUser,
     quotationId: string,
@@ -199,6 +217,45 @@ export class MainMaterialService {
         action: "MAIN_MATERIAL_SELECTION_UPDATED",
         actorUserId: actor.id,
         afterState: { itemVersionId: input.itemVersionId, revision: quotation.revision },
+        occurredAt: new Date(),
+        result: "SUCCESS",
+        targetId: lineId,
+        targetType: "MAIN_MATERIAL_QUOTE_LINE",
+      });
+      return toQuotationView(quotation, canViewCosts(actor));
+    } catch (error) {
+      throw translateError(error);
+    }
+  }
+
+  async updateDemandLine(
+    actor: SessionUser,
+    projectId: string,
+    lineId: string,
+    input: {
+      readonly baseQuantity: string;
+      readonly expectedRevision: number;
+      readonly lossRate: string;
+    },
+  ): Promise<MainMaterialQuotationView> {
+    await this.authorizedProject(actor, projectId);
+    if (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      throw new BadRequestException("修订号格式不正确");
+    }
+    const baseQuantity = normalizeQuantity(input.baseQuantity);
+    const lossRate = normalizeLossRate(input.lossRate);
+    try {
+      const quotation = await this.repository.updateDemandLine({
+        baseQuantity,
+        expectedRevision: input.expectedRevision,
+        lineId,
+        lossRate,
+        projectId,
+      });
+      await this.auditRepository.append({
+        action: "MAIN_MATERIAL_SELECTION_UPDATED",
+        actorUserId: actor.id,
+        afterState: { baseQuantity, lossRate, revision: quotation.revision },
         occurredAt: new Date(),
         result: "SUCCESS",
         targetId: lineId,
@@ -706,6 +763,18 @@ function normalizeQuantity(value: string): string {
   }
   const [whole, fraction = ""] = normalized.split(".");
   return `${whole}.${fraction.padEnd(4, "0")}`;
+}
+
+function normalizeLossRate(value: string): string {
+  const normalized = value.trim();
+  if (!/^\d+(?:\.\d{1,4})?$/.test(normalized)) {
+    throw new BadRequestException("损耗率必须在 0% 到 100% 之间，且最多保留 4 位小数");
+  }
+  const units = decimal4Units(normalized);
+  if (units < 0n || units > 10_000n) {
+    throw new BadRequestException("损耗率必须在 0% 到 100% 之间，且最多保留 4 位小数");
+  }
+  return fixed4(units);
 }
 
 function normalizeSpec(value: string): string {

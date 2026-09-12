@@ -16,6 +16,7 @@ import {
 import {
   DuplicateSpaceNameError,
   SpaceAdjustmentLockedError,
+  SpaceOrderConflictError,
   type NewProject,
   type ProjectsRepository,
   type SpaceAdjustmentState,
@@ -561,6 +562,125 @@ export class PgProjectsRepository implements ProjectsRepository {
            FROM ordered
           WHERE ps.id = ordered.id`,
         [projectId],
+      );
+    });
+  }
+
+  async reorderSpaces(
+    projectId: string,
+    spaceIds: readonly string[],
+  ): Promise<ProjectSpace[]> {
+    return this.database.transaction(async (database) => {
+      const quotationResult = await database.query<{
+        id: string;
+        status: string;
+      }>(
+        `SELECT id, status
+           FROM half_package_quotations
+          WHERE project_id = $1 AND is_current
+          LIMIT 1
+          FOR UPDATE`,
+        [projectId],
+      );
+      const quotation = quotationResult.rows[0];
+      if (quotation && quotation.status !== "DRAFT") {
+        throw new SpaceAdjustmentLockedError();
+      }
+
+      const spacesResult = await database.query<SpaceRow>(
+        `SELECT id, type, display_name, area, perimeter, height,
+                includes_balcony, sort_order
+           FROM project_spaces
+          WHERE project_id = $1 AND deleted_at IS NULL
+          ORDER BY sort_order, id
+          FOR UPDATE`,
+        [projectId],
+      );
+      const spaces = new Map(spacesResult.rows.map((space) => [space.id, space]));
+      if (
+        spaces.size !== spaceIds.length ||
+        spaceIds.some((spaceId) => !spaces.has(spaceId))
+      ) {
+        throw new SpaceOrderConflictError();
+      }
+
+      await database.query(
+        `UPDATE project_spaces
+            SET sort_order = sort_order + 10000
+          WHERE project_id = $1 AND deleted_at IS NULL`,
+        [projectId],
+      );
+      for (const [sortOrder, spaceId] of spaceIds.entries()) {
+        await database.query(
+          `UPDATE project_spaces
+              SET sort_order = $3, updated_at = current_timestamp
+            WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [projectId, spaceId, sortOrder],
+        );
+      }
+      await database.query(
+        `UPDATE projects SET updated_at = current_timestamp WHERE id = $1`,
+        [projectId],
+      );
+
+      if (quotation) {
+        const scopesResult = await database.query<{
+          id: string;
+          project_space_id: string | null;
+        }>(
+          `SELECT id, project_space_id
+             FROM half_package_quotation_spaces
+            WHERE quotation_id = $1
+            ORDER BY sort_order, id
+            FOR UPDATE`,
+          [quotation.id],
+        );
+        const projectScopeIds = new Map(
+          scopesResult.rows.flatMap((scope) =>
+            scope.project_space_id ? [[scope.project_space_id, scope.id] as const] : [],
+          ),
+        );
+        if (
+          projectScopeIds.size !== spaceIds.length ||
+          spaceIds.some((spaceId) => !projectScopeIds.has(spaceId))
+        ) {
+          throw new SpaceOrderConflictError();
+        }
+        const reorderedProjectScopeIds = spaceIds.flatMap((spaceId) => {
+          const scopeId = projectScopeIds.get(spaceId);
+          return scopeId ? [scopeId] : [];
+        });
+        let projectScopeIndex = 0;
+        const orderedScopeIds = scopesResult.rows.map((scope) =>
+          scope.project_space_id
+            ? reorderedProjectScopeIds[projectScopeIndex++]!
+            : scope.id,
+        );
+
+        await database.query(
+          `UPDATE half_package_quotation_spaces
+              SET sort_order = sort_order + 10000
+            WHERE quotation_id = $1`,
+          [quotation.id],
+        );
+        for (const [sortOrder, scopeId] of orderedScopeIds.entries()) {
+          await database.query(
+            `UPDATE half_package_quotation_spaces
+                SET sort_order = $3
+              WHERE quotation_id = $1 AND id = $2`,
+            [quotation.id, scopeId, sortOrder],
+          );
+        }
+        await database.query(
+          `UPDATE half_package_quotations
+              SET revision = revision + 1, updated_at = current_timestamp
+            WHERE id = $1 AND status = 'DRAFT' AND is_current`,
+          [quotation.id],
+        );
+      }
+
+      return spaceIds.map((spaceId, sortOrder) =>
+        toProjectSpace({ ...spaces.get(spaceId)!, sort_order: sortOrder }),
       );
     });
   }

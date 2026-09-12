@@ -9,8 +9,8 @@ import type {
   PublishedMainMaterialCatalogView,
 } from "@shanyu/contracts";
 import {
-  ArrowLeft, Check, ChevronLeft, ChevronRight, ImageIcon, Info, Plus, RefreshCw,
-  Search, ShoppingBag, Trash2,
+  ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, ImageIcon, Info, Plus,
+  RefreshCw, Search, ShoppingBag, Trash2, ZoomIn,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -23,14 +23,27 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { apiUrl } from "@/lib/api-url";
 import {
-  addMainMaterialLine, checkMainMaterialCatalogUpdate, refreshMainMaterialCatalog,
-  removeMainMaterialLine, selectMainMaterial,
+  addMainMaterialLine, checkMainMaterialCatalogUpdate, fetchMainMaterialQuotationCatalog,
+  refreshMainMaterialCatalog,
+  removeMainMaterialLine, selectMainMaterial, updateMainMaterialDemand,
 } from "@/lib/main-material-client";
+import {
+  findMainMaterialVariant,
+  formatMainMaterialUnit,
+  groupMainMaterialCandidates,
+  mainMaterialBaseQuantity,
+  mainMaterialCandidateKey,
+  mainMaterialColorAsset,
+  mainMaterialDemandEditing,
+  mainMaterialVariantColor,
+  visibleMainMaterialAttributes,
+} from "@/lib/main-material-view-model";
 import { cn } from "@/lib/utils";
 
 const categoryNames: Readonly<Record<MainMaterialCategoryCode, string>> = {
@@ -58,6 +71,7 @@ export function MainMaterialsEditor({
   readonly projectAddress: string;
 }) {
   const [quotation, setQuotation] = useState(initialQuotation);
+  const [selectionCatalog, setSelectionCatalog] = useState(catalog);
   const [category, setCategory] = useState<MainMaterialCategoryCode>("TILE");
   const [picker, setPicker] = useState<{ line: MainMaterialQuotationLine | null; category: MainMaterialCategoryCode } | null>(null);
   const [query, setQuery] = useState("");
@@ -70,28 +84,46 @@ export function MainMaterialsEditor({
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("所有修改会立即保存");
+  const [demandDrafts, setDemandDrafts] = useState<Readonly<Record<string, {
+    readonly baseQuantity: string;
+    readonly lossPercent: string;
+  }>>>({});
   const [updateCheck, setUpdateCheck] = useState<MainMaterialCatalogUpdateCheckView | null>(null);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const editable = quotation.status === "DRAFT";
   const visibleLines = quotation.lines.filter((line) => line.categoryCode === category);
   const missing = quotation.lines.filter((line) => line.origin === "AUTO_TILE" && !line.item);
-  const compatibleCandidates = useMemo(() => catalog.items.filter((item) => {
+  const compatibleCandidates = useMemo(() => selectionCatalog.items.filter((item) => {
     if (item.status !== "ACTIVE" || item.categoryCode !== picker?.category) return false;
     return picker?.line?.origin !== "AUTO_TILE" || normalizeSpec(item.spec) === normalizeSpec(picker.line.demandSpec);
-  }), [catalog.items, picker]);
-  const brands = useMemo(() => sortedUnique(compatibleCandidates.map((item) => item.brand)), [compatibleCandidates]);
-  const seriesOptions = useMemo(() => sortedUnique(compatibleCandidates
-    .filter((item) => !brand || item.brand === brand)
-    .map((item) => item.series)), [brand, compatibleCandidates]);
+  }), [picker, selectionCatalog.items]);
+  const compatibleGroups = useMemo(
+    () => [...groupMainMaterialCandidates(compatibleCandidates)].sort((left, right) =>
+      picker?.category === "FLOOR"
+        ? floorBrandRank(left.primary.brand) - floorBrandRank(right.primary.brand)
+        : 0,
+    ),
+    [compatibleCandidates, picker?.category],
+  );
+  const brands = useMemo(() => sortedUnique(compatibleGroups.map((group) => group.primary.brand)).sort((left, right) =>
+    picker?.category === "FLOOR" ? floorBrandRank(left) - floorBrandRank(right) : 0,
+  ), [compatibleGroups, picker?.category]);
+  const seriesOptions = useMemo(() => sortedUnique(compatibleGroups
+    .filter((group) => !brand || group.primary.brand === brand)
+    .map((group) => group.primary.series)), [brand, compatibleGroups]);
   const candidates = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return compatibleCandidates.filter((item) => {
+    return compatibleGroups.filter((group) => {
+      const item = group.primary;
       if (brand && item.brand !== brand) return false;
       if (series && item.series !== series) return false;
-      return !normalizedQuery || [item.brand, item.series, item.model, item.itemName, item.spec]
-        .some((value) => value.toLowerCase().includes(normalizedQuery));
+      return !normalizedQuery || group.variants.some((variant) =>
+        [variant.brand, variant.series, variant.model, variant.itemName, variant.spec,
+          mainMaterialVariantColor(variant)]
+          .some((value) => value.toLowerCase().includes(normalizedQuery)),
+      );
     });
-  }, [brand, compatibleCandidates, query, series]);
+  }, [brand, compatibleGroups, query, series]);
   const candidatePageCount = Math.max(1, Math.ceil(candidates.length / candidatePageSize));
   const visibleCandidates = candidates.slice(
     (candidatePage - 1) * candidatePageSize,
@@ -101,7 +133,7 @@ export function MainMaterialsEditor({
   function openPicker(line: MainMaterialQuotationLine | null, targetCategory: MainMaterialCategoryCode) {
     setPicker({ line, category: targetCategory });
     const current = line?.item
-      ? catalog.items.find((item) => item.materialId === line.item?.materialId) ?? null
+      ? selectionCatalog.items.find((item) => item.materialId === line.item?.materialId) ?? null
       : null;
     setSelectedItem(current);
     setColor(line?.selectedColor ?? "");
@@ -134,7 +166,9 @@ export function MainMaterialsEditor({
     setError(null);
     try {
       const saved = await refreshMainMaterialCatalog(quotation.projectId, quotation.revision);
+      const refreshedCatalog = await fetchMainMaterialQuotationCatalog(quotation.projectId);
       setQuotation(saved);
+      setSelectionCatalog(refreshedCatalog);
       setUpdateDialogOpen(false);
       setMessage(`已更新至主材库 V${saved.catalogVersion.versionNumber} · 修订 ${saved.revision}`);
     } catch (caught) {
@@ -190,6 +224,35 @@ export function MainMaterialsEditor({
     }
   }
 
+  async function saveDemand(line: MainMaterialQuotationLine) {
+    const draft = demandDrafts[line.id] ?? {
+      baseQuantity: mainMaterialBaseQuantity(line),
+      lossPercent: String(Number(line.lossRate) * 100),
+    };
+    const baseQuantity = Number(draft.baseQuantity);
+    const lossPercent = Number(draft.lossPercent);
+    if (!Number.isFinite(baseQuantity) || baseQuantity <= 0 ||
+        !Number.isFinite(lossPercent) || lossPercent < 0 || lossPercent > 100) {
+      setError("基础数量必须大于 0，损耗必须在 0% 到 100% 之间");
+      return;
+    }
+    setWorking(true);
+    setError(null);
+    try {
+      const saved = await updateMainMaterialDemand(quotation.projectId, line.id, {
+        baseQuantity: draft.baseQuantity,
+        expectedRevision: quotation.revision,
+        lossRate: (lossPercent / 100).toFixed(4),
+      });
+      setQuotation(saved);
+      setMessage(`已保存需求数量 · 修订 ${saved.revision}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "保存需求数量失败");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   return (
     <main className="workflow-page max-w-[1600px]">
       <header className="workflow-header gap-4">
@@ -214,7 +277,7 @@ export function MainMaterialsEditor({
       </header>
 
       <div className="flex items-center justify-between gap-3 rounded-lg bg-primary-soft px-4 py-3 text-primary">
-        <span className="type-table-body flex items-center gap-2"><Info className="size-4" />瓷砖需求来自半包有效工程项，报价数量按基础数量 × 1.15 自动计算。</span>
+        <span className="type-table-body flex items-center gap-2"><Info className="size-4" />瓷砖基础数量来自半包报价，仅损耗可在此调整；其他主材的基础数量和损耗均可修改。</span>
         <span className="type-support shrink-0">{message}</span>
       </div>
       {error ? <p className="type-body m-0 rounded-md bg-destructive-soft px-3 py-2 text-destructive" role="alert">{error}</p> : null}
@@ -243,18 +306,30 @@ export function MainMaterialsEditor({
             <div className="overflow-x-auto">
               <Table className="min-w-[980px]">
                 <TableHeader><TableRow className="bg-muted"><TableHead>空间 / 来源</TableHead><TableHead>规格</TableHead><TableHead>基础数量</TableHead><TableHead>损耗</TableHead><TableHead>报价数量</TableHead><TableHead>品牌 / 型号</TableHead><TableHead>金额</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
-                <TableBody>{visibleLines.map((line) => (
-                  <TableRow key={line.id}>
-                    <TableCell><strong className="block">{line.scopeName}</strong><span className="type-support text-muted-foreground">{line.demandName}</span></TableCell>
-                    <TableCell>{line.demandSpec || line.item?.spec || "—"}</TableCell>
-                    <TableCell>{line.baseQuantity ? number(line.baseQuantity) : "—"}</TableCell>
-                    <TableCell>{line.origin === "AUTO_TILE" ? `${Number(line.lossRate) * 100}%` : "—"}</TableCell>
-                    <TableCell className="font-semibold">{number(line.quantity)}</TableCell>
-                    <TableCell>{line.item ? <><strong className="block">{line.item.brand || "—"}</strong><span className="type-support text-muted-foreground">{line.item.model || line.item.itemName}{line.selectedColor ? ` · ${line.selectedColor}` : ""}</span></> : <Badge variant="warning">待选择</Badge>}</TableCell>
-                    <TableCell className="font-semibold">{line.amount ? money(line.amount) : "—"}</TableCell>
-                    <TableCell><div className="flex gap-1"><Button disabled={!editable || working} onClick={() => openPicker(line, category)} size="sm" variant="outline">{line.item ? "更换" : "选择型号"}</Button>{line.origin === "MANUAL" && editable ? <Button aria-label="删除主材行" disabled={working} onClick={() => removeLine(line)} size="icon" variant="ghost"><Trash2 /></Button> : null}</div></TableCell>
-                  </TableRow>
-                ))}</TableBody>
+                <TableBody>{visibleLines.map((line) => {
+                  const baseQuantity = mainMaterialBaseQuantity(line);
+                  const demandEditing = mainMaterialDemandEditing(line, editable);
+                  const draft = demandDrafts[line.id] ?? {
+                    baseQuantity,
+                    lossPercent: formatPercent(Number(line.lossRate) * 100),
+                  };
+                  const demandChanged = (
+                    Number(draft.baseQuantity) !== Number(baseQuantity) ||
+                    Number(draft.lossPercent) !== Number(line.lossRate) * 100
+                  );
+                  return (
+                    <TableRow key={line.id}>
+                      <TableCell><strong className="block">{line.scopeName}</strong><span className="type-support text-muted-foreground">{line.demandName}</span></TableCell>
+                      <TableCell>{line.demandSpec || line.item?.spec || "—"}</TableCell>
+                      <TableCell>{demandEditing.baseQuantity ? <Input aria-label={`${line.scopeName}${line.demandName}基础数量`} className="w-24" inputMode="decimal" min="0" onChange={(event) => setDemandDrafts((current) => ({ ...current, [line.id]: { ...draft, baseQuantity: event.target.value } }))} value={draft.baseQuantity} /> : <div className="grid gap-0.5"><span>{baseQuantity ? number(baseQuantity) : "—"}</span>{line.origin === "AUTO_TILE" ? <span className="type-support text-muted-foreground">半包报价同步</span> : null}</div>}</TableCell>
+                      <TableCell>{demandEditing.lossRate ? <div className="flex items-center gap-1"><Input aria-label={`${line.scopeName}${line.demandName}损耗率`} className="w-20" inputMode="decimal" max="100" min="0" onChange={(event) => setDemandDrafts((current) => ({ ...current, [line.id]: { ...draft, lossPercent: event.target.value } }))} value={draft.lossPercent} /><span>%</span></div> : `${formatPercent(Number(line.lossRate) * 100)}%`}</TableCell>
+                      <TableCell className="font-semibold">{number(line.quantity)}</TableCell>
+                      <TableCell>{line.item ? <><strong className="block">{line.item.brand || "—"}</strong><span className="type-support text-muted-foreground">{line.item.model || line.item.itemName}{line.selectedColor ? ` · ${line.selectedColor}` : ""}</span></> : <Badge variant="warning">待选择</Badge>}</TableCell>
+                      <TableCell className="font-semibold">{line.amount ? money(line.amount) : "—"}</TableCell>
+                      <TableCell><div className="flex gap-1">{demandChanged ? <Button disabled={working} onClick={() => saveDemand(line)} size="sm">保存数量</Button> : null}<Button disabled={!editable || working} onClick={() => openPicker(line, category)} size="sm" variant="outline">{line.item ? "更换" : "选择型号"}</Button>{line.origin === "MANUAL" && editable ? <Button aria-label="删除主材行" disabled={working} onClick={() => removeLine(line)} size="icon" variant="ghost"><Trash2 /></Button> : null}</div></TableCell>
+                    </TableRow>
+                  );
+                })}</TableBody>
               </Table>
             </div>
           ) : <div className="grid min-h-56 place-items-center p-6 text-center text-muted-foreground"><div><ShoppingBag className="mx-auto mb-2 size-7" /><p className="type-body m-0">当前分类尚未添加主材</p></div></div>}
@@ -277,11 +352,11 @@ export function MainMaterialsEditor({
                 <select aria-label="筛选系列" className="h-9 rounded-md border border-input bg-background px-3 text-sm" onChange={(event) => { setSeries(event.target.value); setCandidatePage(1); }} value={series}><option value="">全部系列</option>{seriesOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select>
               </div>
               <div className="mb-3 flex items-center justify-between gap-2"><span className="type-support text-muted-foreground">共 {candidates.length} 个匹配型号</span>{query || brand || series ? <Button onClick={() => { setQuery(""); setBrand(""); setSeries(""); setCandidatePage(1); }} size="sm" variant="ghost">清除筛选</Button> : null}</div>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{visibleCandidates.map((item) => <ItemCard active={selectedItem?.id === item.id} canViewCosts={canViewCosts} item={item} key={item.id} onSelect={() => { setSelectedItem(item); setColor(""); }} />)}</div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{visibleCandidates.map((group) => <ItemCard active={selectedItem ? mainMaterialCandidateKey(selectedItem) === group.key : false} canViewCosts={canViewCosts} item={group.primary} key={group.key} onSelect={() => { const item = group.variants[0] as MainMaterialItemView; setSelectedItem(item); setColor(mainMaterialVariantColor(item)); }} />)}</div>
               {!candidates.length ? <div className="grid justify-items-center gap-3 py-12 text-center text-muted-foreground"><p className="type-body m-0">没有符合当前规格或筛选条件的可选商品</p><Button onClick={() => { setQuery(""); setBrand(""); setSeries(""); setCandidatePage(1); }} size="sm" variant="outline">清除筛选</Button></div> : null}
               {candidatePageCount > 1 ? <div className="mt-4 flex items-center justify-center gap-2"><Button aria-label="上一页" disabled={candidatePage === 1} onClick={() => setCandidatePage((page) => Math.max(1, page - 1))} size="icon" variant="outline"><ChevronLeft /></Button><span className="type-support">第 {candidatePage} / {candidatePageCount} 页</span><Button aria-label="下一页" disabled={candidatePage === candidatePageCount} onClick={() => setCandidatePage((page) => Math.min(candidatePageCount, page + 1))} size="icon" variant="outline"><ChevronRight /></Button></div> : null}
             </div>
-            <div className="min-h-0 overflow-y-auto p-5">{selectedItem ? <ItemDetail canViewCosts={canViewCosts} item={selectedItem} color={color} key={selectedItem.id} quantity={quantity} setColor={setColor} setQuantity={setQuantity} showQuantity={!picker?.line || picker.line.origin === "MANUAL"} /> : <div className="grid h-full min-h-64 place-items-center text-center text-muted-foreground"><div><ImageIcon className="mx-auto mb-2 size-8" /><p className="type-body m-0">选择左侧商品查看图片与详情</p></div></div>}</div>
+            <div className="min-h-0 overflow-y-auto p-5">{selectedItem ? <ItemDetail canViewCosts={canViewCosts} item={selectedItem} color={color} key={selectedItem.id} quantity={quantity} setColor={setColor} setItem={setSelectedItem} setQuantity={setQuantity} showQuantity={!picker?.line || picker.line.origin === "MANUAL"} variants={compatibleGroups.find((group) => group.key === mainMaterialCandidateKey(selectedItem))?.variants ?? [selectedItem]} /> : <div className="grid h-full min-h-64 place-items-center text-center text-muted-foreground"><div><ImageIcon className="mx-auto mb-2 size-8" /><p className="type-body m-0">选择左侧商品查看图片与详情</p></div></div>}</div>
           </div>
           {error ? <p className="type-support m-0 bg-destructive-soft px-5 py-2 text-destructive" role="alert">{error}</p> : null}
           <DialogFooter className="border-t border-border px-5 py-4"><Button disabled={working} onClick={() => setPicker(null)} variant="outline">取消</Button><Button disabled={!selectedItem || working || Boolean(selectedItem?.colors.length && !color) || Boolean((!picker?.line || picker.line.origin === "MANUAL") && Number(quantity) <= 0)} onClick={saveSelection}>{working ? "正在保存…" : "确认选择"}</Button></DialogFooter>
@@ -307,19 +382,44 @@ export function MainMaterialsEditor({
 
 function ItemCard({ active, canViewCosts, item, onSelect }: { readonly active: boolean; readonly canViewCosts: boolean; readonly item: MainMaterialItemView; readonly onSelect: () => void }) {
   const image = item.assets[0];
-  return <button className={cn("overflow-hidden rounded-lg border bg-background text-left transition", active ? "border-primary ring-2 ring-primary/20" : "border-border hover:border-primary/50")} onClick={onSelect} type="button"><div className="relative aspect-[4/3] bg-muted">{image ? <Image alt={`${item.brand} ${item.model}`} className="object-cover" fill sizes="240px" src={`${apiUrl}${image.path}`} unoptimized /> : <div className="grid h-full place-items-center text-muted-foreground"><ImageIcon /></div>}</div><div className="grid gap-1 p-3"><strong className="truncate text-sm">{item.brand || item.itemName}</strong><span className="truncate text-xs text-muted-foreground">{item.model || item.itemName}</span><div className="flex items-center justify-between gap-2"><span className="text-xs text-muted-foreground">{item.spec || "—"}</span><strong className="text-sm text-primary">{item.salePrice ? `${money(item.salePrice)}/${item.unit}` : "待补"}</strong></div>{canViewCosts && item.costPrice ? <span className="text-xs text-muted-foreground">成本 {money(item.costPrice)}/{item.unit}</span> : null}</div></button>;
+  const unit = formatMainMaterialUnit(item.unit);
+  return <button className={cn("overflow-hidden rounded-lg border bg-background text-left transition", active ? "border-primary ring-2 ring-primary/20" : "border-border hover:border-primary/50")} onClick={onSelect} type="button"><div className="relative aspect-[4/3] bg-muted">{image ? <Image alt={`${item.brand} ${item.model}`} className="object-cover" fill sizes="240px" src={`${apiUrl}${image.path}`} unoptimized /> : <div className="grid h-full place-items-center text-muted-foreground"><ImageIcon /></div>}</div><div className="grid gap-1 p-3"><strong className="truncate text-sm">{item.model || item.itemName}</strong><span className="truncate text-xs text-muted-foreground">{item.brand || item.itemName}</span><div className="flex items-center justify-between gap-2"><span className="text-xs text-muted-foreground">{item.spec || "—"}</span><strong className="text-sm text-primary">{item.salePrice ? `${money(item.salePrice)}/${unit}` : "待补"}</strong></div>{canViewCosts && item.costPrice ? <span className="text-xs text-muted-foreground">成本 {money(item.costPrice)}/{unit}</span> : null}</div></button>;
 }
 
-function ItemDetail({ canViewCosts, item, color, quantity, setColor, setQuantity, showQuantity }: { readonly canViewCosts: boolean; readonly item: MainMaterialItemView; readonly color: string; readonly quantity: string; readonly setColor: (value: string) => void; readonly setQuantity: (value: string) => void; readonly showQuantity: boolean }) {
+function ItemDetail({ canViewCosts, item, color, quantity, setColor, setItem, setQuantity, showQuantity, variants }: { readonly canViewCosts: boolean; readonly item: MainMaterialItemView; readonly color: string; readonly quantity: string; readonly setColor: (value: string) => void; readonly setItem: (item: MainMaterialItemView) => void; readonly setQuantity: (value: string) => void; readonly showQuantity: boolean; readonly variants: readonly MainMaterialItemView[] }) {
   const [selectedAssetId, setSelectedAssetId] = useState(item.assets[0]?.id ?? "");
-  const image = item.assets.find((asset) => asset.id === selectedAssetId) ?? item.assets[0];
-  return <div className="grid gap-4"><div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-muted">{image ? <Image alt={`${item.brand} ${item.model}`} className="object-contain" fill sizes="380px" src={`${apiUrl}${image.path}`} unoptimized /> : <div className="grid h-full place-items-center text-muted-foreground"><ImageIcon /></div>}</div>{item.assets.length > 1 ? <div className="flex gap-2 overflow-x-auto">{item.assets.slice(0, 6).map((asset) => <button aria-label="查看商品附图" className={cn("relative size-16 shrink-0 overflow-hidden rounded border", image?.id === asset.id ? "border-primary ring-2 ring-primary/20" : "border-border")} key={asset.id} onClick={() => setSelectedAssetId(asset.id)} type="button"><Image alt="商品附图" className="object-cover" fill sizes="64px" src={`${apiUrl}${asset.path}`} unoptimized /></button>)}</div> : null}<div><h3 className="type-entity">{item.brand || item.itemName}</h3><p className="type-body m-0 text-muted-foreground">{item.series} {item.model}</p></div><div className="grid grid-cols-2 gap-2 text-sm"><Detail label="品名" value={item.itemName} /><Detail label="规格" value={item.spec} /><Detail label="单位" value={item.unit} /><Detail label="销售价" value={item.salePrice ? money(item.salePrice) : "待补"} />{canViewCosts && item.costPrice ? <Detail label="成本价" value={money(item.costPrice)} /> : null}{Object.entries(item.attributes).filter(([key, value]) => key !== "imageReference" && value).slice(0, 6).map(([key, value]) => <Detail key={key} label={attributeLabel(key)} value={value} />)}</div>{item.colors.length ? <label className="grid gap-1.5 text-sm font-medium">颜色<select className="h-10 rounded-md border border-input bg-background px-3 font-normal" onChange={(event) => setColor(event.target.value)} value={color}><option value="">请选择颜色</option>{item.colors.map((candidate) => <option key={candidate} value={candidate}>{candidate}</option>)}</select></label> : null}{showQuantity ? <label className="grid gap-1.5 text-sm font-medium">数量<Input inputMode="decimal" min="0" onChange={(event) => setQuantity(event.target.value)} value={quantity} /></label> : null}</div>;
+  const [imageOpen, setImageOpen] = useState(false);
+  const [colorOpen, setColorOpen] = useState(false);
+  const mappedColorAsset = mainMaterialColorAsset(item, color);
+  const image = mappedColorAsset ?? item.assets.find((asset) => asset.id === selectedAssetId) ?? item.assets[0];
+  const hasColorAssetMap = Boolean(item.attributes.colorAssetMap);
+
+  function selectVariant(value: string) {
+    const next = findMainMaterialVariant(variants, value);
+    if (!next) return;
+    setColor(value);
+    setItem(next);
+    setColorOpen(false);
+  }
+
+  const detail = <div className="grid gap-4">
+    {image ? <button aria-label="查看高清产品图" className="group relative aspect-[4/3] overflow-hidden rounded-lg bg-muted" onClick={() => setImageOpen(true)} type="button"><Image alt={`${item.brand} ${item.model}`} className="object-contain" fill sizes="380px" src={`${apiUrl}${image.path}`} unoptimized /><span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-background/90 px-2 py-1 text-xs opacity-0 shadow-sm transition group-hover:opacity-100"><ZoomIn className="size-3.5" />查看大图</span></button> : <div className="grid aspect-[4/3] place-items-center rounded-lg bg-muted text-muted-foreground"><ImageIcon /></div>}
+    {!hasColorAssetMap && item.assets.length > 1 ? <div className="flex gap-2 overflow-x-auto">{item.assets.slice(0, 6).map((asset) => <button aria-label="查看商品附图" className={cn("relative size-16 shrink-0 overflow-hidden rounded border", image?.id === asset.id ? "border-primary ring-2 ring-primary/20" : "border-border")} key={asset.id} onClick={() => setSelectedAssetId(asset.id)} type="button"><Image alt="商品附图" className="object-contain" fill sizes="64px" src={`${apiUrl}${asset.path}`} unoptimized /></button>)}</div> : null}
+    <div><h3 className="type-entity">{item.brand || item.itemName}</h3><p className="type-body m-0 text-muted-foreground">{item.series} {item.model}</p></div>
+    <div className="grid grid-cols-2 gap-2 text-sm"><Detail label="品名" value={item.itemName} /><Detail label="规格" value={item.spec} /><Detail label="单位" value={formatMainMaterialUnit(item.unit)} /><Detail label="销售价" value={item.salePrice ? money(item.salePrice) : "待补"} />{canViewCosts && item.costPrice ? <Detail label="成本价" value={money(item.costPrice)} /> : null}{visibleMainMaterialAttributes(item.attributes).slice(0, 6).map(([key, value]) => <Detail key={key} label={attributeLabel(key)} value={value} />)}</div>
+    {variants.length > 1 ? item.attributes.variantGroup?.startsWith("定制浴室柜:") ? <div className="grid gap-1.5 text-sm font-medium"><span>颜色</span><Popover onOpenChange={setColorOpen} open={colorOpen}><PopoverTrigger asChild><Button className="h-10 justify-between font-normal" variant="outline"><span>{color || "请选择颜色"}</span><ChevronDown className="size-4 text-muted-foreground" /></Button></PopoverTrigger><PopoverContent align="start" className="max-h-72 w-[var(--radix-popover-trigger-width)] overflow-y-auto p-1">{variants.map((variant) => { const candidate = mainMaterialVariantColor(variant); const swatch = variant.assets[0]; return <button className={cn("flex w-full items-center justify-between gap-3 rounded-sm px-2 py-2 text-left text-sm hover:bg-muted", color === candidate && "bg-primary-soft text-primary")} key={variant.id} onClick={() => selectVariant(candidate)} type="button"><span>{candidate}</span>{swatch ? <span className="relative size-9 shrink-0 overflow-hidden rounded border border-border"><Image alt={`${candidate}色卡`} className="object-contain" fill sizes="36px" src={`${apiUrl}${swatch.path}`} unoptimized /></span> : <span className="grid size-9 place-items-center rounded border border-dashed text-xs text-muted-foreground">无图</span>}</button>; })}</PopoverContent></Popover></div> : <label className="grid gap-1.5 text-sm font-medium">颜色<select className="h-10 rounded-md border border-input bg-background px-3 font-normal" onChange={(event) => selectVariant(event.target.value)} value={color}><option value="">请选择颜色</option>{variants.map((variant) => { const candidate = mainMaterialVariantColor(variant); return <option key={variant.id} value={candidate}>{candidate}</option>; })}</select></label> : item.colors.length ? <label className="grid gap-1.5 text-sm font-medium">颜色<select className="h-10 rounded-md border border-input bg-background px-3 font-normal" onChange={(event) => setColor(event.target.value)} value={color}><option value="">请选择颜色</option>{item.colors.map((candidate) => <option key={candidate} value={candidate}>{candidate}</option>)}</select></label> : null}
+    {showQuantity ? <label className="grid gap-1.5 text-sm font-medium">数量<Input inputMode="decimal" min="0" onChange={(event) => setQuantity(event.target.value)} value={quantity} /></label> : null}
+  </div>;
+
+  return <>{detail}<Dialog onOpenChange={setImageOpen} open={imageOpen}><DialogContent className="max-w-[min(94vw,1400px)] p-4"><DialogHeader className="sr-only"><DialogTitle>查看高清产品图</DialogTitle><DialogDescription>{item.brand} {item.model}</DialogDescription></DialogHeader>{image ? <div className="relative h-[80vh] w-full bg-muted"><Image alt={`${item.brand} ${item.model}高清产品图`} className="object-contain" fill sizes="94vw" src={`${apiUrl}${image.path}`} unoptimized /></div> : null}</DialogContent></Dialog></>;
 }
 
 function Detail({ label, value }: { readonly label: string; readonly value: string }) { return <div className="rounded-md bg-muted px-3 py-2"><span className="block text-xs text-muted-foreground">{label}</span><strong className="mt-0.5 block font-medium">{value || "—"}</strong></div>; }
 function Summary({ emphasis = false, label, value }: { readonly emphasis?: boolean; readonly label: string; readonly value: string }) { return <div className="flex items-center justify-between gap-2"><span className="type-table-body text-muted-foreground">{label}</span><strong className={emphasis ? "text-xl text-primary" : "text-base"}>{money(value)}</strong></div>; }
 function money(value: string) { return `¥${Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function number(value: string) { return Number(value).toFixed(2); }
+function formatPercent(value: number) { return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4))); }
 function normalizeSpec(value: string) { return value.toLowerCase().replaceAll("×", "*").replaceAll("x", "*").replaceAll("mm", "").replaceAll(" ", ""); }
 function sortedUnique(values: readonly string[]) { return [...new Set(values.filter(Boolean))].sort((left, right) => left.localeCompare(right, "zh-CN")); }
+function floorBrandRank(value: string) { return ({ "北极鹿": 0, "乔艺": 1, "辅材": 2 } as Record<string, number>)[value] ?? 3; }
 function attributeLabel(value: string) { return ({ type: "类型", woodSpecies: "木种", substrate: "基材", thickness: "厚度", grade: "等级", lockType: "锁扣", packaging: "包装", panelSize: "面板尺寸", lightingPower: "照明功率" } as Record<string, string>)[value] ?? value; }

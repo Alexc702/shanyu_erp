@@ -145,6 +145,7 @@ export interface MainMaterialRepository {
   findImportBatch(batchId: string): Promise<MainMaterialImportBatch | null>;
   findImportBatchByHash(fileHash: string, mode: "FULL" | "DELTA"): Promise<MainMaterialImportBatch | null>;
   findItem(itemVersionId: string): Promise<MainMaterialItem | null>;
+  getCatalogById(catalogVersionId: string): Promise<MainMaterialCatalog | null>;
   getPublishedCatalog(): Promise<MainMaterialCatalog | null>;
   getQuotationById(quotationId: string): Promise<MainMaterialQuotation | null>;
   getQuotationByProject(projectId: string): Promise<MainMaterialQuotation | null>;
@@ -175,6 +176,13 @@ export interface MainMaterialRepository {
     readonly lineId: string;
     readonly projectId: string;
     readonly quantity?: string;
+  }): Promise<MainMaterialQuotation>;
+  updateDemandLine(input: {
+    readonly baseQuantity: string;
+    readonly expectedRevision: number;
+    readonly lineId: string;
+    readonly lossRate: string;
+    readonly projectId: string;
   }): Promise<MainMaterialQuotation>;
   validateDelta(changes: readonly MainMaterialDelta[]): Promise<{ readonly pendingItemCount: number }>;
 }

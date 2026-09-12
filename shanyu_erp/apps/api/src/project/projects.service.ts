@@ -11,6 +11,7 @@ import type {
   ProjectDetail,
   ProjectSpace,
   ProjectSummary,
+  ReorderSpacesRequest,
   SessionUser,
   SpaceInput,
   SpaceType,
@@ -27,6 +28,7 @@ import {
   DuplicateSpaceNameError,
   PROJECTS_REPOSITORY,
   SpaceAdjustmentLockedError,
+  SpaceOrderConflictError,
   type ProjectsRepository,
 } from "./projects.repository";
 
@@ -226,6 +228,54 @@ export class ProjectsService {
       targetId: spaceId,
       targetType: "SPACE",
     });
+  }
+
+  async reorderSpaces(
+    actor: SessionUser,
+    projectId: string,
+    input: ReorderSpacesRequest,
+  ): Promise<ProjectSpace[]> {
+    const project = await this.get(actor, projectId);
+    if (
+      !input ||
+      !Array.isArray(input.spaceIds) ||
+      input.spaceIds.length !== project.spaces.length ||
+      input.spaceIds.some((id) => typeof id !== "string" || !id) ||
+      new Set(input.spaceIds).size !== input.spaceIds.length ||
+      input.spaceIds.some(
+        (id) => !project.spaces.some((space) => space.id === id),
+      )
+    ) {
+      throw new BadRequestException("空间排序必须完整且不能重复");
+    }
+    const beforeSpaceIds = project.spaces.map((space) => space.id);
+    await this.assertSpaceAdjustable(projectId);
+    let spaces: ProjectSpace[];
+    try {
+      spaces = await this.projectsRepository.reorderSpaces(
+        projectId,
+        input.spaceIds,
+      );
+    } catch (error) {
+      if (error instanceof SpaceAdjustmentLockedError) {
+        throw new ConflictException("当前报价不是草稿，暂不可调整空间");
+      }
+      if (error instanceof SpaceOrderConflictError) {
+        throw new ConflictException("空间列表已变化，请刷新后重新排序");
+      }
+      throw error;
+    }
+    await this.auditRepository.append({
+      action: "SPACES_REORDERED",
+      actorUserId: actor.id,
+      afterState: { spaceIds: input.spaceIds },
+      beforeState: { spaceIds: beforeSpaceIds },
+      occurredAt: new Date(),
+      result: "SUCCESS",
+      targetId: project.id,
+      targetType: "PROJECT",
+    });
+    return spaces;
   }
 
   private async assertSpaceAdjustable(projectId: string): Promise<void> {

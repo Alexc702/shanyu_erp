@@ -29,6 +29,14 @@ describe("QuotationExporter main material sheets", () => {
     expect(firstColumn.filter((value) => value === "小计：")).toHaveLength(10);
     expect(sheet?.getColumn(3).values.map(String)).toContain("瓷砖 · TI0T");
     expect(sheet?.getColumn(3).values.map(String)).not.toContain("不应导出");
+    const detailRow = sheet?.getColumn(3).values.findIndex(
+      (value) => String(value) === "瓷砖 · TI0T",
+    ) ?? -1;
+    expect(detailRow).toBeGreaterThan(0);
+    expect(Array.from({ length: 9 }, (_, index) => {
+      const fill = sheet?.getRow(detailRow).getCell(index + 1).fill;
+      return fill?.type === "pattern" ? fill.fgColor?.argb : undefined;
+    })).toEqual(Array.from({ length: 9 }, () => "FFFFFFFF"));
     expect(sheet?.getColumn(3).values.map(String).slice(-3)).toEqual([
       "直接费",
       "服务费",

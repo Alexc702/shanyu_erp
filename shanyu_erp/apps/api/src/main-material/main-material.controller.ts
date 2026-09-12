@@ -109,6 +109,15 @@ export class MainMaterialQuotationController {
     return { quotation: await this.mainMaterialService.getQuotation(actor, projectId) };
   }
 
+  @Get("catalog")
+  async getCatalog(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("projectId") projectId: string,
+  ): Promise<PublishedMainMaterialCatalogResponse> {
+    const actor = await this.currentUser(cookieHeader);
+    return { catalog: await this.mainMaterialService.getQuotationCatalog(actor, projectId) };
+  }
+
   @Get("versions/:quotationId")
   async getVersion(
     @Headers("cookie") cookieHeader: string | undefined,
@@ -161,6 +170,36 @@ export class MainMaterialQuotationController {
     return {
       quotation: await this.mainMaterialService.selectLine(
         actor, projectId, lineId, selectionInput(body, true),
+      ),
+    };
+  }
+
+  @Patch("lines/:lineId/demand")
+  async updateDemand(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("projectId") projectId: string,
+    @Param("lineId") lineId: string,
+    @Body() body: unknown,
+  ): Promise<MainMaterialQuotationResponse> {
+    const actor = await this.currentUser(cookieHeader);
+    const value = record(body);
+    if (
+      typeof value.baseQuantity !== "string" ||
+      typeof value.lossRate !== "string" ||
+      typeof value.expectedRevision !== "number"
+    ) {
+      throw new BadRequestException("主材需求数量信息不完整");
+    }
+    return {
+      quotation: await this.mainMaterialService.updateDemandLine(
+        actor,
+        projectId,
+        lineId,
+        {
+          baseQuantity: value.baseQuantity,
+          expectedRevision: value.expectedRevision,
+          lossRate: value.lossRate,
+        },
       ),
     };
   }

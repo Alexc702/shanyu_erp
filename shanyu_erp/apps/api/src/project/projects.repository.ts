@@ -30,10 +30,15 @@ export interface ProjectsRepository {
   getSpaceAdjustmentState(projectId: string): Promise<SpaceAdjustmentState>;
   addSpace(projectId: string, input: ProjectSpace): Promise<ProjectSpace>;
   updateSpace(projectId: string, input: ProjectSpace): Promise<ProjectSpace>;
+  reorderSpaces(
+    projectId: string,
+    spaceIds: readonly string[],
+  ): Promise<ProjectSpace[]>;
   deleteSpace(projectId: string, spaceId: string): Promise<void>;
 }
 
 export class DuplicateSpaceNameError extends Error {}
 export class SpaceAdjustmentLockedError extends Error {}
+export class SpaceOrderConflictError extends Error {}
 
 export type SpaceAdjustmentState = "DRAFT" | "LOCKED" | "NO_QUOTATION";

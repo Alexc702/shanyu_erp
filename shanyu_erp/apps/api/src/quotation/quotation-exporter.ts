@@ -28,6 +28,7 @@ export interface GeneratedQuotationExport {
 interface ExportContext {
   readonly audience: "CLIENT" | "INTERNAL";
   readonly customerName: string;
+  readonly exportDate: string;
   readonly mainMaterial: MainMaterialQuotation | null;
   readonly quotation: QuotationDraft;
   readonly sections: readonly ExportSection[];
@@ -68,8 +69,10 @@ interface ExportSection {
 }
 
 const templateFileName = "新报价2026年8月27主材修改.xlsx";
+const budgetTemplateFileName = "erp预算说明书(2).xlsx";
 const mainMaterialTemplateFileName = "主材报价模版_v1.xlsx";
 let templateWorkbookPromise: Promise<ExcelJS.Workbook> | undefined;
+let budgetTemplateWorkbookPromise: Promise<ExcelJS.Workbook> | undefined;
 let mainMaterialTemplateWorkbookPromise: Promise<ExcelJS.Workbook> | undefined;
 
 @Injectable()
@@ -84,6 +87,7 @@ export class QuotationExporter {
     const context = {
       audience,
       customerName,
+      exportDate: formatExportDate(new Date()),
       mainMaterial,
       quotation,
       sections: exportSections(quotation),
@@ -97,10 +101,13 @@ export class QuotationExporter {
   private async generateWorkbook(
     context: ExportContext,
   ): Promise<GeneratedQuotationExport> {
-    const template = await loadTemplateWorkbook();
+    const [template, budgetTemplate] = await Promise.all([
+      loadTemplateWorkbook(),
+      loadBudgetTemplateWorkbook(),
+    ]);
     const source = template.getWorksheet("半包报价模板") ?? template.worksheets[0];
     const coverSource = template.getWorksheet("封面");
-    const budgetSource = template.getWorksheet("预算说明书 ");
+    const budgetSource = budgetTemplate.worksheets[0];
     if (!source || !coverSource || !budgetSource) {
       throw new Error("报价导出模板缺少封面、预算说明书或半包报价模板");
     }
@@ -120,8 +127,9 @@ export class QuotationExporter {
       /项目：.*$/u,
       `项目：${context.quotation.projectAddress}`,
     );
+    cover.getCell("A6").value = context.exportDate;
     copyStaticWorksheet(
-      template,
+      budgetTemplate,
       budgetSource,
       workbook,
       "预算说明书",
@@ -190,6 +198,7 @@ export class QuotationExporter {
         copyStyledRow(sourceRow, target);
         sheet.mergeCells(outputRow, 1, outputRow, 2);
         sheet.mergeCells(outputRow, 3, outputRow, 4);
+        applyWhiteRowFill(target, 9);
         applyMergedOutline(sheet, outputRow, 1, outputRow, 2, {
           left: "medium",
         });
@@ -262,8 +271,17 @@ export class QuotationExporter {
     const font = await document.embedFont(await readFile(fontPath), {
       subset: true,
     });
-    const template = await loadTemplateWorkbook();
-    await addIntroductoryPdfPages(document, font, template, context);
+    const [template, budgetTemplate] = await Promise.all([
+      loadTemplateWorkbook(),
+      loadBudgetTemplateWorkbook(),
+    ]);
+    await addIntroductoryPdfPages(
+      document,
+      font,
+      template,
+      budgetTemplate,
+      context,
+    );
     const rows = pdfRows(context);
     let page = addLandscapePage(document);
     let section: PdfSection = "HALF";
@@ -316,6 +334,30 @@ async function loadTemplateWorkbook(): Promise<ExcelJS.Workbook> {
     return workbook;
   })();
   return templateWorkbookPromise;
+}
+
+async function readBudgetTemplate(): Promise<Buffer> {
+  const candidates = [
+    join(process.cwd(), "assets", budgetTemplateFileName),
+    join(process.cwd(), "apps", "api", "assets", budgetTemplateFileName),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return await readFile(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  throw new Error(`找不到预算说明书导出模板：${budgetTemplateFileName}`);
+}
+
+async function loadBudgetTemplateWorkbook(): Promise<ExcelJS.Workbook> {
+  budgetTemplateWorkbookPromise ??= (async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load((await readBudgetTemplate()) as never);
+    return workbook;
+  })();
+  return budgetTemplateWorkbookPromise;
 }
 
 async function readMainMaterialTemplate(): Promise<Buffer> {
@@ -453,7 +495,6 @@ function copyStaticWorksheet(
       if (!sourceCell.isMerged || sourceCell.master.address === sourceCell.address) {
         targetCell.value = structuredClone(sourceCell.value);
       }
-      targetCell.note = structuredClone(sourceCell.note);
       targetCell.dataValidation = structuredClone(sourceCell.dataValidation);
     }
   }
@@ -548,6 +589,7 @@ async function addMainMaterialSheet(
       const target = sheet.getRow(outputRow);
       copyStyledRow(source.getRow(section.detail), target, lastColumn);
       sheet.mergeCells(outputRow, 1, outputRow, 2);
+      applyWhiteRowFill(target, lastColumn);
       target.getCell(1).value = index + 1;
       target.getCell(3).value = [line.itemName, line.model]
         .filter((value, valueIndex, values) => value && values.indexOf(value) === valueIndex)
@@ -636,6 +678,16 @@ function copyStyledRow(source: ExcelJS.Row, target: ExcelJS.Row, lastColumn = 9)
     const targetCell = target.getCell(column);
     targetCell.style = structuredClone(sourceCell.style);
     targetCell.value = sourceCell.value;
+  }
+}
+
+function applyWhiteRowFill(row: ExcelJS.Row, lastColumn: number): void {
+  for (let column = 1; column <= lastColumn; column += 1) {
+    row.getCell(column).fill = {
+      fgColor: { argb: "FFFFFFFF" },
+      pattern: "solid",
+      type: "pattern",
+    };
   }
 }
 
@@ -742,10 +794,11 @@ async function addIntroductoryPdfPages(
   document: PDFDocument,
   font: PDFFont,
   template: ExcelJS.Workbook,
+  budgetTemplate: ExcelJS.Workbook,
   context: ExportContext,
 ): Promise<void> {
   const coverSource = template.getWorksheet("封面");
-  const budgetSource = template.getWorksheet("预算说明书 ");
+  const budgetSource = budgetTemplate.worksheets[0];
   if (!coverSource || !budgetSource) {
     throw new Error("报价导出模板缺少封面或预算说明书");
   }
@@ -791,7 +844,7 @@ async function addIntroductoryPdfPages(
   drawCenteredText(
     coverPage,
     font,
-    coverSource.getCell("A6").text.trim(),
+    context.exportDate,
     13,
     90,
   );
@@ -824,21 +877,32 @@ function drawBudgetWorksheet(
   const left = 18;
   const width = 805;
   const numberWidth = 30;
-  const sourceHeights = Array.from(
-    { length: 19 },
-    (_, index) => source.getRow(index + 1).height ?? 17.6,
-  );
-  const scale = Math.min(
-    1,
-    559 / sourceHeights.reduce((sum, height) => sum + height, 0),
-  );
-  let top = 577;
-  sourceHeights.forEach((sourceHeight, index) => {
+  const lastRow = budgetWorksheetLastRow(source);
+  const rowLayouts = Array.from({ length: lastRow }, (_, index) => {
     const rowNumber = index + 1;
-    const height = sourceHeight * scale;
+    const sourceRow = source.getRow(rowNumber);
+    const first = sourceRow.getCell(1).text.trim();
+    const second = sourceRow.getCell(2).text.trim();
+    const size = rowNumber === 1 ? 14 : 10;
+    const text = rowNumber <= 2 ? first : second;
+    const textWidth = rowNumber <= 2 ? width - 16 : width - numberWidth - 8;
+    const lines = wrapText(text, font, size, textWidth, Number.MAX_SAFE_INTEGER);
+    const lineHeight = size + 2;
+    return {
+      first,
+      height: Math.max(
+        sourceRow.height ?? 17.6,
+        size + (lines.length - 1) * lineHeight + 7,
+      ),
+      lines,
+      lineHeight,
+      rowNumber,
+      size,
+    };
+  });
+  let top = 577;
+  rowLayouts.forEach(({ first, height, lines, lineHeight, rowNumber, size }) => {
     const bottom = top - height;
-    const first = source.getRow(rowNumber).getCell(1).text.trim();
-    const second = source.getRow(rowNumber).getCell(2).text.trim();
     if (rowNumber > 2) {
       page.drawRectangle({
         borderColor: rgb(0.25, 0.25, 0.25),
@@ -850,8 +914,6 @@ function drawBudgetWorksheet(
       });
     }
     if (rowNumber <= 2) {
-      const size = rowNumber === 1 ? 14 : 7;
-      const lines = wrapText(first, font, size, width - 16, 2);
       lines.forEach((line, lineIndex) => {
         const x = rowNumber === 1
           ? left + (width - font.widthOfTextAtSize(line, size)) / 2
@@ -860,7 +922,7 @@ function drawBudgetWorksheet(
           font,
           size,
           x,
-          y: top - size - 4 - lineIndex * (size + 2),
+          y: top - size - 4 - lineIndex * lineHeight,
         });
       });
     } else {
@@ -870,24 +932,33 @@ function drawBudgetWorksheet(
         start: { x: left + numberWidth, y: bottom },
         thickness: 0.35,
       });
-      const size = 5.8;
-      const maxLines = Math.max(1, Math.floor((height - 4) / (size + 1)));
       page.drawText(first, {
         font,
         size,
         x: left + (numberWidth - font.widthOfTextAtSize(first, size)) / 2,
         y: top - size - 4,
       });
-      wrapText(second, font, size, width - numberWidth - 8, maxLines)
-        .forEach((line, lineIndex) => page.drawText(line, {
+      lines.forEach((line, lineIndex) => page.drawText(line, {
           font,
           size,
           x: left + numberWidth + 4,
-          y: top - size - 3 - lineIndex * (size + 1),
+          y: top - size - 3 - lineIndex * lineHeight,
         }));
     }
     top = bottom;
   });
+}
+
+function budgetWorksheetLastRow(source: ExcelJS.Worksheet): number {
+  for (let rowNumber = source.rowCount; rowNumber > 0; rowNumber -= 1) {
+    if (
+      source.getRow(rowNumber).getCell(1).text.trim() ||
+      source.getRow(rowNumber).getCell(2).text.trim()
+    ) {
+      return rowNumber;
+    }
+  }
+  return 0;
 }
 
 function setPdfSection(page: PDFPage, section: PdfSection): void {
@@ -1088,6 +1159,18 @@ function estimatedLineCount(text: string, charactersPerLine: number): number {
 
 function formatExportUnit(unit: string): string {
   return /^m2$/i.test(unit.trim()) ? "M²" : unit;
+}
+
+function formatExportDate(value: Date): string {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    day: "numeric",
+    month: "numeric",
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `日期：${part("year")}年${part("month")}月${part("day")}日`;
 }
 
 function number2(value: string): number {

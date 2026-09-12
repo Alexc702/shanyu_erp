@@ -27,6 +27,7 @@ import {
   formatQuotationItemName,
   formatQuotationScopeName,
   formatQuotationUnit,
+  orderQuotationOptionLines,
   orderQuotationScopes,
   quotationLineCategory,
   quotationLinesForDisplay,
@@ -75,7 +76,9 @@ export function QuotationEditor({
     orderedScopes.find((scope) => scope.id === activeScopeId) ??
     orderedScopes[0];
   const activeLines = activeScope
-    ? quotationLinesForDisplay(activeScope.lines, compactReadOnly)
+    ? orderQuotationOptionLines(
+        quotationLinesForDisplay(activeScope.lines, compactReadOnly),
+      )
     : [];
 
   async function saveLine(

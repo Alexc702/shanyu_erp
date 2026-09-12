@@ -125,6 +125,16 @@ interface DesiredDemandRow {
 export class PgMainMaterialRepository implements MainMaterialRepository {
   constructor(private readonly database: DatabaseClient) {}
 
+  async getCatalogById(catalogVersionId: string): Promise<MainMaterialCatalog | null> {
+    const result = await this.database.query<CatalogRow>(
+      `${catalogSelect} WHERE id = $1`,
+      [catalogVersionId],
+    );
+    const catalog = result.rows[0];
+    if (!catalog) return null;
+    return toCatalog(catalog, await this.listItems(this.database, catalog.id));
+  }
+
   async getPublishedCatalog(): Promise<MainMaterialCatalog | null> {
     const catalogResult = await this.database.query<CatalogRow>(
       `${catalogSelect} WHERE status = 'PUBLISHED' LIMIT 1`,
@@ -373,21 +383,27 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
       );
       changed ||= Boolean(removed.rowCount);
       for (const demand of desiredResult.rows) {
-        const existing = await database.query<{ id: string; base_quantity: string }>(
-          `SELECT id, base_quantity
+        const existing = await database.query<{
+          base_quantity: string;
+          id: string;
+          loss_rate: string;
+        }>(
+          `SELECT id, base_quantity, loss_rate
              FROM main_material_quote_lines
             WHERE quotation_id = $1 AND source_half_package_line_id = $2`,
           [quotation.id, demand.line_id],
         );
-        const quoteQuantity = await multipliedQuantity(database, demand.base_quantity, "1.1500");
-        if (!existing.rows[0]) {
+        const current = existing.rows[0];
+        const lossRate = current?.loss_rate ?? "0.1150";
+        const quoteQuantity = await quantityWithLoss(database, demand.base_quantity, lossRate);
+        if (!current) {
           await database.query(
             `INSERT INTO main_material_quote_lines
                (id, quotation_id, origin, source_half_package_line_id,
                 category_code, scope_name, demand_name, demand_spec,
                 base_quantity, loss_rate, quote_quantity, sort_order)
              VALUES ($1, $2, 'AUTO_TILE', $3, 'TILE', $4, $5, $6,
-                     $7, 0.1500, $8, $9)`,
+                     $7, 0.1150, $8, $9)`,
             [
               randomUUID(), quotation.id, demand.line_id, demand.scope_name,
               demand.demand_name, demand.demand_spec, demand.base_quantity,
@@ -395,11 +411,12 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
             ],
           );
           changed = true;
-        } else if (existing.rows[0].base_quantity !== demand.base_quantity) {
+        } else if (current.base_quantity !== demand.base_quantity) {
           await database.query(
             `UPDATE main_material_quote_lines
                 SET scope_name = $3, demand_name = $4, demand_spec = $5,
-                    base_quantity = $6, quote_quantity = $7,
+                    base_quantity = $6, base_quantity_overridden = false,
+                    quote_quantity = $7,
                     sale_amount = CASE WHEN sale_unit_price IS NULL THEN NULL
                       ELSE round($7::numeric * sale_unit_price, 4) END,
                     cost_amount = CASE WHEN cost_unit_price IS NULL THEN NULL
@@ -498,6 +515,49 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
     return this.requiredQuotation(input.projectId);
   }
 
+  async updateDemandLine(input: {
+    readonly baseQuantity: string;
+    readonly expectedRevision: number;
+    readonly lineId: string;
+    readonly lossRate: string;
+    readonly projectId: string;
+  }): Promise<MainMaterialQuotation> {
+    await this.database.transaction(async (database) => {
+      const context = await lockSelectionContext(
+        database,
+        input.projectId,
+        input.lineId,
+        input.expectedRevision,
+      );
+      if (
+        context.line.origin === "AUTO_TILE" &&
+        input.baseQuantity !== context.line.base_quantity
+      ) {
+        throw new MainMaterialSelectionError(
+          "瓷砖基础数量请返回半包报价修改",
+        );
+      }
+      const baseQuantity = context.line.origin === "AUTO_TILE"
+        ? context.line.base_quantity
+        : input.baseQuantity;
+      if (!baseQuantity) throw new MainMaterialSelectionError("基础数量不能为空");
+      await database.query(
+        `UPDATE main_material_quote_lines
+            SET base_quantity = $3, loss_rate = $4,
+                base_quantity_overridden = false,
+                quote_quantity = round($3::numeric * (1 + $4::numeric), 4),
+                sale_amount = CASE WHEN sale_unit_price IS NULL THEN NULL
+                  ELSE round($3::numeric * (1 + $4::numeric) * sale_unit_price, 4) END,
+                cost_amount = CASE WHEN cost_unit_price IS NULL THEN NULL
+                  ELSE round($3::numeric * (1 + $4::numeric) * cost_unit_price, 4) END
+          WHERE quotation_id = $1 AND id = $2`,
+        [context.quotationId, input.lineId, baseQuantity, input.lossRate],
+      );
+      await recalculateQuotation(database, context.quotationId, true);
+    });
+    return this.requiredQuotation(input.projectId);
+  }
+
   async addManualLine(input: {
     readonly categoryCode: Exclude<MainMaterialCategoryCode, "TILE">;
     readonly color: string | null;
@@ -526,7 +586,7 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
             item_version_id, material_id, item_name, brand, series, model,
             spec, selected_color, unit, sale_unit_price, cost_unit_price,
             sale_amount, cost_amount, asset_ids, sort_order)
-         VALUES ($1, $2, 'MANUAL', $3, '项目级', $4, $5, NULL, 0,
+         VALUES ($1, $2, 'MANUAL', $3, '项目级', $4, $5, $6, 0,
                  $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
                  $17, round($6::numeric * $16::numeric, 4),
                  round($6::numeric * $17::numeric, 4), $18::jsonb, $19)`,
@@ -1115,14 +1175,14 @@ function isSquareMeter(value: string): boolean {
   return ["m2", "m²", "㎡"].includes(value.trim().toLowerCase());
 }
 
-async function multipliedQuantity(
+async function quantityWithLoss(
   database: DatabaseExecutor,
   quantity: string,
-  multiplier: string,
+  lossRate: string,
 ): Promise<string> {
   const result = await database.query<{ value: string }>(
-    `SELECT round($1::numeric * $2::numeric, 4) AS value`,
-    [quantity, multiplier],
+    `SELECT round($1::numeric * (1 + $2::numeric), 4) AS value`,
+    [quantity, lossRate],
   );
   return result.rows[0]?.value ?? "0.0000";
 }

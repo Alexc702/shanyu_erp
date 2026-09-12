@@ -501,6 +501,22 @@ describe("half-package quotation PostgreSQL concurrency", () => {
                 perimeter: "18.0000",
                 type: "BEDROOM",
               },
+              {
+                area: "32.0000",
+                displayName: "客餐厅",
+                height: "2.8000",
+                includesBalcony: false,
+                perimeter: "24.0000",
+                type: "LIVING_DINING",
+              },
+              {
+                area: "15.0000",
+                displayName: "次卧",
+                height: "2.8000",
+                includesBalcony: false,
+                perimeter: "16.0000",
+                type: "BEDROOM",
+              },
             ],
           })
           .expect(201);
@@ -530,7 +546,120 @@ describe("half-package quotation PostgreSQL concurrency", () => {
           expect(quotation.scopes).toEqual(quotations[0]?.scopes);
         }
 
-        const initial = quotations[0];
+        let initial = quotations[0];
+        if (!initial) throw new Error("并发请求未返回报价");
+        const initialItemNames = (
+          initial.scopes as Array<{ lines: Array<{ itemName: string }> }>
+        ).flatMap((scope) => scope.lines.map((line) => line.itemName));
+        expect(initialItemNames).toEqual(
+          expect.arrayContaining([
+            "100*100mm小砖（水泥砂浆粘贴）",
+            "200*200mm小砖（水泥砂浆粘贴）",
+            "100*100mm小砖（胶泥粘帖）",
+            "200*200mm小砖（胶泥粘帖）",
+          ]),
+        );
+        const legacyTile = await database.query<{ id: string }>(
+          `SELECT l.id
+             FROM half_package_quotation_lines l
+             JOIN half_package_quotation_spaces qs ON qs.id = l.quotation_space_id
+            WHERE qs.quotation_id = $1
+              AND l.item_name = '600*1200mm地砖（水泥砂浆粘贴）'
+            LIMIT 1`,
+          [initial.id],
+        );
+        if (!legacyTile.rows[0]) throw new Error("兼容测试缺少 600*1200 地砖");
+        await database.query(
+          `UPDATE half_package_quotation_lines l
+              SET selected = true, quantity_rule_kind = 'SPACE_AREA',
+                  calculated_quantity = qs.area,
+                  sale_amount = round(qs.area * l.sale_unit_price, 4),
+                  cost_amount = round(qs.area * l.cost_unit_price, 4),
+                  gross_profit = round(qs.area * (l.sale_unit_price - l.cost_unit_price), 4),
+                  gross_margin_rate = round(
+                    (l.sale_unit_price - l.cost_unit_price) / l.sale_unit_price,
+                    4
+                  )
+             FROM half_package_quotation_spaces qs
+            WHERE l.id = $1 AND qs.id = l.quotation_space_id`,
+          [legacyTile.rows[0].id],
+        );
+        await request(realApp.getHttpServer())
+          .get(`/projects/${projectId}/main-material-quotation`)
+          .set("Cookie", cookie)
+          .expect(200);
+        const legacyDemand = await database.query<{ count: string }>(
+          `SELECT count(*)::text AS count
+             FROM main_material_quote_lines
+            WHERE source_half_package_line_id = $1`,
+          [legacyTile.rows[0].id],
+        );
+        expect(legacyDemand.rows[0]?.count).toBe("1");
+        const repairedLegacy = await request(realApp.getHttpServer())
+          .get(`/projects/${projectId}/half-package-quotation`)
+          .set("Cookie", cookie)
+          .expect(200);
+        const repairedTile = (
+          repairedLegacy.body.quotation.scopes as Array<{
+            lines: Array<{
+              id: string;
+              quantity: string | null;
+              quantitySource: string;
+              selected: boolean;
+            }>;
+          }>
+        )
+          .flatMap((scope) => scope.lines)
+          .find((line) => line.id === legacyTile.rows[0]!.id);
+        expect(repairedTile).toMatchObject({
+          quantity: null,
+          quantitySource: "MANUAL",
+          selected: false,
+        });
+        const removedLegacyDemand = await database.query<{ count: string }>(
+          `SELECT count(*)::text AS count
+             FROM main_material_quote_lines
+            WHERE source_half_package_line_id = $1`,
+          [legacyTile.rows[0].id],
+        );
+        expect(removedLegacyDemand.rows[0]?.count).toBe("0");
+        initial = repairedLegacy.body.quotation;
+        const projectSpaces = createdProject.body.project.spaces as Array<{
+          displayName: string;
+          id: string;
+        }>;
+        const reorderedIds = [
+          projectSpaces[1]!.id,
+          projectSpaces[0]!.id,
+          projectSpaces[2]!.id,
+        ];
+        await request(realApp.getHttpServer())
+          .put(`/projects/${projectId}/spaces/order`)
+          .set("Cookie", cookie)
+          .send({ spaceIds: reorderedIds })
+          .expect(200);
+        await request(realApp.getHttpServer())
+          .get(`/projects/${projectId}`)
+          .set("Cookie", cookie)
+          .expect(200)
+          .expect(({ body }) => {
+            expect(
+              (body.project.spaces as Array<{ id: string }>).map((space) => space.id),
+            ).toEqual(reorderedIds);
+          });
+        const reorderedQuotation = await request(realApp.getHttpServer())
+          .get(`/projects/${projectId}/half-package-quotation`)
+          .set("Cookie", cookie)
+          .expect(200);
+        expect(
+          (reorderedQuotation.body.quotation.scopes as Array<{
+            name: string;
+            projectSpaceId: string | null;
+          }>)
+            .filter((scope) => scope.projectSpaceId)
+            .map((scope) => scope.name),
+        ).toEqual(["客餐厅", "主卧", "次卧"]);
+        initial = reorderedQuotation.body.quotation;
         const projectSpace = createdProject.body.project.spaces[0] as
           | { id: string }
           | undefined;
@@ -570,19 +699,19 @@ describe("half-package quotation PostgreSQL concurrency", () => {
           .get(`/projects/${projectId}/half-package-quotation`)
           .set("Cookie", cookie)
           .expect(200);
-        const recalculatedLines = (
-          recalculated.body.quotation.scopes as Array<{
+        const recalculatedScopes = recalculated.body.quotation.scopes as Array<{
+            projectSpaceId: string | null;
             lines: Array<{
               id: string;
               itemName: string;
               quantity: string | null;
             }>;
-          }>
-        ).flatMap((scope) => scope.lines) as Array<{
-          id: string;
-          itemName: string;
-          quantity: string | null;
-        }>;
+          }>;
+        const recalculatedScope = recalculatedScopes.find(
+          (scope) => scope.projectSpaceId === projectSpace.id,
+        );
+        if (!recalculatedScope) throw new Error("空间参数测试缺少主卧报价范围");
+        const recalculatedLines = recalculatedScope.lines;
         expect(
           recalculatedLines.find((line) => line.itemName === "顶面基层处理")
             ?.quantity,
@@ -592,7 +721,9 @@ describe("half-package quotation PostgreSQL concurrency", () => {
             ?.quantity,
         ).toBe("60.0000");
         expect(
-          recalculatedLines.find((line) => line.id === manualLine.id)?.quantity,
+          recalculatedScopes
+            .flatMap((scope) => scope.lines)
+            .find((line) => line.id === manualLine.id)?.quantity,
         ).toBe("3.0000");
         expect(recalculated.body.quotation.revision).toBe(
           manuallyUpdated.body.quotation.revision + 1,
@@ -607,28 +738,130 @@ describe("half-package quotation PostgreSQL concurrency", () => {
             expect(body.versions[0]).toMatchObject({ versionNumber: 1 });
           });
 
+        const tileLine = recalculatedScopes
+          .flatMap((scope) => scope.lines)
+          .find((line) => line.itemName === "800*800mm地砖（水泥砂浆粘贴）");
+        if (!tileLine) throw new Error("需求数量测试缺少半包瓷砖行");
+        await request(realApp.getHttpServer())
+          .patch(`/projects/${projectId}/half-package-quotation/lines/${tileLine.id}`)
+          .set("Cookie", cookie)
+          .send({
+            expectedRevision: recalculated.body.quotation.revision,
+            quantity: "8.0000",
+            selected: true,
+          })
+          .expect(200);
+
         const materialResponse = await request(realApp.getHttpServer())
           .get(`/projects/${projectId}/main-material-quotation`)
           .set("Cookie", cookie)
           .expect(200);
         const catalogResponse = await request(realApp.getHttpServer())
-          .get("/catalog/main-materials/published?category=TILE")
+          .get(`/projects/${projectId}/main-material-quotation/catalog`)
           .set("Cookie", cookie)
           .expect(200);
+        expect(catalogResponse.body.catalog).toMatchObject({
+          name: "山屿 ERP 主材库 0912 石材品牌修正",
+        });
+        expect(catalogResponse.body.catalog.items).toHaveLength(589);
         let materialQuotation = materialResponse.body.quotation as {
           lines: Array<{
+            baseQuantity: string | null;
+            categoryCode: string;
             demandSpec: string;
             id: string;
             item: unknown;
+            lossRate: string;
             origin: string;
+            quantity: string;
           }>;
           revision: number;
         };
+        const editableDemand = materialQuotation.lines.find(
+          (candidate) => candidate.origin === "AUTO_TILE",
+        );
+        if (!editableDemand) throw new Error("需求数量测试缺少自动瓷砖行");
+        if (!editableDemand.baseQuantity) throw new Error("瓷砖需求缺少半包基础数量");
+        await request(realApp.getHttpServer())
+          .patch(
+            `/projects/${projectId}/main-material-quotation/lines/${editableDemand.id}/demand`,
+          )
+          .set("Cookie", cookie)
+          .send({
+            baseQuantity: "12.5000",
+            expectedRevision: materialQuotation.revision,
+            lossRate: "0.1150",
+          })
+          .expect(400);
+        const demandUpdated = await request(realApp.getHttpServer())
+          .patch(
+            `/projects/${projectId}/main-material-quotation/lines/${editableDemand.id}/demand`,
+          )
+          .set("Cookie", cookie)
+          .send({
+            baseQuantity: editableDemand.baseQuantity,
+            expectedRevision: materialQuotation.revision,
+            lossRate: "0.2000",
+          })
+          .expect(200);
+        materialQuotation = demandUpdated.body.quotation;
+        expect(
+          materialQuotation.lines.find((line) => line.id === editableDemand.id),
+        ).toMatchObject({
+          baseQuantity: editableDemand.baseQuantity,
+          lossRate: "0.2000",
+          quantity: (Number(editableDemand.baseQuantity) * 1.2).toFixed(4),
+        });
         const materialItems = catalogResponse.body.catalog.items as Array<{
+          categoryCode: string;
           colors: string[];
           id: string;
           spec: string;
         }>;
+        const seamItem = materialItems.find(
+          (candidate) => candidate.categoryCode === "SEAM",
+        );
+        if (!seamItem) throw new Error("非瓷砖需求测试缺少美缝商品");
+        const manualAdded = await request(realApp.getHttpServer())
+          .post(`/projects/${projectId}/main-material-quotation/lines`)
+          .set("Cookie", cookie)
+          .send({
+            categoryCode: "SEAM",
+            color: seamItem.colors[0] ?? null,
+            expectedRevision: materialQuotation.revision,
+            itemVersionId: seamItem.id,
+            quantity: "6.0000",
+          })
+          .expect(201);
+        materialQuotation = manualAdded.body.quotation;
+        const seamLine = materialQuotation.lines.find(
+          (candidate) => candidate.origin === "MANUAL" && candidate.categoryCode === "SEAM",
+        );
+        if (!seamLine) throw new Error("非瓷砖需求测试缺少美缝报价行");
+        expect(seamLine).toMatchObject({
+          baseQuantity: "6.0000",
+          lossRate: "0.0000",
+          quantity: "6.0000",
+        });
+        const manualDemandUpdated = await request(realApp.getHttpServer())
+          .patch(
+            `/projects/${projectId}/main-material-quotation/lines/${seamLine.id}/demand`,
+          )
+          .set("Cookie", cookie)
+          .send({
+            baseQuantity: "5.0000",
+            expectedRevision: materialQuotation.revision,
+            lossRate: "0.1000",
+          })
+          .expect(200);
+        materialQuotation = manualDemandUpdated.body.quotation;
+        expect(
+          materialQuotation.lines.find((line) => line.id === seamLine.id),
+        ).toMatchObject({
+          baseQuantity: "5.0000",
+          lossRate: "0.1000",
+          quantity: "5.5000",
+        });
         for (const line of materialQuotation.lines.filter(
           (candidate) => candidate.origin === "AUTO_TILE" && !candidate.item,
         )) {
@@ -820,6 +1053,11 @@ class StaticQuotationRepository implements QuotationRepository {
   }
 
   async saveDraft(input: QuotationDraft): Promise<QuotationDraft> {
+    this.draft = structuredClone(input);
+    return structuredClone(input);
+  }
+
+  async repairDraft(input: QuotationDraft): Promise<QuotationDraft> {
     this.draft = structuredClone(input);
     return structuredClone(input);
   }

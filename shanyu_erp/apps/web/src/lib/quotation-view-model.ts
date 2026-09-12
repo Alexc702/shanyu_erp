@@ -3,23 +3,6 @@ import type {
   HalfPackageQuotationScope,
 } from "@shanyu/contracts";
 
-const commonScopeOrder = new Map([
-  ["一、砌墙工程", 0],
-  ["十、油漆工程", 70],
-  ["十一、水电工程", 80],
-  ["十二、其他工程", 90],
-  ["管理费", 100],
-]);
-
-const spaceTypeOrder: Record<NonNullable<HalfPackageQuotationScope["spaceType"]>, number> = {
-  LIVING_DINING: 10,
-  BEDROOM: 20,
-  CLOSET: 25,
-  BATHROOM: 30,
-  KITCHEN: 40,
-  BALCONY: 50,
-};
-
 export function formatDisplayNumber(value: string | null): string {
   if (value === null || value.trim() === "") {
     return "—";
@@ -42,18 +25,30 @@ export function formatQuotationItemName(name: string): string {
 export function orderQuotationScopes(
   scopes: readonly HalfPackageQuotationScope[],
 ): HalfPackageQuotationScope[] {
-  return scopes
-    .map((scope, index) => ({ index, scope }))
-    .sort((left, right) => {
-      const difference = scopeOrder(left.scope) - scopeOrder(right.scope);
-      if (difference !== 0) {
-        return difference;
-      }
-      const nameDifference =
-        scopeNameOrder(left.scope) - scopeNameOrder(right.scope);
-      return nameDifference === 0 ? left.index - right.index : nameDifference;
-    })
-    .map(({ scope }) => scope);
+  return [...scopes];
+}
+
+export function orderQuotationOptionLines<
+  T extends Pick<HalfPackageQuotationLine, "itemName">,
+>(lines: readonly T[]): T[] {
+  const linesByGroup = new Map<
+    NonNullable<ReturnType<typeof quotationOptionGroup>>,
+    T[]
+  >();
+  for (const line of lines) {
+    const group = quotationOptionGroup(line.itemName);
+    if (!group) continue;
+    linesByGroup.set(group, [...(linesByGroup.get(group) ?? []), line]);
+  }
+
+  const renderedGroups = new Set<string>();
+  return lines.flatMap((line) => {
+    const group = quotationOptionGroup(line.itemName);
+    if (!group) return [line];
+    if (renderedGroups.has(group)) return [];
+    renderedGroups.add(group);
+    return linesByGroup.get(group) ?? [];
+  });
 }
 
 export function quotationOptionGroup(
@@ -158,23 +153,4 @@ function matchTileOption(itemName: string): {
       .replace(/mm(?:地砖|墙砖|小砖)$/, "")
       .replaceAll("*", "×"),
   };
-}
-
-function scopeOrder(scope: HalfPackageQuotationScope): number {
-  if (scope.spaceType) {
-    return spaceTypeOrder[scope.spaceType];
-  }
-  return commonScopeOrder.get(scope.name) ?? 60;
-}
-
-function scopeNameOrder(scope: HalfPackageQuotationScope): number {
-  if (scope.spaceType === "BEDROOM") {
-    if (/^主卧/.test(scope.name)) return 0;
-    if (/^次卧/.test(scope.name)) return 10;
-  }
-  if (scope.spaceType === "BATHROOM") {
-    if (/^主(?:卫|卫生间)/.test(scope.name)) return 0;
-    if (/^次(?:卫|卫生间)/.test(scope.name)) return 10;
-  }
-  return 20;
 }
