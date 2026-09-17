@@ -516,10 +516,26 @@ check_server_containers() {
   local container_id
   local state
   local health
+  local exit_code
   local failed=0
 
   services="$(server_compose config --services)" || return 1
   for service in $services; do
+    if [ "$service" = "export-storage-init" ]; then
+      container_id="$(server_compose ps --all --quiet "$service")" || return 1
+      if [ -z "$container_id" ]; then
+        echo "$service: not created"
+        failed=1
+        continue
+      fi
+      state="$(docker inspect --format '{{.State.Status}}' "$container_id")" || return 1
+      exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container_id")" || return 1
+      echo "$service: state=$state exit-code=$exit_code"
+      if [ "$state" != "exited" ] || [ "$exit_code" != "0" ]; then
+        failed=1
+      fi
+      continue
+    fi
     container_id="$(server_compose ps -q "$service")" || return 1
     if [ -z "$container_id" ]; then
       echo "$service: not running"
@@ -549,7 +565,11 @@ check_server_container_policies() {
 
   services="$(server_compose config --services)" || return 1
   for service in $services; do
-    container_id="$(server_compose ps -q "$service")" || return 1
+    if [ "$service" = "export-storage-init" ]; then
+      container_id="$(server_compose ps --all --quiet "$service")" || return 1
+    else
+      container_id="$(server_compose ps -q "$service")" || return 1
+    fi
     if [ -z "$container_id" ]; then
       echo "$service: no running container available for policy inspection"
       failed=1
@@ -561,10 +581,14 @@ check_server_container_policies() {
       log_max_size="$(docker inspect --format '{{index .HostConfig.LogConfig.Config "max-size"}}' "$container_id")" || return 1
       echo "$service: restart=$restart_policy log-driver=$log_driver log-max-size=${log_max_size:-not-configured}"
 
-      case "$restart_policy" in
-        always|unless-stopped|on-failure) ;;
-        *) failed=1 ;;
-      esac
+      if [ "$service" = "export-storage-init" ]; then
+        [ "$restart_policy" = "no" ] || failed=1
+      else
+        case "$restart_policy" in
+          always|unless-stopped|on-failure) ;;
+          *) failed=1 ;;
+        esac
+      fi
 
       if [ "$log_driver" != "local" ] && [ -z "$log_max_size" ]; then
         failed=1

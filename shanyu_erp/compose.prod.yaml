@@ -96,6 +96,25 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  export-storage-init:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    command:
+      - sh
+      - -c
+      - chown 1000:1000 /app/export-files && chmod 0750 /app/export-files
+    user: "0:0"
+    restart: "no"
+    volumes:
+      - quotation_exports:/app/export-files
+    mem_limit: 64m
+    logging:
+      driver: local
+      options:
+        max-file: "3"
+        max-size: "10m"
+    security_opt:
+      - no-new-privileges:true
+
   export-worker:
     <<: *service-policy
     image: ${API_IMAGE:?API_IMAGE is required}
@@ -111,10 +130,18 @@ services:
       POSTGRES_PORT: "5432"
       POSTGRES_USER: ${POSTGRES_USER}
     depends_on:
+      export-storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     volumes:
       - quotation_exports:/app/export-files
+    healthcheck:
+      test: ["CMD", "node", "scripts/export-worker-healthcheck.mjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     mem_limit: 512m
     security_opt:
       - no-new-privileges:true
