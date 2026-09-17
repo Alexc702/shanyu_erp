@@ -193,22 +193,32 @@ export interface QuotationRepository {
     actorUserId: string,
   ): Promise<QuotationDraft>;
   createExport(input: NewQuotationExport): Promise<QuotationExport>;
-  findExport(exportId: string): Promise<QuotationExport | null>;
+  findExport(exportId: string): Promise<QuotationExportRecord | null>;
 }
 
 export type QuotationExportFormat = "PDF" | "XLSX";
 
-export interface QuotationExport {
+interface QuotationExportMetadata {
   readonly audience: "CLIENT" | "INTERNAL";
   readonly contentType: string;
   readonly createdAt: Date;
   readonly fileName: string;
   readonly format: QuotationExportFormat;
   readonly id: string;
-  readonly payload: Buffer;
   readonly quotationId: string;
   readonly sha256: string;
 }
+
+export interface QuotationExport extends QuotationExportMetadata {
+  readonly payload: Buffer;
+}
+
+export interface StoredQuotationExport extends QuotationExportMetadata {
+  readonly sizeBytes: number;
+  readonly storagePath: string;
+}
+
+export type QuotationExportRecord = QuotationExport | StoredQuotationExport;
 
 export interface NewQuotationExport extends QuotationExport {
   readonly createdByUserId: string;

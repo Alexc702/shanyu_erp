@@ -28,7 +28,9 @@ import {
   QuotationApprovalController,
   QuotationController,
   QuotationExportController,
+  QuotationExportJobController,
 } from "../src/quotation/quotation.controller";
+import { QuotationExportStorage } from "../src/quotation/quotation-export.storage";
 import { QuotationExporter } from "../src/quotation/quotation-exporter";
 import {
   type ConfirmedQuotationAdjustment,
@@ -87,12 +89,14 @@ describe("half-package quotation HTTP interface", () => {
         QuotationController,
         QuotationApprovalController,
         QuotationExportController,
+        QuotationExportJobController,
       ],
       providers: [
         AccessPolicy,
         AuthService,
         HalfPackageCalculator,
         QuotationExporter,
+        QuotationExportStorage,
         QuotationService,
         { provide: AUTH_REPOSITORY, useValue: authRepository },
         { provide: AUDIT_REPOSITORY, useValue: auditRepository },
@@ -173,8 +177,31 @@ describe("half-package quotation HTTP interface", () => {
       saleAmount: "124.0000",
     });
 
+    const projectCost = await request(app.getHttpServer())
+      .get(`/projects/${project.id}/half-package-quotation/project-cost-analysis`)
+      .set("Cookie", ownerCookie)
+      .expect(200);
+    expect(projectCost.body.analysis).toMatchObject({
+      basis: "DRAFT_REALTIME",
+      projectId: project.id,
+      quotationId: ownerCost.body.costMargin.id,
+    });
+    expect(projectCost.body.analysis.current.modules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "HALF_PACKAGE", status: "DRAFT" }),
+        expect.objectContaining({
+          code: "MAIN_MATERIAL",
+          status: "NOT_ENABLED",
+        }),
+      ]),
+    );
+
     await request(app.getHttpServer())
       .get(`/projects/${project.id}/half-package-quotation/cost-margin`)
+      .set("Cookie", cookie)
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(`/projects/${project.id}/half-package-quotation/project-cost-analysis`)
       .set("Cookie", cookie)
       .expect(403);
     await request(app.getHttpServer())
@@ -269,7 +296,7 @@ describe("half-package quotation HTTP interface", () => {
       .post(`/approvals/half-package/${quotationId}/exports`)
       .set("Cookie", leadCookie)
       .send({ format: "PDF" })
-      .expect(201);
+      .expect(202);
 
     await request(app.getHttpServer())
       .patch(
@@ -361,8 +388,23 @@ describe("half-package quotation HTTP interface", () => {
         .post(`/approvals/half-package/${quotationId}/exports`)
         .set("Cookie", leadCookie)
         .send({ format: expected.format })
-        .expect(201);
-      const exported = createdExport.body.export as {
+        .expect(202);
+      const job = createdExport.body.job as {
+        export: {
+          downloadPath: string;
+          fileName: string;
+          sha256: string;
+        };
+        status: string;
+        statusPath: string;
+      };
+      expect(job.status).toBe("SUCCEEDED");
+      await request(app.getHttpServer())
+        .get(job.statusPath)
+        .set("Cookie", leadCookie)
+        .expect(200)
+        .expect(({ body }) => expect(body.job.status).toBe("SUCCEEDED"));
+      const exported = job.export as {
         downloadPath: string;
         fileName: string;
         sha256: string;
@@ -761,9 +803,9 @@ describe("half-package quotation PostgreSQL concurrency", () => {
           .set("Cookie", cookie)
           .expect(200);
         expect(catalogResponse.body.catalog).toMatchObject({
-          name: "山屿 ERP 主材库 0912 石材品牌修正",
+          name: "山屿 ERP 主材库 0917 铝合金门套选型修正版",
         });
-        expect(catalogResponse.body.catalog.items).toHaveLength(589);
+        expect(catalogResponse.body.catalog.items).toHaveLength(602);
         let materialQuotation = materialResponse.body.quotation as {
           lines: Array<{
             baseQuantity: string | null;

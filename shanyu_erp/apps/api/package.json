@@ -6,6 +6,7 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
+    "start:worker": "node dist/export-worker.js",
     "seed": "node --env-file-if-exists=../../.env scripts/seed-demo-users.mjs",
     "reconcile:catalog": "node --env-file-if-exists=../../.env scripts/reconcile-half-package-catalog.mjs",
     "lint": "eslint src test --max-warnings=0",
@@ -13,16 +14,15 @@
     "test": "vitest run --pool=forks --maxWorkers=1"
   },
   "dependencies": {
-    "@fontsource/noto-sans-sc": "^5.3.0",
     "@nestjs/common": "12.0.1",
     "@nestjs/config": "^12.0.0",
     "@nestjs/core": "12.0.1",
     "@nestjs/platform-express": "12.0.1",
-    "@pdf-lib/fontkit": "^1.1.1",
     "@shanyu/contracts": "workspace:*",
     "exceljs": "4.4.0",
     "node-pg-migrate": "^9.0.0",
     "pdf-lib": "^1.17.1",
+    "pdfkit": "^0.20.2",
     "pg": "^8.23.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2"
@@ -33,6 +33,7 @@
     "@nestjs/testing": "^12.0.1",
     "@types/express": "5.0.5",
     "@types/node": "^24.0.0",
+    "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
     "eslint": "^9.0.0",

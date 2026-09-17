@@ -7,7 +7,7 @@ import type {
   MainMaterialQuotationView,
   ProjectDetail,
 } from "@shanyu/contracts";
-import { ArrowLeft, Check, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, ChartNoAxesCombined, Check, RotateCcw, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -77,7 +77,7 @@ export function ApprovalDetail({
   const modules: readonly ModuleRow[] = [
     {
       cost: costMargin.expectedCost,
-      detailsHref: `/projects/${project.id}/quotation/cost-margin?quotationId=${quotation.id}`,
+      detailsHref: `/projects/${project.id}/cost-analysis?quotationId=${quotation.id}&module=half-package`,
       marginRate: costMargin.grossMarginRate,
       name: "半包报价",
       note: "09 总览 → 09B 工程项明细",
@@ -87,7 +87,7 @@ export function ApprovalDetail({
     },
     {
       cost: mainMaterial.summary.expectedCost ?? null,
-      detailsHref: `/projects/${project.id}/quotation/main-materials/cost?quotationId=${quotation.id}`,
+      detailsHref: `/projects/${project.id}/cost-analysis?quotationId=${quotation.id}&module=main-material`,
       marginRate: mainMaterial.summary.grossMarginRate ?? null,
       name: "主材报价",
       note: `主材库 V${mainMaterial.catalogVersion.versionNumber} · 已选 ${mainMaterial.lines.filter((line) => line.item).length} 项`,
@@ -142,8 +142,15 @@ export function ApprovalDetail({
             </Badge>
           </div>
         </div>
-        {canReturn ? (
-          <div className="workflow-actions">
+        <div className="workflow-actions">
+          <Button asChild className="h-10" variant="outline">
+            <Link href={`/projects/${project.id}/cost-analysis?quotationId=${encodeURIComponent(quotation.id)}`}>
+              <ChartNoAxesCombined />
+              查看完整成本分析
+            </Link>
+          </Button>
+          {canReturn ? (
+            <>
             <Button
               className="h-10 border-destructive text-destructive hover:bg-destructive-soft hover:text-destructive"
               disabled={working}
@@ -163,8 +170,9 @@ export function ApprovalDetail({
                 批准
               </Button>
             ) : null}
-          </div>
-        ) : null}
+            </>
+          ) : null}
+        </div>
       </header>
 
       {error ? (

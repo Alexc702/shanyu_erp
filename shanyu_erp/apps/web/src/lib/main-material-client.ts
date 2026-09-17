@@ -29,6 +29,17 @@ export async function selectMainMaterial(
   );
 }
 
+export async function fetchMainMaterialQuotation(
+  projectId: string,
+): Promise<MainMaterialQuotationView> {
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/main-material-quotation`,
+    { credentials: "include" },
+  );
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return ((await response.json()) as MainMaterialQuotationResponse).quotation;
+}
+
 export async function updateMainMaterialDemand(
   projectId: string,
   lineId: string,

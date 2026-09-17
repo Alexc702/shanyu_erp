@@ -11,7 +11,14 @@ import {
   QuotationApprovalController,
   QuotationController,
   QuotationExportController,
+  QuotationExportJobController,
 } from "./quotation.controller";
+import {
+  PgQuotationExportJobRepository,
+  QUOTATION_EXPORT_JOB_REPOSITORY,
+} from "./quotation-export-job.repository";
+import { QuotationExportStorage } from "./quotation-export.storage";
+import { QuotationExportWorker } from "./quotation-export.worker";
 import { QuotationExporter } from "./quotation-exporter";
 import { QuotationService } from "./quotation.service";
 
@@ -20,14 +27,23 @@ import { QuotationService } from "./quotation.service";
     QuotationController,
     QuotationApprovalController,
     QuotationExportController,
+    QuotationExportJobController,
   ],
   imports: [AccessModule, CatalogModule, MainMaterialModule, ProjectModule],
   providers: [
     HalfPackageCalculator,
     PgQuotationRepository,
+    PgQuotationExportJobRepository,
     QuotationExporter,
+    QuotationExportStorage,
+    QuotationExportWorker,
     QuotationService,
     { provide: QUOTATION_REPOSITORY, useExisting: PgQuotationRepository },
+    {
+      provide: QUOTATION_EXPORT_JOB_REPOSITORY,
+      useExisting: PgQuotationExportJobRepository,
+    },
   ],
+  exports: [QuotationExportWorker],
 })
 export class QuotationModule {}

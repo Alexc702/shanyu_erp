@@ -26,6 +26,7 @@ import {
   type QuotationDraft,
   type QuotationDecisionAction,
   type QuotationExport,
+  type QuotationExportRecord,
   type QuotationDraftLine,
   type QuotationDraftScope,
   type QuotationRepository,
@@ -110,8 +111,10 @@ interface ExportRow {
   file_name: string;
   format: "PDF" | "XLSX";
   id: string;
-  payload: Buffer;
+  payload: Buffer | null;
   quotation_id: string;
+  size_bytes: string;
+  storage_path: string | null;
 }
 
 interface ScopeRow {
@@ -942,8 +945,8 @@ export class PgQuotationRepository implements QuotationRepository {
     await this.database.query(
       `INSERT INTO half_package_exports
          (id, quotation_id, format, audience, file_name, content_type,
-          content_sha256, payload, created_by_user_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          content_sha256, payload, size_bytes, created_by_user_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         input.id,
         input.quotationId,
@@ -953,6 +956,7 @@ export class PgQuotationRepository implements QuotationRepository {
         input.contentType,
         input.sha256,
         input.payload,
+        input.payload.length,
         input.createdByUserId,
         input.createdAt,
       ],
@@ -960,28 +964,34 @@ export class PgQuotationRepository implements QuotationRepository {
     return input;
   }
 
-  async findExport(exportId: string): Promise<QuotationExport | null> {
+  async findExport(exportId: string): Promise<QuotationExportRecord | null> {
     const result = await this.database.query<ExportRow>(
       `SELECT id, quotation_id, format, file_name, content_type,
-              audience, content_sha256, payload, created_at
+              audience, content_sha256, payload, storage_path, size_bytes,
+              created_at
          FROM half_package_exports
         WHERE id = $1`,
       [exportId],
     );
     const row = result.rows[0];
-    return row
-      ? {
-          audience: row.audience,
-          contentType: row.content_type,
-          createdAt: row.created_at,
-          fileName: row.file_name,
-          format: row.format,
-          id: row.id,
-          payload: row.payload,
-          quotationId: row.quotation_id,
-          sha256: row.content_sha256,
-        }
-      : null;
+    if (!row) return null;
+    const metadata = {
+      audience: row.audience,
+      contentType: row.content_type,
+      createdAt: row.created_at,
+      fileName: row.file_name,
+      format: row.format,
+      id: row.id,
+      quotationId: row.quotation_id,
+      sha256: row.content_sha256,
+    } as const;
+    if (row.payload) return { ...metadata, payload: row.payload };
+    if (!row.storage_path) throw new Error("导出记录缺少文件存储位置");
+    return {
+      ...metadata,
+      sizeBytes: Number(row.size_bytes),
+      storagePath: row.storage_path,
+    };
   }
 
   private async hydrateDraft(

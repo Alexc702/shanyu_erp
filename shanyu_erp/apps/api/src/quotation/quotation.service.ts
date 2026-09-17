@@ -13,6 +13,10 @@ import type {
   HalfPackageSectionCode,
   HalfPackageSubmissionCheck,
   HalfPackageVersionDifference,
+  MainMaterialCategoryCode,
+  ProjectCostAnalysis,
+  ProjectCostAnalysisMainMaterialCategory,
+  ProjectCostAnalysisScenario,
   ProjectDetail,
   SessionUser,
   SpaceType,
@@ -35,12 +39,18 @@ import {
   type QuotationDraftScope,
   type QuotationExport,
   type QuotationExportFormat,
+  type QuotationExportRecord,
   type QuotationRepository,
   QuotationRevisionConflictError,
   type QuotationTemplate,
   type QuotationTemplateItem,
 } from "./quotation.repository";
 import { QuotationExporter } from "./quotation-exporter";
+import {
+  QUOTATION_EXPORT_JOB_REPOSITORY,
+  type QuotationExportJob,
+  type QuotationExportJobRepository,
+} from "./quotation-export-job.repository";
 import {
   MAIN_MATERIAL_REPOSITORY,
   type MainMaterialQuotation,
@@ -116,6 +126,9 @@ export class QuotationService {
     @Optional()
     @Inject(MAIN_MATERIAL_REPOSITORY)
     private readonly mainMaterialRepository: MainMaterialRepository = emptyMainMaterialRepository,
+    @Optional()
+    @Inject(QUOTATION_EXPORT_JOB_REPOSITORY)
+    private readonly exportJobs?: QuotationExportJobRepository,
   ) {}
 
   async getOrCreateDraft(
@@ -390,6 +403,38 @@ export class QuotationService {
     return toCostMargin(await this.authorizedVersion(actor, quotationId));
   }
 
+  async getProjectCostAnalysis(
+    actor: SessionUser,
+    projectId: string,
+    quotationId?: string,
+  ): Promise<ProjectCostAnalysis> {
+    this.accessPolicy.assertCanViewSensitivePricing(actor);
+    let quotation: QuotationDraft;
+    if (quotationId) {
+      quotation = await this.authorizedVersion(actor, quotationId);
+      if (quotation.projectId !== projectId) {
+        throw new NotFoundException("报价版本不存在");
+      }
+    } else {
+      const current = await this.getOrCreateDraft(actor, projectId);
+      const found = await this.quotationRepository.findById(current.id);
+      if (!found) throw new NotFoundException("半包报价版本不存在");
+      quotation = found;
+    }
+    const project = await this.quotationRepository.findProject(projectId);
+    if (!project) throw new NotFoundException("项目不存在");
+    let mainMaterial = await this.mainMaterialRepository.getQuotationById(
+      quotation.id,
+    );
+    if (!mainMaterial && quotation.status === "DRAFT" && quotation.isCurrent) {
+      mainMaterial = await this.mainMaterialRepository.initializeAndSyncDraft(
+        projectId,
+      );
+      if (mainMaterial?.id !== quotation.id) mainMaterial = null;
+    }
+    return toProjectCostAnalysis(quotation, project, mainMaterial);
+  }
+
   async updateMarginBenchmark(
     actor: SessionUser,
     projectId: string,
@@ -548,7 +593,7 @@ export class QuotationService {
     if (
       !Number.isInteger(input.expectedRevision) ||
       input.expectedRevision < 0 ||
-      !/^0(?:\.\d{1,4})?$|^1(?:\.0{1,4})?$/.test(input.discountRate) ||
+      !isWholePercentDiscountRate(input.discountRate) ||
       !/^\d+(?:\.\d{1,4})?$/.test(input.writeOff)
     ) {
       throw new BadRequestException("折扣、抹零和修订号格式不正确");
@@ -665,22 +710,12 @@ export class QuotationService {
     format: QuotationExportFormat,
     audience: "CLIENT" | "INTERNAL" = "CLIENT",
   ): Promise<QuotationExport> {
-    if (audience === "INTERNAL" && !(actor.role === "ADMIN" || actor.role === "OWNER")) {
-      throw new NotFoundException("导出文件不存在");
-    }
-    if (audience === "INTERNAL" && format !== "XLSX") {
-      throw new BadRequestException("内部版仅支持 XLSX");
-    }
-    const quotation = await this.authorizedVersion(actor, quotationId);
-    const exportable =
-      quotation.isCurrent &&
-      ((quotation.status === "QUOTED" &&
-        quotation.adjustmentStatus === "AWAITING_SUBMISSION") ||
-        (quotation.status === "APPROVED" &&
-          quotation.adjustmentStatus === "CONFIRMED"));
-    if (!exportable) {
-      throw new ConflictException("当前报价状态不可导出客户版文件");
-    }
+    const quotation = await this.authorizedExportableVersion(
+      actor,
+      quotationId,
+      format,
+      audience,
+    );
     const project = await this.quotationRepository.findProject(quotation.projectId);
     if (!project) throw new NotFoundException("项目不存在");
     const generated = await this.exporter.generate(
@@ -712,10 +747,58 @@ export class QuotationService {
     return created;
   }
 
+  async requestExport(
+    actor: SessionUser,
+    quotationId: string,
+    format: QuotationExportFormat,
+    audience: "CLIENT" | "INTERNAL" = "CLIENT",
+  ): Promise<QuotationExportJob> {
+    await this.authorizedExportableVersion(
+      actor,
+      quotationId,
+      format,
+      audience,
+    );
+    if (!this.exportJobs) {
+      const exported = await this.createExport(
+        actor,
+        quotationId,
+        format,
+        audience,
+      );
+      return completedExportJob(exported, actor.id);
+    }
+    return this.exportJobs.enqueue({
+      audience,
+      format,
+      id: randomUUID(),
+      quotationId,
+      requestedByUserId: actor.id,
+    });
+  }
+
+  async getExportJob(
+    actor: SessionUser,
+    jobId: string,
+  ): Promise<QuotationExportJob> {
+    if (!this.exportJobs) {
+      const exported = await this.quotationRepository.findExport(jobId);
+      if (!exported) throw new NotFoundException("导出任务不存在");
+      await this.authorizedVersion(actor, exported.quotationId);
+      assertExportAudience(actor, exported.audience);
+      return completedExportJob(exported, actor.id);
+    }
+    const job = await this.exportJobs.findById(jobId);
+    if (!job) throw new NotFoundException("导出任务不存在");
+    await this.authorizedVersion(actor, job.quotationId);
+    assertExportAudience(actor, job.audience);
+    return job;
+  }
+
   async getExport(
     actor: SessionUser,
     exportId: string,
-  ): Promise<QuotationExport> {
+  ): Promise<QuotationExportRecord> {
     const result = await this.quotationRepository.findExport(exportId);
     if (!result) {
       throw new NotFoundException("导出文件不存在");
@@ -725,6 +808,29 @@ export class QuotationService {
       throw new NotFoundException("导出文件不存在");
     }
     return result;
+  }
+
+  private async authorizedExportableVersion(
+    actor: SessionUser,
+    quotationId: string,
+    format: QuotationExportFormat,
+    audience: "CLIENT" | "INTERNAL",
+  ): Promise<QuotationDraft> {
+    assertExportAudience(actor, audience);
+    if (audience === "INTERNAL" && format !== "XLSX") {
+      throw new BadRequestException("内部版仅支持 XLSX");
+    }
+    const quotation = await this.authorizedVersion(actor, quotationId);
+    const exportable = quotation.isCurrent && (
+      (quotation.status === "QUOTED" &&
+        quotation.adjustmentStatus === "AWAITING_SUBMISSION") ||
+      (quotation.status === "APPROVED" &&
+        quotation.adjustmentStatus === "CONFIRMED")
+    );
+    if (!exportable) {
+      throw new ConflictException("当前报价状态不可导出客户版文件");
+    }
+    return quotation;
   }
 
   private async authorizedProject(
@@ -1829,6 +1935,244 @@ const otherBuildingAreaItems = new Set([
   "室内家政服务费",
 ]);
 
+function toProjectCostAnalysis(
+  quotation: QuotationDraft,
+  project: ProjectDetail,
+  mainMaterial: MainMaterialQuotation | null,
+): ProjectCostAnalysis {
+  const baseTotal = projectBaseTotal(quotation);
+  const pending =
+    quotation.status === "QUOTED" &&
+    quotation.adjustmentStatus === "PENDING_APPROVAL";
+  const adjustedIsEffective =
+    quotation.status === "DRAFT" ||
+    quotation.status === "RETURNED" ||
+    (quotation.status === "APPROVED" &&
+      quotation.adjustmentStatus === "CONFIRMED");
+  const currentIncome = adjustedIsEffective
+    ? quotation.adjustedTotal
+    : baseTotal;
+  const current = projectCostScenario(
+    quotation,
+    mainMaterial,
+    currentIncome,
+  );
+  const currentMainMaterialIncome = current.modules.find(
+    (module) => module.code === "MAIN_MATERIAL",
+  )?.customerPrice ?? "0.0000";
+  return {
+    adjustmentStatus: quotation.adjustmentStatus,
+    basis: quotation.status === "DRAFT"
+      ? "DRAFT_REALTIME"
+      : pending
+        ? "PENDING_COMPARISON"
+        : quotation.status === "APPROVED"
+          ? "APPROVED_EFFECTIVE"
+          : quotation.status === "RETURNED"
+            ? "RETURNED_READONLY"
+            : "CURRENT_EFFECTIVE",
+    current,
+    customerName: project.customerName,
+    halfPackage: toCostMargin(quotation),
+    isCurrent: quotation.isCurrent,
+    leadDesignerName: project.leadDesigner.displayName,
+    mainMaterial: {
+      catalogVersion: mainMaterial?.catalog.versionNumber ?? null,
+      categories: mainMaterialCategories(
+        mainMaterial,
+        currentMainMaterialIncome,
+      ),
+    },
+    pending: pending
+      ? projectCostScenario(quotation, mainMaterial, quotation.adjustedTotal)
+      : null,
+    projectAddress: project.projectAddress,
+    projectId: quotation.projectId,
+    quotationId: quotation.id,
+    status: quotation.status,
+    versionNumber: quotation.versionNumber,
+  };
+}
+
+function projectCostScenario(
+  quotation: QuotationDraft,
+  mainMaterial: MainMaterialQuotation | null,
+  marginBasisIncome: string,
+): ProjectCostAnalysisScenario {
+  const [halfPackageIncome, mainMaterialIncome] = allocatedModuleIncome(
+    quotation,
+    mainMaterial,
+    marginBasisIncome,
+  );
+  const halfPackageTaxAmount = multiplyDecimal4(
+    halfPackageIncome,
+    "0.0600",
+  );
+  const halfPackageCost = quotation.expectedCost;
+  const mainMaterialCost =
+    mainMaterial?.expectedCost ??
+    quotation.mainMaterialExpectedCost ??
+    "0.0000";
+  const expectedCost = addDecimal4(halfPackageCost, mainMaterialCost);
+  const grossProfit = subtractDecimal4(marginBasisIncome, expectedCost);
+  const halfPackageProfit = subtractDecimal4(
+    halfPackageIncome,
+    halfPackageCost,
+  );
+  const mainMaterialProfit = subtractDecimal4(
+    mainMaterialIncome,
+    mainMaterialCost,
+  );
+  const mainMaterialEnabled =
+    mainMaterial?.lines.some((line) => line.saleAmount !== null) ?? false;
+  return {
+    customerPayableTotal: addDecimal4(
+      marginBasisIncome,
+      halfPackageTaxAmount,
+    ),
+    expectedCost,
+    grossMarginRate: decimalRate(grossProfit, marginBasisIncome),
+    grossProfit,
+    halfPackageTaxAmount,
+    marginBasisIncome,
+    modules: [
+      {
+        code: "HALF_PACKAGE",
+        customerPrice: addDecimal4(
+          halfPackageIncome,
+          halfPackageTaxAmount,
+        ),
+        expectedCost: halfPackageCost,
+        grossMarginRate: decimalRate(halfPackageProfit, halfPackageIncome),
+        grossProfit: halfPackageProfit,
+        note: "含半包管理费与 6% 税金",
+        status: quotation.status === "DRAFT" ? "DRAFT" : "COMPLETED",
+        taxAmount: halfPackageTaxAmount,
+      },
+      {
+        code: "MAIN_MATERIAL",
+        customerPrice: mainMaterialEnabled ? mainMaterialIncome : null,
+        expectedCost: mainMaterialEnabled ? mainMaterialCost : null,
+        grossMarginRate: mainMaterialEnabled
+          ? decimalRate(mainMaterialProfit, mainMaterialIncome)
+          : null,
+        grossProfit: mainMaterialEnabled ? mainMaterialProfit : null,
+        note: mainMaterialEnabled
+          ? "含主材服务费 10%"
+          : mainMaterial
+            ? "当前版本尚未选择主材"
+            : "尚未建立主材报价",
+        status: mainMaterialEnabled
+          ? quotation.status === "DRAFT"
+            ? "DRAFT"
+            : "COMPLETED"
+          : mainMaterial
+            ? "INCOMPLETE"
+            : "NOT_ENABLED",
+        taxAmount: null,
+      },
+      {
+        code: "WOODWORK",
+        customerPrice: null,
+        expectedCost: null,
+        grossMarginRate: null,
+        grossProfit: null,
+        note: "一期仅保留模块状态",
+        status: "NOT_ENABLED",
+        taxAmount: null,
+      },
+      {
+        code: "THIRD_PARTY",
+        customerPrice: null,
+        expectedCost: null,
+        grossMarginRate: null,
+        grossProfit: null,
+        note: "尚未启用独立核算数据",
+        status: "NOT_ENABLED",
+        taxAmount: null,
+      },
+    ],
+  };
+}
+
+function allocatedModuleIncome(
+  quotation: QuotationDraft,
+  mainMaterial: MainMaterialQuotation | null,
+  total: string,
+): readonly [string, string] {
+  const halfPackageUnits = decimal4Units(quotation.total);
+  const mainMaterialUnits = decimal4Units(
+    mainMaterial?.total ?? quotation.mainMaterialTotal ?? "0.0000",
+  );
+  const baseUnits = halfPackageUnits + mainMaterialUnits;
+  const totalUnits = decimal4Units(total);
+  if (baseUnits === 0n) return ["0.0000", "0.0000"];
+  const allocatedHalfPackage = divideRounded(
+    totalUnits * halfPackageUnits,
+    baseUnits,
+  );
+  return [
+    fixed4(allocatedHalfPackage),
+    fixed4(totalUnits - allocatedHalfPackage),
+  ];
+}
+
+function mainMaterialCategories(
+  quotation: MainMaterialQuotation | null,
+  currentIncome: string,
+): readonly ProjectCostAnalysisMainMaterialCategory[] {
+  if (!quotation) return [];
+  const baseIncomeUnits = decimal4Units(quotation.total);
+  const currentIncomeUnits = decimal4Units(currentIncome);
+  const categories = new Map<
+    MainMaterialCategoryCode,
+    { cost: bigint; sales: bigint }
+  >();
+  for (const line of quotation.lines) {
+    if (line.saleAmount === null || line.costAmount === null) continue;
+    const current = categories.get(line.categoryCode) ?? {
+      cost: 0n,
+      sales: 0n,
+    };
+    categories.set(line.categoryCode, {
+      cost: current.cost + decimal4Units(line.costAmount),
+      sales: current.sales + decimal4Units(line.saleAmount),
+    });
+  }
+  const result: ProjectCostAnalysisMainMaterialCategory[] = [
+    ...categories.entries(),
+  ].map(([categoryCode, values]) => {
+    const adjustedSales = baseIncomeUnits === 0n
+      ? 0n
+      : divideRounded(values.sales * currentIncomeUnits, baseIncomeUnits);
+    const grossProfit = adjustedSales - values.cost;
+    return {
+      categoryCode,
+      customerPrice: fixed4(adjustedSales),
+      expectedCost: fixed4(values.cost),
+      grossMarginRate: adjustedSales === 0n
+        ? null
+        : fixed4(divideRounded(grossProfit * 10_000n, adjustedSales)),
+      grossProfit: fixed4(grossProfit),
+    };
+  });
+  const categoryIncomeUnits = result.reduce(
+    (sum, category) => sum + decimal4Units(category.customerPrice),
+    0n,
+  );
+  const serviceFeeUnits = currentIncomeUnits - categoryIncomeUnits;
+  if (serviceFeeUnits !== 0n) {
+    result.push({
+      categoryCode: "SERVICE_FEE",
+      customerPrice: fixed4(serviceFeeUnits),
+      expectedCost: "0.0000",
+      grossMarginRate: "1.0000",
+      grossProfit: fixed4(serviceFeeUnits),
+    });
+  }
+  return result;
+}
+
 function projectBaseTotal(quotation: QuotationDraft): string {
   return addDecimal4(
     quotation.total,
@@ -1844,6 +2188,12 @@ function subtractDecimal4(left: string, right: string): string {
   return fixed4(decimal4Units(left) - decimal4Units(right));
 }
 
+function multiplyDecimal4(left: string, right: string): string {
+  return fixed4(
+    divideRounded(decimal4Units(left) * decimal4Units(right), 10_000n),
+  );
+}
+
 function adjustedProjectTotal(
   total: string,
   discountRate: string,
@@ -1854,6 +2204,13 @@ function adjustedProjectTotal(
   const discounted = divideRounded(totalUnits * rateUnits, 10_000n);
   const adjusted = discounted - decimal4Units(writeOff);
   return fixed4(adjusted > 0n ? adjusted : 0n);
+}
+
+function isWholePercentDiscountRate(value: string): boolean {
+  return (
+    /^(?:0(?:\.\d{1,4})?|1(?:\.0{1,4})?)$/.test(value) &&
+    decimal4Units(value) % 100n === 0n
+  );
 }
 
 function decimalRate(numerator: string, denominator: string): string | null {
@@ -1885,4 +2242,42 @@ function divideRounded(numerator: bigint, denominator: bigint): bigint {
   const absoluteDenominator = denominator < 0n ? -denominator : denominator;
   const quotient = (absoluteNumerator + absoluteDenominator / 2n) / absoluteDenominator;
   return negative ? -quotient : quotient;
+}
+
+function assertExportAudience(
+  actor: SessionUser,
+  audience: "CLIENT" | "INTERNAL",
+): void {
+  if (
+    audience === "INTERNAL" &&
+    !(actor.role === "ADMIN" || actor.role === "OWNER")
+  ) {
+    throw new NotFoundException("导出文件不存在");
+  }
+}
+
+function completedExportJob(
+  exported: {
+    readonly audience: "CLIENT" | "INTERNAL";
+    readonly createdAt: Date;
+    readonly format: QuotationExportFormat;
+    readonly id: string;
+    readonly quotationId: string;
+  },
+  requestedByUserId: string,
+): QuotationExportJob {
+  return {
+    attempts: 1,
+    audience: exported.audience,
+    completedAt: exported.createdAt,
+    createdAt: exported.createdAt,
+    errorMessage: null,
+    exportId: exported.id,
+    format: exported.format,
+    id: exported.id,
+    quotationId: exported.quotationId,
+    requestedByUserId,
+    startedAt: exported.createdAt,
+    status: "SUCCEEDED",
+  };
 }

@@ -9,8 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { fetchMainMaterialQuotation, fetchProject, fetchSession } from "@/lib/api-client";
-import { hasOwnerPermissions } from "@/lib/permissions";
-
 import { ExportMenu } from "../../../export-menu";
 
 const categories = [
@@ -36,7 +34,7 @@ export default async function MainMaterialPreviewPage({ params }: { readonly par
     <main className="workflow-page max-w-[1500px]">
       <header className="workflow-header">
         <div className="grid gap-1"><Link className="type-action flex w-fit items-center gap-1 text-muted-foreground hover:text-primary" href={`/projects/${projectId}/quotation/main-materials`}><ArrowLeft className="size-3.5" />返回主材选型</Link><div className="flex items-center gap-2"><h1 className="type-page-title">主材报价预览</h1><Badge variant="outline">客户版</Badge></div><p className="type-body m-0 text-muted-foreground">{project.projectAddress} · V{quotation.catalogVersion.versionNumber}</p></div>
-        <div className="workflow-actions"><Button asChild variant="outline"><Link href={`/projects/${projectId}/quotation/main-materials`}>继续选型</Link></Button><ExportMenu allowInternal={hasOwnerPermissions(session.user.role)} disabled={quotation.status === "DRAFT"} fileNameStem={`${project.projectAddress}_项目报价单`} quotationId={quotation.id} /></div>
+        <div className="workflow-actions"><Button asChild variant="outline"><Link href={`/projects/${projectId}/quotation/main-materials`}>继续选型</Link></Button><ExportMenu disabled={quotation.status === "DRAFT"} fileNameStem={`${project.projectAddress}_项目报价单`} quotationId={quotation.id} /></div>
       </header>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="主材直接费" value={money(quotation.summary.directCost)} /><Metric label="服务费（10%）" value={money(quotation.summary.managementFee)} /><Metric emphasis label="主材报价合计" value={money(quotation.summary.total)} /><Metric label="已选项目" value={`${selected.length} 项`} /></div>
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">

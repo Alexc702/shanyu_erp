@@ -68,6 +68,7 @@ services:
       ADMIN_ACCOUNT: ${ADMIN_ACCOUNT}
       ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME}
       PORT: "3001"
+      EXPORT_STORAGE_DIR: /app/export-files
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_HOST: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -80,6 +81,8 @@ services:
         condition: service_healthy
     expose:
       - "3001"
+    volumes:
+      - quotation_exports:/app/export-files:ro
     healthcheck:
       test:
         - CMD
@@ -89,6 +92,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
+
+  export-worker:
+    <<: *service-policy
+    image: ${API_IMAGE:?API_IMAGE is required}
+    command: ["node", "dist/export-worker.js"]
+    environment:
+      EXPORT_PERF_LOG: "1"
+      EXPORT_STORAGE_DIR: /app/export-files
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=320
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - quotation_exports:/app/export-files
     mem_limit: 512m
     security_opt:
       - no-new-privileges:true
@@ -142,3 +168,4 @@ volumes:
   caddy_data:
   minio_data:
   postgres_data:
+  quotation_exports:

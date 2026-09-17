@@ -3,7 +3,7 @@ import type {
   SpaceType,
 } from "@shanyu/contracts";
 import { cookies } from "next/headers";
-import { History, Send } from "lucide-react";
+import { ChartNoAxesCombined, History, Send } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -88,6 +88,9 @@ export default async function ProjectPage({
   const currentStep = quoteStep(quotation.status);
   const approved = quotation.status === "APPROVED";
   const ownerAccess = hasOwnerPermissions(session.user.role);
+  const costAnalysisHref = quotationId
+    ? `/projects/${project.id}/cost-analysis?quotationId=${encodeURIComponent(quotation.id)}`
+    : `/projects/${project.id}/cost-analysis`;
   const adjustmentPending =
     quotation.adjustmentStatus === "PENDING_APPROVAL";
   const returnReason = returnedRevisionReason(quotation, versions);
@@ -128,9 +131,16 @@ export default async function ProjectPage({
                 项目版本管理
               </Link>
             </Button>
+            {ownerAccess ? (
+              <Button asChild className="border-border" variant="outline">
+                <Link href={costAnalysisHref}>
+                  <ChartNoAxesCombined />
+                  项目成本分析
+                </Link>
+              </Button>
+            ) : null}
             {exportVisible ? (
               <ExportMenu
-                allowInternal={hasOwnerPermissions(session.user.role)}
                 fileNameStem={`${project.projectAddress}_项目报价单_V${quotation.versionNumber}`}
                 quotationId={quotation.id}
               />

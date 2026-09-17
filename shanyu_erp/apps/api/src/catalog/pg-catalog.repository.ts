@@ -73,6 +73,11 @@ interface PublishedItemRow {
   unit: string;
 }
 
+interface MainMaterialDemandTag {
+  surfaceType: "FLOOR" | "WALL";
+  targetSpec: string;
+}
+
 @Injectable()
 export class PgCatalogRepository implements CatalogRepository {
   constructor(private readonly database: DatabaseClient) {}
@@ -242,6 +247,19 @@ export class PgCatalogRepository implements CatalogRepository {
         const standardItemId = standardResult.rows[0]?.id;
         if (!standardItemId) {
           throw new Error("无法建立稳定工程项身份");
+        }
+        const demandTag = mainMaterialDemandTag(item.item_name);
+        if (demandTag) {
+          await database.query(
+            `INSERT INTO half_package_main_material_demand_tags
+               (standard_item_id, demand_type, target_spec, surface_type)
+             VALUES ($1, 'TILE', $2, $3)
+             ON CONFLICT (standard_item_id)
+             DO UPDATE SET demand_type = EXCLUDED.demand_type,
+                           target_spec = EXCLUDED.target_spec,
+                           surface_type = EXCLUDED.surface_type`,
+            [standardItemId, demandTag.targetSpec, demandTag.surfaceType],
+          );
         }
         const versionItemId = randomUUID();
         await database.query(
@@ -473,4 +491,27 @@ function stableItemBaseKey(item: ImportItemRow): string {
     item.unit.normalize("NFKC").trim(),
   ]);
   return `${item.section_code}:${createHash("sha256").update(identity).digest("hex")}`;
+}
+
+function mainMaterialDemandTag(itemName: string): MainMaterialDemandTag | null {
+  const normalized = itemName.normalize("NFKC").trim();
+  if (
+    !/(地砖|墙砖|小砖|木纹砖|古堡砖)/.test(normalized) ||
+    !/(粘贴|粘帖)/.test(normalized)
+  ) {
+    return null;
+  }
+  const size = normalized.match(/([0-9]+)\s*[*×xX]\s*([0-9]+)/);
+  const targetSpec = normalized.includes("多规格")
+    ? "多规格"
+    : size?.[1] && size[2]
+      ? `${size[1]}*${size[2]}`
+      : null;
+  if (!targetSpec) {
+    return null;
+  }
+  return {
+    surfaceType: /墙砖|小砖/.test(normalized) ? "WALL" : "FLOOR",
+    targetSpec,
+  };
 }

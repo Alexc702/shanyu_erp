@@ -61,11 +61,11 @@ export function ApprovalList({
         <div className="grid gap-1">
           <h1 className="type-page-title">报价审批</h1>
           <p className="type-table-body">
-            仅展示当前有效的已报价项目，以项目报价与毛利水平作为审批依据
+            仅展示存在待审批折扣或抹零申请的项目，以项目报价与毛利水平作为审批依据
           </p>
         </div>
         <Badge className="px-2.5 py-1" variant="warning">
-          {quotations.length} 项已报价
+          {quotations.length} 项待审批
         </Badge>
       </header>
 
@@ -182,7 +182,7 @@ export function ApprovalList({
         </Table>
         {visible.length === 0 ? (
           <div className="type-body flex h-40 items-center justify-center text-muted-foreground">
-            当前筛选条件下没有已报价项目
+            当前筛选条件下没有待审批折扣或抹零申请
           </div>
         ) : null}
         <footer className="flex h-12 items-center justify-between border-t border-border px-3">

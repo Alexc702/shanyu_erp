@@ -42,6 +42,7 @@ export default async function MainMaterialsPage({
         catalog={catalog}
         initialQuotation={quotation}
         projectAddress={project.projectAddress}
+        projectOuterFrameArea={project.outerFrameArea}
       />
     </AppShell>
   );

@@ -4,7 +4,7 @@ import type {
   HalfPackageQuotation,
   HalfPackageQuotationStatus,
 } from "@shanyu/contracts";
-import { Check, ChevronDown, PencilLine } from "lucide-react";
+import { PencilLine } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
@@ -33,13 +33,10 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   continueEditingQuotation,
+  discountRateToWholePercent,
   formatQuotationMoney,
+  isValidDiscountPercent,
   updateQuotationAdjustment,
 } from "@/lib/quotation-client";
 
@@ -140,7 +137,7 @@ export function QuotationAdjustment({
 }) {
   const router = useRouter();
   const [discountPercent, setDiscountPercent] = useState(
-    String(Number(initialQuotation.discountRate) * 100),
+    discountRateToWholePercent(initialQuotation.discountRate),
   );
   const [writeOff, setWriteOff] = useState(String(Number(initialQuotation.writeOff)));
   const [reason, setReason] = useState(initialQuotation.adjustmentReason ?? "");
@@ -151,11 +148,9 @@ export function QuotationAdjustment({
   const total = Number(initialQuotation.total);
   const percent = Number(discountPercent);
   const writeOffAmount = Number(writeOff || "0");
+  const validDiscountPercent = isValidDiscountPercent(discountPercent);
   const validAdjustment =
-    Number.isFinite(percent) &&
-    percent >= 0 &&
-    percent <= 100 &&
-    /^\d{1,3}(?:\.\d{0,2})?$/.test(discountPercent) &&
+    validDiscountPercent &&
     Number.isFinite(writeOffAmount) &&
     writeOffAmount >= 0 &&
     /^\d*(?:\.\d{0,2})?$/.test(writeOff);
@@ -178,7 +173,7 @@ export function QuotationAdjustment({
   function requestConfirmation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!validAdjustment) {
-      setMessage("折扣须为 0–100 且最多两位小数；抹零须为非负金额");
+      setMessage("折扣须为 0–100 的整数；抹零须为非负金额");
       return;
     }
     setMessage(null);
@@ -245,9 +240,20 @@ export function QuotationAdjustment({
               </div>
               <label className="grid gap-1 type-table-head">
                 折扣（%）
-                <DiscountPercentControl
+                <Input
+                  aria-invalid={discountPercent !== "" && !validDiscountPercent}
                   disabled={busy || mode === "PENDING"}
-                  onChange={setDiscountPercent}
+                  inputMode="numeric"
+                  max="100"
+                  min="0"
+                  onChange={(event) => {
+                    if (/^\d*$/.test(event.target.value)) {
+                      setDiscountPercent(event.target.value);
+                    }
+                  }}
+                  placeholder="0–100"
+                  step="1"
+                  type="number"
                   value={discountPercent}
                 />
               </label>
@@ -344,60 +350,6 @@ export function QuotationAdjustment({
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-function DiscountPercentControl({
-  disabled,
-  onChange,
-  value,
-}: {
-  readonly disabled: boolean;
-  readonly onChange: (value: string) => void;
-  readonly value: string;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="relative">
-      <Input
-        className="pr-9"
-        disabled={disabled}
-        inputMode="decimal"
-        onChange={(event) => onChange(event.target.value)}
-        value={value}
-      />
-      <Popover onOpenChange={setOpen} open={open}>
-        <PopoverTrigger asChild>
-          <Button
-            aria-label="选择常用折扣"
-            className="absolute right-0 top-0 h-9 w-9"
-            disabled={disabled}
-            size="icon"
-            type="button"
-            variant="ghost"
-          >
-            <ChevronDown />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="end" className="w-28 p-1">
-          {["95", "98"].map((option) => (
-            <Button
-              className="w-full justify-between"
-              key={option}
-              onClick={() => {
-                onChange(option);
-                setOpen(false);
-              }}
-              type="button"
-              variant="ghost"
-            >
-              {option}
-              {value === option ? <Check /> : null}
-            </Button>
-          ))}
-        </PopoverContent>
-      </Popover>
-    </div>
   );
 }
 

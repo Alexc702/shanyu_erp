@@ -1,17 +1,9 @@
-import fontkit from "@pdf-lib/fontkit";
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import ExcelJS from "exceljs";
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { join } from "node:path";
-import {
-  PDFDocument,
-  PDFName,
-  PDFString,
-  rgb,
-  type PDFFont,
-  type PDFPage,
-} from "pdf-lib";
+import { performance } from "node:perf_hooks";
+import PDFDocument from "pdfkit";
 
 import type {
   QuotationDraft,
@@ -68,12 +60,27 @@ interface ExportSection {
   readonly subtotal: string;
 }
 
-const templateFileName = "新报价2026年8月27主材修改.xlsx";
+interface BudgetPdfRow {
+  readonly first: string;
+  readonly height: number;
+  readonly rowNumber: number;
+  readonly text: string;
+}
+
+interface PdfStaticAssets {
+  readonly budgetRows: readonly BudgetPdfRow[];
+  readonly coverImage: Buffer;
+}
+
+const templateFileName = "quotation-export-base.xlsx";
 const budgetTemplateFileName = "erp预算说明书(2).xlsx";
 const mainMaterialTemplateFileName = "主材报价模版_v1.xlsx";
+const pdfFontFileName = "noto-sans-sc-chinese-simplified-400-normal.ttf";
 let templateWorkbookPromise: Promise<ExcelJS.Workbook> | undefined;
 let budgetTemplateWorkbookPromise: Promise<ExcelJS.Workbook> | undefined;
 let mainMaterialTemplateWorkbookPromise: Promise<ExcelJS.Workbook> | undefined;
+let pdfStaticAssetsPromise: Promise<PdfStaticAssets> | undefined;
+const exportLogger = new Logger("QuotationExporter");
 
 @Injectable()
 export class QuotationExporter {
@@ -101,10 +108,12 @@ export class QuotationExporter {
   private async generateWorkbook(
     context: ExportContext,
   ): Promise<GeneratedQuotationExport> {
+    const profile = createExportProfile("XLSX");
     const [template, budgetTemplate] = await Promise.all([
       loadTemplateWorkbook(),
       loadBudgetTemplateWorkbook(),
     ]);
+    profile.mark("templates-loaded");
     const source = template.getWorksheet("半包报价模板") ?? template.worksheets[0];
     const coverSource = template.getWorksheet("封面");
     const budgetSource = budgetTemplate.worksheets[0];
@@ -250,7 +259,11 @@ export class QuotationExporter {
     sheet.pageSetup.fitToWidth = 1;
     sheet.pageSetup.fitToHeight = 1;
     await addMainMaterialSheet(workbook, context);
-    const payload = Buffer.from(await workbook.xlsx.writeBuffer());
+    profile.mark("workbook-built");
+    const serialized = await workbook.xlsx.writeBuffer();
+    profile.mark("workbook-serialized");
+    const payload = Buffer.from(serialized);
+    profile.mark("payload-buffered");
     return {
       contentType:
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -262,54 +275,86 @@ export class QuotationExporter {
   private async generatePdf(
     context: ExportContext,
   ): Promise<GeneratedQuotationExport> {
-    const document = await PDFDocument.create();
-    document.registerFontkit(fontkit);
-    const require = createRequire(__filename);
-    const fontPath = require.resolve(
-      "@fontsource/noto-sans-sc/files/noto-sans-sc-chinese-simplified-400-normal.woff",
-    );
-    const font = await document.embedFont(await readFile(fontPath), {
-      subset: true,
+    const profile = createExportProfile("PDF");
+    const document = new PDFDocument({
+      autoFirstPage: false,
+      compress: true,
+      info: {
+        Creator: "山屿 ERP",
+        Producer: "山屿 ERP",
+        Subject: `grand-total:${context.summary.grandTotal}`,
+      },
+      margin: 0,
+      size: [pdfPageWidth, pdfPageHeight],
     });
-    const [template, budgetTemplate] = await Promise.all([
-      loadTemplateWorkbook(),
-      loadBudgetTemplateWorkbook(),
+    const payloadPromise = collectPdfPayload(document);
+    const [font, staticAssets] = await Promise.all([
+      readPdfFont(),
+      loadPdfStaticAssets(),
     ]);
-    await addIntroductoryPdfPages(
-      document,
-      font,
-      template,
-      budgetTemplate,
-      context,
-    );
+    document.registerFont("NotoSansSC", font).font("NotoSansSC");
+    profile.mark("pdf-assets-loaded");
+    addIntroductoryPdfPages(document, staticAssets, context);
+    profile.mark("introductory-pages-drawn");
     const rows = pdfRows(context);
-    let page = addLandscapePage(document);
+    profile.mark("rows-built");
+    addLandscapePage(document);
     let section: PdfSection = "HALF";
-    setPdfSection(page, section);
+    setPdfSection(document, section);
     let y = 575;
     for (const row of rows) {
       if (row.kind === "break") {
         section = "MAIN";
-        page = addLandscapePage(document);
-        setPdfSection(page, section);
+        addLandscapePage(document);
+        setPdfSection(document, section);
         y = 575;
         continue;
       }
       if (y - row.height < 18) {
-        page = addLandscapePage(document);
-        setPdfSection(page, section);
+        addLandscapePage(document);
+        setPdfSection(document, section);
         y = 575;
       }
-      drawPdfRow(page, font, y, row);
+      drawPdfRow(document, y, row);
       y -= row.height;
     }
-    const payload = Buffer.from(await document.save());
+    profile.mark("rows-drawn");
+    document.end();
+    const payload = await payloadPromise;
+    profile.mark("document-serialized");
     return {
       contentType: "application/pdf",
       fileName: exportFileName(context.quotation, "pdf", context.audience),
       payload,
     };
   }
+}
+
+interface ExportProfile {
+  mark(stage: string): void;
+}
+
+function createExportProfile(format: QuotationExportFormat): ExportProfile {
+  const enabled = process.env.EXPORT_PERF_LOG === "1";
+  const startedAt = performance.now();
+  let previousAt = startedAt;
+  return {
+    mark(stage: string): void {
+      if (!enabled) return;
+      const now = performance.now();
+      const memory = process.memoryUsage();
+      exportLogger.log(JSON.stringify({
+        elapsedMs: Math.round(now - startedAt),
+        externalMb: Math.round(memory.external / 1024 / 1024),
+        format,
+        heapUsedMb: Math.round(memory.heapUsed / 1024 / 1024),
+        rssMb: Math.round(memory.rss / 1024 / 1024),
+        stage,
+        stageMs: Math.round(now - previousAt),
+      }));
+      previousAt = now;
+    },
+  };
 }
 
 async function readTemplate(): Promise<Buffer> {
@@ -325,6 +370,50 @@ async function readTemplate(): Promise<Buffer> {
     }
   }
   throw new Error(`找不到半包报价导出模板：${templateFileName}`);
+}
+
+async function readPdfFont(): Promise<Buffer> {
+  const candidates = [
+    join(process.cwd(), "assets", "fonts", pdfFontFileName),
+    join(process.cwd(), "apps", "api", "assets", "fonts", pdfFontFileName),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return await readFile(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  throw new Error(`找不到 PDF 中文字体：${pdfFontFileName}`);
+}
+
+async function readPdfStaticAsset(fileName: string): Promise<Buffer> {
+  const candidates = [
+    join(process.cwd(), "assets", "pdf", fileName),
+    join(process.cwd(), "apps", "api", "assets", "pdf", fileName),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return await readFile(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  throw new Error(`找不到 PDF 静态资源：${fileName}`);
+}
+
+async function loadPdfStaticAssets(): Promise<PdfStaticAssets> {
+  pdfStaticAssetsPromise ??= (async () => {
+    const [coverImage, budgetTemplate] = await Promise.all([
+      readPdfStaticAsset("cover-logo.png"),
+      readPdfStaticAsset("budget-notice.json"),
+    ]);
+    return {
+      budgetRows: JSON.parse(budgetTemplate.toString("utf8")) as BudgetPdfRow[],
+      coverImage,
+    };
+  })();
+  return pdfStaticAssetsPromise;
 }
 
 async function loadTemplateWorkbook(): Promise<ExcelJS.Workbook> {
@@ -790,108 +879,88 @@ interface PdfRow {
 
 type PdfSection = "BUDGET" | "COVER" | "HALF" | "MAIN";
 
-async function addIntroductoryPdfPages(
-  document: PDFDocument,
-  font: PDFFont,
-  template: ExcelJS.Workbook,
-  budgetTemplate: ExcelJS.Workbook,
-  context: ExportContext,
-): Promise<void> {
-  const coverSource = template.getWorksheet("封面");
-  const budgetSource = budgetTemplate.worksheets[0];
-  if (!coverSource || !budgetSource) {
-    throw new Error("报价导出模板缺少封面或预算说明书");
-  }
+const pdfPageHeight = 595.28;
+const pdfPageWidth = 841.89;
+const pdfTextWidthCaches = new WeakMap<PDFKit.PDFDocument, Map<string, number>>();
 
-  const coverPage = addLandscapePage(document);
-  setPdfSection(coverPage, "COVER");
-  const coverImagePlacement = coverSource.getImages()[0];
-  if (coverImagePlacement) {
-    const image = template.getImage(Number(coverImagePlacement.imageId));
-    if (image?.buffer && image.extension) {
-      const embedded = image.extension === "png"
-        ? await document.embedPng(image.buffer)
-        : image.extension === "jpeg"
-          ? await document.embedJpg(image.buffer)
-          : null;
-      if (embedded) {
-        const scale = Math.min(345 / embedded.width, 225 / embedded.height);
-        const width = embedded.width * scale;
-        const height = embedded.height * scale;
-        coverPage.drawImage(embedded, {
-          height,
-          width,
-          x: (841.89 - width) / 2,
-          y: 292,
-        });
-      }
-    }
-  }
+function addIntroductoryPdfPages(
+  document: PDFKit.PDFDocument,
+  staticAssets: PdfStaticAssets,
+  context: ExportContext,
+): void {
+  addLandscapePage(document);
+  setPdfSection(document, "COVER");
+  document.image(
+    staticAssets.coverImage,
+    (pdfPageWidth - 345) / 2,
+    pdfPageHeight - 292 - 225 + 6,
+    {
+      align: "center",
+      fit: [345, 225],
+      valign: "center",
+    },
+  );
   drawCenteredText(
-    coverPage,
-    font,
-    coverSource.getCell("A2").text.trim(),
+    document,
+    "全 包 设 计",
     20,
     185,
   );
   drawCenteredText(
-    coverPage,
-    font,
+    document,
     `项目：${context.quotation.projectAddress}`,
     13,
     132,
   );
   drawCenteredText(
-    coverPage,
-    font,
+    document,
     context.exportDate,
     13,
     90,
   );
 
-  const budgetPage = addLandscapePage(document);
-  setPdfSection(budgetPage, "BUDGET");
-  drawBudgetWorksheet(budgetPage, font, budgetSource);
+  addLandscapePage(document);
+  setPdfSection(document, "BUDGET");
+  drawBudgetWorksheet(document, staticAssets.budgetRows);
 }
 
 function drawCenteredText(
-  page: PDFPage,
-  font: PDFFont,
+  document: PDFKit.PDFDocument,
   text: string,
   size: number,
   y: number,
 ): void {
-  page.drawText(text, {
-    font,
-    size,
-    x: (841.89 - font.widthOfTextAtSize(text, size)) / 2,
+  drawPdfText(
+    document,
+    text,
+    (pdfPageWidth - pdfTextWidth(document, text, size)) / 2,
     y,
-  });
+    size,
+  );
 }
 
 function drawBudgetWorksheet(
-  page: PDFPage,
-  font: PDFFont,
-  source: ExcelJS.Worksheet,
+  document: PDFKit.PDFDocument,
+  rows: readonly BudgetPdfRow[],
 ): void {
   const left = 18;
   const width = 805;
   const numberWidth = 30;
-  const lastRow = budgetWorksheetLastRow(source);
-  const rowLayouts = Array.from({ length: lastRow }, (_, index) => {
-    const rowNumber = index + 1;
-    const sourceRow = source.getRow(rowNumber);
-    const first = sourceRow.getCell(1).text.trim();
-    const second = sourceRow.getCell(2).text.trim();
+  const rowLayouts = rows.map(({ first, height, rowNumber, text }) => {
     const size = rowNumber === 1 ? 14 : 10;
-    const text = rowNumber <= 2 ? first : second;
     const textWidth = rowNumber <= 2 ? width - 16 : width - numberWidth - 8;
-    const lines = wrapText(text, font, size, textWidth, Number.MAX_SAFE_INTEGER);
+    const lines = wrapText(
+      text,
+      document,
+      size,
+      textWidth,
+      Number.MAX_SAFE_INTEGER,
+    );
     const lineHeight = size + 2;
     return {
       first,
       height: Math.max(
-        sourceRow.height ?? 17.6,
+        height,
         size + (lines.length - 1) * lineHeight + 7,
       ),
       lines,
@@ -904,65 +973,50 @@ function drawBudgetWorksheet(
   rowLayouts.forEach(({ first, height, lines, lineHeight, rowNumber, size }) => {
     const bottom = top - height;
     if (rowNumber > 2) {
-      page.drawRectangle({
-        borderColor: rgb(0.25, 0.25, 0.25),
-        borderWidth: 0.45,
-        height,
-        width,
-        x: left,
-        y: bottom,
-      });
+      drawPdfRectangle(document, left, bottom, width, height, null, "#404040", 0.45);
     }
     if (rowNumber <= 2) {
       lines.forEach((line, lineIndex) => {
         const x = rowNumber === 1
-          ? left + (width - font.widthOfTextAtSize(line, size)) / 2
+          ? left + (width - pdfTextWidth(document, line, size)) / 2
           : left + 8;
-        page.drawText(line, {
-          font,
-          size,
+        drawPdfText(
+          document,
+          line,
           x,
-          y: top - size - 4 - lineIndex * lineHeight,
-        });
+          top - size - 4 - lineIndex * lineHeight,
+          size,
+        );
       });
     } else {
-      page.drawLine({
-        color: rgb(0.45, 0.45, 0.45),
-        end: { x: left + numberWidth, y: top },
-        start: { x: left + numberWidth, y: bottom },
-        thickness: 0.35,
-      });
-      page.drawText(first, {
-        font,
+      drawPdfLine(document, left + numberWidth, top, left + numberWidth, bottom);
+      drawPdfText(
+        document,
+        first,
+        left + (numberWidth - pdfTextWidth(document, first, size)) / 2,
+        top - size - 4,
         size,
-        x: left + (numberWidth - font.widthOfTextAtSize(first, size)) / 2,
-        y: top - size - 4,
-      });
-      lines.forEach((line, lineIndex) => page.drawText(line, {
-          font,
-          size,
-          x: left + numberWidth + 4,
-          y: top - size - 3 - lineIndex * lineHeight,
-        }));
+      );
+      lines.forEach((line, lineIndex) => drawPdfText(
+        document,
+        line,
+        left + numberWidth + 4,
+        top - size - 3 - lineIndex * lineHeight,
+        size,
+      ));
     }
     top = bottom;
   });
 }
 
-function budgetWorksheetLastRow(source: ExcelJS.Worksheet): number {
-  for (let rowNumber = source.rowCount; rowNumber > 0; rowNumber -= 1) {
-    if (
-      source.getRow(rowNumber).getCell(1).text.trim() ||
-      source.getRow(rowNumber).getCell(2).text.trim()
-    ) {
-      return rowNumber;
-    }
-  }
-  return 0;
-}
-
-function setPdfSection(page: PDFPage, section: PdfSection): void {
-  page.node.set(PDFName.of("ShanyuSection"), PDFString.of(section));
+function setPdfSection(
+  document: PDFKit.PDFDocument,
+  section: PdfSection,
+): void {
+  const page = document.page as unknown as {
+    dictionary: { data: Record<string, unknown> };
+  };
+  page.dictionary.data.ShanyuSection = Object(section);
 }
 
 function pdfRows(context: ExportContext): PdfRow[] {
@@ -1059,36 +1113,69 @@ function pdfRows(context: ExportContext): PdfRow[] {
   return rows;
 }
 
-function addLandscapePage(document: PDFDocument): PDFPage {
-  return document.addPage([841.89, 595.28]);
+function addLandscapePage(document: PDFKit.PDFDocument): void {
+  document.addPage({ margin: 0, size: [pdfPageWidth, pdfPageHeight] });
 }
 
-function drawPdfRow(page: PDFPage, font: PDFFont, top: number, row: PdfRow): void {
+function drawPdfRow(
+  document: PDFKit.PDFDocument,
+  top: number,
+  row: PdfRow,
+): void {
   if (row.kind === "break") return;
   const x = 18;
   const width = 805;
   const bottom = top - row.height;
   const background = row.background === "blue"
-    ? rgb(0.78, 0.86, 0.96)
+    ? "#c7dbf5"
     : row.background === "grey"
-      ? rgb(0.94, 0.94, 0.94)
+      ? "#f0f0f0"
       : row.background === "summary"
-        ? rgb(0.88, 0.91, 0.95)
-        : rgb(1, 1, 1);
-  page.drawRectangle({ x, y: bottom, width, height: row.height, color: background, borderColor: rgb(0.25, 0.25, 0.25), borderWidth: 0.45 });
+        ? "#e0e8f2"
+        : "#ffffff";
+  drawPdfRectangle(
+    document,
+    x,
+    bottom,
+    width,
+    row.height,
+    background,
+    "#404040",
+    0.45,
+  );
   if (row.kind === "full") {
     const text = row.cells[0] ?? "";
-    const textWidth = font.widthOfTextAtSize(text, row.size);
-    page.drawText(text, { font, size: row.size, x: row.size >= 18 ? x + (width - textWidth) / 2 : x + 8, y: bottom + (row.height - row.size) / 2 });
+    const textWidth = pdfTextWidth(document, text, row.size);
+    drawPdfText(
+      document,
+      text,
+      row.size >= 18 ? x + (width - textWidth) / 2 : x + 8,
+      bottom + (row.height - row.size) / 2,
+      row.size,
+    );
     return;
   }
   const widths = [42, 190, 40, 58, 64, 72, 339];
   let cellX = x;
   row.cells.forEach((text, index) => {
     const cellWidth = widths[index] ?? 0;
-    if (index > 0) page.drawLine({ start: { x: cellX, y: bottom }, end: { x: cellX, y: top }, color: rgb(0.45, 0.45, 0.45), thickness: 0.35 });
-    const lines = wrapText(text, font, row.size, cellWidth - 8, Math.max(1, Math.floor((row.height - 7) / (row.size + 2))));
-    lines.forEach((line, lineIndex) => page.drawText(line, { font, size: row.size, x: cellX + 4, y: top - row.size - 5 - lineIndex * (row.size + 2) }));
+    if (index > 0) {
+      drawPdfLine(document, cellX, bottom, cellX, top);
+    }
+    const lines = wrapText(
+      text,
+      document,
+      row.size,
+      cellWidth - 8,
+      Math.max(1, Math.floor((row.height - 7) / (row.size + 2))),
+    );
+    lines.forEach((line, lineIndex) => drawPdfText(
+      document,
+      line,
+      cellX + 4,
+      top - row.size - 5 - lineIndex * (row.size + 2),
+      row.size,
+    ));
     cellX += cellWidth;
   });
 }
@@ -1108,7 +1195,13 @@ function mainMaterialCategoryName(code: string): string {
   } as Record<string, string>)[code] ?? code;
 }
 
-function wrapText(text: string, font: PDFFont, size: number, width: number, maxLines: number): string[] {
+function wrapText(
+  text: string,
+  document: PDFKit.PDFDocument,
+  size: number,
+  width: number,
+  maxLines: number,
+): string[] {
   const normalized = text.trim();
   if (!normalized) return [""];
   const lines: string[] = [];
@@ -1116,7 +1209,7 @@ function wrapText(text: string, font: PDFFont, size: number, width: number, maxL
     let current = "";
     let currentWidth = 0;
     for (const character of paragraph) {
-      const characterWidth = font.widthOfTextAtSize(character, size);
+      const characterWidth = pdfTextWidth(document, character, size);
       if (current && currentWidth + characterWidth > width) {
         lines.push(current);
         current = character;
@@ -1138,6 +1231,89 @@ function wrapText(text: string, font: PDFFont, size: number, width: number, maxL
     lines[maxLines - 1] = `${(lines[maxLines - 1] ?? "").slice(0, -1)}…`;
   }
   return lines;
+}
+
+function pdfTextWidth(
+  document: PDFKit.PDFDocument,
+  text: string,
+  size: number,
+): number {
+  let cache = pdfTextWidthCaches.get(document);
+  if (!cache) {
+    cache = new Map<string, number>();
+    pdfTextWidthCaches.set(document, cache);
+  }
+  const key = `${size}:${text}`;
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  document.fontSize(size);
+  const width = document.widthOfString(text, { lineBreak: false });
+  cache.set(key, width);
+  return width;
+}
+
+function drawPdfText(
+  document: PDFKit.PDFDocument,
+  text: string,
+  x: number,
+  baselineY: number,
+  size: number,
+): void {
+  document
+    .fillColor("#000000")
+    .fontSize(size)
+    .text(text, x, pdfPageHeight - baselineY - size - 2, { lineBreak: false });
+}
+
+function drawPdfRectangle(
+  document: PDFKit.PDFDocument,
+  x: number,
+  bottom: number,
+  width: number,
+  height: number,
+  fill: string | null,
+  border: string,
+  borderWidth: number,
+): void {
+  document
+    .save()
+    .lineWidth(borderWidth)
+    .strokeColor(border)
+    .rect(x, pdfPageHeight - bottom - height, width, height);
+  if (fill) {
+    document.fillAndStroke(fill, border);
+  } else {
+    document.stroke();
+  }
+  document.restore();
+}
+
+function drawPdfLine(
+  document: PDFKit.PDFDocument,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+): void {
+  document
+    .save()
+    .lineWidth(0.35)
+    .strokeColor("#737373")
+    .moveTo(startX, pdfPageHeight - startY)
+    .lineTo(endX, pdfPageHeight - endY)
+    .stroke()
+    .restore();
+}
+
+function collectPdfPayload(document: PDFKit.PDFDocument): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  return new Promise((resolve, reject) => {
+    document.on("data", (chunk: Buffer | Uint8Array) => {
+      chunks.push(Buffer.from(chunk));
+    });
+    document.once("end", () => resolve(Buffer.concat(chunks)));
+    document.once("error", reject);
+  });
 }
 
 function pdfItemRowHeight(itemName: string, remarks: string | null): number {

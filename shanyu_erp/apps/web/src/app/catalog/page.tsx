@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
-import { FileUp } from "lucide-react";
+import { Boxes, FileUp, ImageOff, PackageCheck, PackageX, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -152,16 +153,38 @@ function MainMaterialCatalog({
   readonly catalog: Awaited<ReturnType<typeof fetchPublishedMainMaterialCatalog>>;
   readonly selectedCode?: string;
 }) {
-  const selected = catalog?.categories.find((candidate) => candidate.code === selectedCode)
-    ?? catalog?.categories[0];
-  const items = selected
-    ? catalog?.items.filter((item) => item.categoryCode === selected.code) ?? []
+  const showAll = !selectedCode || selectedCode === "ALL";
+  const selected = showAll
+    ? null
+    : catalog?.categories.find((candidate) => candidate.code === selectedCode) ?? null;
+  const items = catalog
+    ? selected
+      ? catalog.items.filter((item) => item.categoryCode === selected.code)
+      : catalog.items
     : [];
-  return <main className="page-content catalog-page">
-    <section className="page-title-row"><div><p className="eyebrow">V2 · 主材 SKU</p><h1>主材库</h1><p>集中维护主材型号、规格、颜色、销售价与来源图片。</p></div>{canViewCost ? <Button asChild><Link href="/catalog/import?type=main"><FileUp />导入 Excel</Link></Button> : null}</section>
+  const activeCount = catalog?.items.filter((item) => item.status === "ACTIVE").length ?? 0;
+  const pendingCount = catalog?.items.filter((item) => item.status === "PENDING_DATA").length ?? 0;
+  const inactiveCount = catalog?.items.filter((item) => item.status === "INACTIVE").length ?? 0;
+  const missingImageCount = catalog?.items.filter((item) => item.assets.length === 0).length ?? 0;
+  return <main className="page-content catalog-page max-w-[1600px]">
+    <section className="page-title-row"><div><p className="eyebrow">V2 · 主材 SKU</p><h1>主材库</h1><p>{catalog ? `当前版本 V${catalog.versionNumber} · 已发布 · 商品、价格、成本、图片与来源按版本追溯` : "集中维护主材型号、规格、颜色、价格与来源图片。"}</p></div>{canViewCost ? <Button asChild><Link href="/catalog/import?type=main"><FileUp />导入与发布</Link></Button> : null}</section>
     <nav className="catalog-tabs" aria-label="主材库类型"><Link className="catalog-tab" href="/catalog">半包工程项</Link><Link className="catalog-tab active" href="/catalog?type=main">主材 SKU</Link></nav>
-    {!catalog || !selected ? <section className="panel empty-panel"><h2>尚无已发布主材版本</h2><p>主材库发布后可用于项目选型。</p></section> : <><div className="catalog-version-strip"><Badge variant="success">当前生效</Badge><span>V{catalog.versionNumber} · {catalog.items.length} 条记录 · {catalog.items.filter((item) => item.status === "ACTIVE").length} 条可选 · {formatPublishedAt(catalog.publishedAt)} 发布</span></div><div className="catalog-layout"><aside className="catalog-section-nav"><h2>分类</h2>{catalog.categories.map((category) => <Link className={category.code === selected.code ? "catalog-section-link active" : "catalog-section-link"} href={`/catalog?type=main&section=${category.code}`} key={category.code}><span>{category.name}</span><span>{category.itemCount}项</span></Link>)}</aside><section className="panel catalog-section"><div className="panel-heading"><div><p className="eyebrow">当前分类</p><h2>{selected.name}</h2><p>{items.length} 条 · 待补资料记录不会进入项目选型</p></div><Badge variant="outline">主材库 V{catalog.versionNumber}</Badge></div><MainMaterialCatalogTable canManage={canViewCost} items={items} /></section></div></>}
+    {!catalog ? <section className="panel empty-panel"><h2>尚无已发布主材版本</h2><p>主材库发布后可用于项目选型。</p></section> : <>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        <CatalogMetric icon={<Boxes />} label="总记录" note={`${catalog.categories.length} 个商品分类`} value={catalog.items.length} />
+        <CatalogMetric icon={<PackageCheck />} label="可选 ACTIVE" note="可用于新报价" tone="success" value={activeCount} />
+        <CatalogMetric icon={<TriangleAlert />} label="待补资料" note="不可用于新报价" tone="warning" value={pendingCount} />
+        <CatalogMetric icon={<ImageOff />} label="缺少产品图" note="列表使用占位状态" value={missingImageCount} />
+        <CatalogMetric icon={<PackageX />} label="已停用" note="保留历史记录" value={inactiveCount} />
+      </div>
+      <div className="catalog-version-strip"><Badge variant="success">当前生效</Badge><span>V{catalog.versionNumber} · {formatPublishedAt(catalog.publishedAt)} 发布</span></div>
+      <div className="catalog-layout"><aside className="catalog-section-nav"><h2>主材分类</h2><Link className={showAll ? "catalog-section-link active" : "catalog-section-link"} href="/catalog?type=main"><span>全部主材</span><span>{catalog.items.length}项</span></Link>{catalog.categories.map((category) => <Link className={category.code === selected?.code ? "catalog-section-link active" : "catalog-section-link"} href={`/catalog?type=main&section=${category.code}`} key={category.code}><span>{category.name}</span><span>{category.itemCount}项</span></Link>)}</aside><section className="panel catalog-section"><div className="panel-heading"><div><p className="eyebrow">{selected ? "当前分类" : "全部记录"}</p><h2>{selected?.name ?? "全部主材"}</h2><p>{items.length} 条 · 待补资料记录不会进入项目选型</p></div><Badge variant="outline">主材库 V{catalog.versionNumber}</Badge></div><MainMaterialCatalogTable canManage={canViewCost} items={items} /></section></div>
+    </>}
   </main>;
+}
+
+function CatalogMetric({ icon, label, note, tone = "default", value }: { readonly icon: ReactNode; readonly label: string; readonly note: string; readonly tone?: "default" | "success" | "warning"; readonly value: number }) {
+  return <section className="flex min-h-20 items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-xs"><span className={tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-primary"}>{icon}</span><div className="min-w-0"><span className="type-support block text-muted-foreground">{label}</span><strong className="block text-2xl leading-7">{value}</strong><span className="type-support block truncate text-muted-foreground">{note}</span></div></section>;
 }
 
 function formatPrice(value: string | undefined): string {

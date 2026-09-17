@@ -292,6 +292,7 @@ check_ports_free() {
   for port in 3000 3001; do
     if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
       echo "Port $port is already in use. Stop pnpm dev or use the local-runtime profile."
+      lsof -nP -iTCP:"$port" -sTCP:LISTEN | sed 's/^/  /'
       busy=1
     else
       echo "Port $port is free."
@@ -783,7 +784,8 @@ run_local_resume() {
     skip_check "Apply local database migrations" "local infrastructure did not start"
   fi
 
-  run_local_full
+  run_common_local_checks
+  run_check "Ports 3000 and 3001 available" check_ports_free || true
 }
 
 run_local_runtime() {
@@ -852,10 +854,15 @@ run_server() {
 cd "$ROOT_DIR" || exit 1
 
 case "$PROFILE" in
-  local|local-runtime|resume) activate_local_toolchain ;;
+  dev|local|local-runtime|resume) activate_local_toolchain ;;
 esac
 
 case "$PROFILE" in
+  dev)
+    echo "Shanyu ERP development server preflight"
+    run_check "Ports 3000 and 3001 available" check_ports_free || true
+    START_DEV_AFTER_CHECK=1
+    ;;
   resume)
     echo "Shanyu ERP environment self-check: resume local development"
     run_local_resume
@@ -882,7 +889,7 @@ case "$PROFILE" in
     run_server
     ;;
   *)
-    echo "Usage: bash scripts/environment-check.sh [resume|local|local-runtime|server|server-test]" >&2
+    echo "Usage: bash scripts/environment-check.sh [dev|resume|local|local-runtime|server|server-test]" >&2
     exit 2
     ;;
 esac
@@ -897,7 +904,7 @@ if [ "$START_DEV_AFTER_CHECK" -eq 1 ]; then
   printf '\nEnvironment is ready. Starting pnpm dev; press Ctrl+C to stop Web and API.\n\n'
   cleanup
   trap - EXIT INT TERM
-  exec pnpm dev
+  exec pnpm dev:services
 fi
 
 exit 0

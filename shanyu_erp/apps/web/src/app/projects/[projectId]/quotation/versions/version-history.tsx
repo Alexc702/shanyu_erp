@@ -81,7 +81,7 @@ export function VersionHistory({
     try {
       const result = await compareQuotationVersions(project.id, fromId, toId);
       setDifferences(result.differences);
-      setComparisonLabel(`V${result.fromVersion} 与 V${result.toVersion}`);
+      setComparisonLabel(`${projectVersionLabel(result.fromVersion)} 与 ${projectVersionLabel(result.toVersion)}`);
       document.getElementById("version-differences")?.scrollIntoView({
         behavior: "smooth",
         block: "start",
@@ -115,7 +115,7 @@ export function VersionHistory({
             </div>
             <p className="type-support m-0 text-muted-foreground">
               {project.projectAddress} · {project.customerName} · 主案 {project.leadDesigner.displayName} ·
-              当前有效版本 V{currentVersion.versionNumber}
+              当前有效版本 {projectVersionLabel(currentVersion.versionNumber)}
             </p>
           </div>
 
@@ -134,7 +134,6 @@ export function VersionHistory({
               版本对比
             </Button>
             <ExportMenu
-              allowInternal={hasOwnerPermissions(user.role)}
               disabled={!exportable || working}
               fileNameStem={`${project.projectAddress}_项目报价单_V${currentVersion.versionNumber}`}
               quotationId={currentVersion.id}
@@ -220,7 +219,7 @@ export function VersionHistory({
                     >
                       <TableCell>
                         <div className="flex items-center gap-1.5 font-semibold">
-                          V{version.versionNumber}
+                          {projectVersionLabel(version.versionNumber)}
                           {current ? <Badge variant="success">当前</Badge> : null}
                         </div>
                       </TableCell>
@@ -245,7 +244,6 @@ export function VersionHistory({
                           </Button>
                           {isExportable(version) ? (
                             <ExportMenu
-                              allowInternal={hasOwnerPermissions(user.role)}
                               compact
                               disabled={working}
                               fileNameStem={`${project.projectAddress}_项目报价单_V${version.versionNumber}`}
@@ -327,7 +325,7 @@ export function VersionHistory({
               </div>
               <strong className="type-entity">客户版 PDF / XLSX</strong>
               <p className="type-support m-0 text-muted-foreground">
-                项目 {project.projectAddress} · 报价 V{currentVersion.versionNumber} · 模板 V
+                项目 {project.projectAddress} · 报价 {projectVersionLabel(currentVersion.versionNumber)} · 模板 V
                 {currentTemplateVersion ?? "—"}
               </p>
               <div className="type-support flex items-start gap-2 rounded-md bg-info-soft px-2.5 py-2">
@@ -335,7 +333,6 @@ export function VersionHistory({
                 <span>客户文件不包含成本、返点、毛利或内部审批信息。</span>
               </div>
               <ExportMenu
-                allowInternal={hasOwnerPermissions(user.role)}
                 disabled={!exportable || working}
                 fileNameStem={`${project.projectAddress}_项目报价单_V${currentVersion.versionNumber}`}
                 fullWidth
@@ -415,7 +412,7 @@ function CurrentVersionCard({
           <Badge variant="secondary">{user.displayName}视角</Badge>
         </div>
         <div className="flex items-center gap-2">
-          <strong className="type-key-amount">V{version.versionNumber}</strong>
+          <strong className="type-key-amount">{projectVersionLabel(version.versionNumber)}</strong>
           <Badge variant={statusVariant(version.status)}>{statusLabel(version.status)}</Badge>
         </div>
         <InfoRow
@@ -482,7 +479,7 @@ function VersionSelect({
     >
       {versions.map((version) => (
         <option key={version.id} value={version.id}>
-          V{version.versionNumber}
+          {projectVersionLabel(version.versionNumber)}
         </option>
       ))}
     </select>
@@ -535,7 +532,11 @@ function isExportable(version: HalfPackageQuotationVersionSummary): boolean {
 }
 
 function sourceVersion(versionNumber: number): string {
-  return versionNumber > 1 ? `V${versionNumber - 1}` : "—";
+  return versionNumber > 1 ? projectVersionLabel(versionNumber - 1) : "—";
+}
+
+function projectVersionLabel(versionNumber: number): string {
+  return `版本${versionNumber}`;
 }
 
 function changeSummary(version: HalfPackageQuotationVersionSummary): string {
@@ -589,9 +590,9 @@ function auditVersionFlow(event: AuditEventView): string {
   const before = event.beforeValue?.version;
   const after = event.afterValue?.version;
   if (typeof before === "number" && typeof after === "number") {
-    return `V${before} → V${after}`;
+    return `${projectVersionLabel(before)} → ${projectVersionLabel(after)}`;
   }
-  if (typeof after === "number") return `V${after}`;
+  if (typeof after === "number") return projectVersionLabel(after);
   return event.reason ?? "版本操作已记录";
 }
 

@@ -567,8 +567,24 @@ export interface HalfPackageExportRecord {
   readonly sha256: string;
 }
 
+export type HalfPackageExportJobStatus =
+  | "PENDING"
+  | "RUNNING"
+  | "SUCCEEDED"
+  | "FAILED";
+
+export interface HalfPackageExportJobRecord {
+  readonly audience: HalfPackageExportAudience;
+  readonly errorMessage: string | null;
+  readonly export: HalfPackageExportRecord | null;
+  readonly format: HalfPackageExportFormat;
+  readonly id: string;
+  readonly status: HalfPackageExportJobStatus;
+  readonly statusPath: string;
+}
+
 export interface HalfPackageExportResponse {
-  readonly export: HalfPackageExportRecord;
+  readonly job: HalfPackageExportJobRecord;
 }
 
 export interface AuditEventView {
@@ -634,4 +650,75 @@ export interface HalfPackageCostMargin {
 
 export interface HalfPackageCostMarginResponse {
   readonly costMargin: HalfPackageCostMargin;
+}
+
+export type ProjectCostAnalysisBasis =
+  | "DRAFT_REALTIME"
+  | "CURRENT_EFFECTIVE"
+  | "PENDING_COMPARISON"
+  | "APPROVED_EFFECTIVE"
+  | "RETURNED_READONLY";
+
+export type ProjectCostAnalysisModuleCode =
+  | "HALF_PACKAGE"
+  | "MAIN_MATERIAL"
+  | "WOODWORK"
+  | "THIRD_PARTY";
+
+export interface ProjectCostAnalysisModule {
+  readonly code: ProjectCostAnalysisModuleCode;
+  readonly customerPrice: string | null;
+  readonly expectedCost: string | null;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string | null;
+  readonly note: string;
+  readonly status:
+    | "DRAFT"
+    | "COMPLETED"
+    | "INCOMPLETE"
+    | "NOT_ENABLED"
+    | "INDEPENDENT";
+  readonly taxAmount: string | null;
+}
+
+export interface ProjectCostAnalysisScenario {
+  readonly customerPayableTotal: string;
+  readonly expectedCost: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
+  readonly halfPackageTaxAmount: string;
+  readonly marginBasisIncome: string;
+  readonly modules: readonly ProjectCostAnalysisModule[];
+}
+
+export interface ProjectCostAnalysisMainMaterialCategory {
+  readonly categoryCode: MainMaterialCategoryCode | "SERVICE_FEE";
+  readonly customerPrice: string;
+  readonly expectedCost: string;
+  readonly grossMarginRate: string | null;
+  readonly grossProfit: string;
+}
+
+export interface ProjectCostAnalysis {
+  readonly adjustmentStatus: HalfPackageAdjustmentStatus;
+  readonly basis: ProjectCostAnalysisBasis;
+  readonly current: ProjectCostAnalysisScenario;
+  readonly customerName: string;
+  readonly halfPackage: HalfPackageCostMargin;
+  readonly isCurrent: boolean;
+  readonly leadDesignerName: string;
+  readonly mainMaterial: {
+    readonly catalogVersion: number | null;
+    readonly categories: readonly ProjectCostAnalysisMainMaterialCategory[];
+  };
+  readonly pending: ProjectCostAnalysisScenario | null;
+  readonly projectAddress: string;
+  readonly projectId: string;
+  readonly quotationId: string;
+  readonly status: HalfPackageQuotationStatus;
+  readonly versionNumber: number;
+}
+
+export interface ProjectCostAnalysisResponse {
+  readonly analysis: ProjectCostAnalysis;
 }

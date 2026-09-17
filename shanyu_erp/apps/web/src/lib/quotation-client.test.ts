@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   continueEditingQuotation,
   createQuotationExport,
+  discountRateToWholePercent,
+  fetchQuotationExportFile,
+  waitForQuotationExport,
   formatQuotationMoney,
+  halfPackageRealtimeTotal,
+  isValidDiscountPercent,
   quotationLineUpdateForQuantity,
   saveQuotationLine,
   updateQuotationAdjustment,
@@ -19,6 +24,31 @@ describe("quotation client", () => {
     expect(formatQuotationMoney("0.0000")).toBe("0.00");
     expect(formatQuotationMoney("-39018.0824")).toBe("-39018.08");
     expect(formatQuotationMoney(null)).toBe("—");
+  });
+
+  it("uses only the half-package amount for the realtime half-package total", () => {
+    expect(halfPackageRealtimeTotal({ halfPackageTotal: "61567.0000" })).toBe(
+      "61567.0000",
+    );
+    expect(() => halfPackageRealtimeTotal({})).toThrow("服务端未返回半包金额");
+  });
+
+  it("accepts only whole discount percentages from 0 through 100", () => {
+    expect(isValidDiscountPercent("0")).toBe(true);
+    expect(isValidDiscountPercent("95")).toBe(true);
+    expect(isValidDiscountPercent("100")).toBe(true);
+    expect(isValidDiscountPercent("99.5")).toBe(false);
+    expect(isValidDiscountPercent("101")).toBe(false);
+    expect(isValidDiscountPercent("")).toBe(false);
+  });
+
+  it("converts stored discount rates to integer percentages exactly", () => {
+    expect(discountRateToWholePercent("0.0000")).toBe("0");
+    expect(discountRateToWholePercent("0.2900")).toBe("29");
+    expect(discountRateToWholePercent("1.0000")).toBe("100");
+    expect(() => discountRateToWholePercent("0.2950")).toThrow(
+      "服务端折扣不是整数百分比",
+    );
   });
 
   it("clears selection and quantity when a manual quantity is emptied", () => {
@@ -91,22 +121,32 @@ describe("quotation client", () => {
     "creates a %s export with the authenticated browser session",
     async (format) => {
       const exported = {
+        audience: "CLIENT" as const,
         downloadPath: `/quotation-exports/export-${format.toLowerCase()}`,
         fileName: `客户报价.${format === "PDF" ? "pdf" : "xlsx"}`,
         format,
         id: `export-${format.toLowerCase()}`,
         sha256: "a".repeat(64),
       };
+      const job = {
+        audience: "CLIENT" as const,
+        errorMessage: null,
+        export: exported,
+        format,
+        id: `job-${format.toLowerCase()}`,
+        status: "SUCCEEDED" as const,
+        statusPath: `/quotation-export-jobs/job-${format.toLowerCase()}`,
+      };
       const fetcher = vi.fn<Fetcher>(async () =>
-        new Response(JSON.stringify({ export: exported }), {
+        new Response(JSON.stringify({ job }), {
           headers: { "content-type": "application/json" },
-          status: 201,
+          status: 202,
         }),
       );
 
       await expect(
         createQuotationExport("quotation-id", format, fetcher),
-      ).resolves.toEqual(exported);
+      ).resolves.toEqual(job);
 
       expect(fetcher).toHaveBeenCalledOnce();
       const options = fetcher.mock.calls[0]?.[1];
@@ -117,6 +157,59 @@ describe("quotation client", () => {
       expect(JSON.parse(String(options?.body))).toEqual({ format });
     },
   );
+
+  it("polls an export job until the file is ready", async () => {
+    const exported = {
+      audience: "CLIENT" as const,
+      downloadPath: "/quotation-exports/export-pdf",
+      fileName: "客户报价.pdf",
+      format: "PDF" as const,
+      id: "export-pdf",
+      sha256: "a".repeat(64),
+    };
+    const fetcher = vi.fn<Fetcher>(async () =>
+      new Response(JSON.stringify({
+        job: {
+          audience: "CLIENT",
+          errorMessage: null,
+          export: exported,
+          format: "PDF",
+          id: "job-pdf",
+          status: "SUCCEEDED",
+          statusPath: "/quotation-export-jobs/job-pdf",
+        },
+      }), { headers: { "content-type": "application/json" } }),
+    );
+
+    await expect(waitForQuotationExport({
+      audience: "CLIENT",
+      errorMessage: null,
+      export: null,
+      format: "PDF",
+      id: "job-pdf",
+      status: "PENDING",
+      statusPath: "/quotation-export-jobs/job-pdf",
+    }, fetcher, 0)).resolves.toEqual(exported);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("downloads each completed export with the authenticated browser session", async () => {
+    const fetcher = vi.fn<Fetcher>(async () =>
+      new Response("export-content", {
+        headers: { "content-type": "application/octet-stream" },
+      }),
+    );
+
+    const blob = await fetchQuotationExportFile({
+      downloadPath: "/quotation-exports/export-xlsx",
+    }, fetcher);
+
+    expect(await blob.text()).toBe("export-content");
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/quotation-exports/export-xlsx"),
+      { credentials: "include" },
+    );
+  });
 
   it("returns the server error message for a rejected export", async () => {
     const fetcher = vi.fn<Fetcher>(async () =>

@@ -1,6 +1,6 @@
 "use client";
 
-import type { HalfPackageExportAudience, HalfPackageExportFormat } from "@shanyu/contracts";
+import type { HalfPackageExportFormat, HalfPackageExportRecord } from "@shanyu/contracts";
 import { Check, FileSpreadsheet, FileText, Info, Printer } from "lucide-react";
 import { useState } from "react";
 
@@ -16,12 +16,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { apiUrl } from "@/lib/api-url";
-import { createQuotationExport } from "@/lib/quotation-client";
+import {
+  createQuotationExport,
+  fetchQuotationExportFile,
+  waitForQuotationExport,
+} from "@/lib/quotation-client";
 import { cn } from "@/lib/utils";
 
 interface ExportMenuProps {
-  readonly allowInternal?: boolean;
   readonly compact?: boolean;
   readonly disabled?: boolean;
   readonly fileNameStem: string;
@@ -30,7 +32,6 @@ interface ExportMenuProps {
 }
 
 export function ExportMenu({
-  allowInternal = false,
   compact = false,
   disabled = false,
   fileNameStem,
@@ -38,41 +39,28 @@ export function ExportMenu({
   quotationId,
 }: ExportMenuProps) {
   const [open, setOpen] = useState(false);
-  const [audience, setAudience] = useState<HalfPackageExportAudience>("CLIENT");
-  const [formats, setFormats] = useState<HalfPackageExportFormat[]>([
-    "PDF",
-    "XLSX",
-  ]);
+  const [format, setFormat] = useState<HalfPackageExportFormat>("PDF");
   const [working, setWorking] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  function toggleFormat(format: HalfPackageExportFormat): void {
-    setFormats((current) =>
-      current.includes(format)
-        ? current.filter((candidate) => candidate !== format)
-        : [...current, format],
-    );
-  }
-
   async function exportFiles(): Promise<void> {
-    if (working || formats.length === 0) return;
+    if (working) return;
     setWorking(true);
     setError(null);
+    setProgress("正在加入导出队列…");
     try {
-      for (const format of formats) {
-        const record = await createQuotationExport(quotationId, format, audience);
-        const link = document.createElement("a");
-        link.href = `${apiUrl}${record.downloadPath}`;
-        link.download = record.fileName;
-        document.body.append(link);
-        link.click();
-        link.remove();
-      }
+      const job = await createQuotationExport(quotationId, format);
+      setProgress("已排队，正在生成…");
+      const record = await waitForQuotationExport(job);
+      setProgress("已生成，正在下载…");
+      await downloadExport(record);
       setOpen(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "导出失败");
     } finally {
       setWorking(false);
+      setProgress(null);
     }
   }
 
@@ -103,37 +91,27 @@ export function ExportMenu({
         >
           <Info className="mt-0.5 size-4 shrink-0" />
           <span>
-            导出绑定当前可导出的报价版本；折扣和抹零审批通过后才会进入客户文件。
+            导出绑定当前可导出的报价版本；折扣和抹零审批通过后才会进入导出文件。
           </span>
         </div>
 
         <section className="grid gap-2">
           <h3 className="type-table-head m-0">文件格式</h3>
-          <div className="flex gap-2.5">
+          <div aria-label="文件格式" className="flex gap-2.5" role="radiogroup">
             <FormatOption
               format="PDF"
               icon={<FileText className="size-4" />}
-              selected={formats.includes("PDF")}
-              toggle={toggleFormat}
+              select={setFormat}
+              selected={format === "PDF"}
             />
             <FormatOption
               format="XLSX"
               icon={<FileSpreadsheet className="size-4" />}
-              selected={formats.includes("XLSX")}
-              toggle={toggleFormat}
+              select={setFormat}
+              selected={format === "XLSX"}
             />
           </div>
         </section>
-
-        {allowInternal ? (
-          <section className="grid gap-2">
-            <h3 className="type-table-head m-0">文件用途</h3>
-            <div className="flex gap-2.5">
-              <AudienceOption audience="CLIENT" current={audience} label="客户版" onSelect={(value) => { setAudience(value); setFormats(["PDF", "XLSX"]); }} />
-              <AudienceOption audience="INTERNAL" current={audience} label="内部成本版" onSelect={(value) => { setAudience(value); setFormats(["XLSX"]); }} />
-            </div>
-          </section>
-        ) : null}
 
         <section className="grid gap-2.5 rounded-lg bg-muted p-3.5">
           <h3 className="type-table-head m-0 font-semibold">导出规则</h3>
@@ -141,7 +119,10 @@ export function ExportMenu({
             ✓ 半包与主材分 Sheet　 ✓ 还原标准模板　 ✓ 自动生成分类小计
           </p>
           <p className="type-support m-0 text-muted-foreground">
-            仅导出数量大于 0 的内容；{audience === "CLIENT" ? "客户版物理移除成本字段" : "内部版标记并包含主材成本列"}
+            仅导出数量大于 0 的内容；导出文件不包含成本字段
+          </p>
+          <p className="type-support m-0 text-muted-foreground">
+            PDF版本和Excel版本内容一致，PDF版本不可编辑。
           </p>
         </section>
 
@@ -165,6 +146,12 @@ export function ExportMenu({
           </p>
         ) : null}
 
+        {working && progress ? (
+          <p className="type-support m-0 text-muted-foreground" role="status">
+            {progress}，完成后将自动下载。
+          </p>
+        ) : null}
+
         <DialogFooter>
           <DialogClose asChild>
             <Button disabled={working} type="button" variant="outline">
@@ -172,7 +159,7 @@ export function ExportMenu({
             </Button>
           </DialogClose>
           <Button
-            disabled={working || formats.length === 0}
+            disabled={working}
             onClick={exportFiles}
             type="button"
           >
@@ -187,24 +174,25 @@ export function ExportMenu({
 function FormatOption({
   format,
   icon,
+  select,
   selected,
-  toggle,
 }: {
   readonly format: HalfPackageExportFormat;
   readonly icon: React.ReactNode;
+  readonly select: (format: HalfPackageExportFormat) => void;
   readonly selected: boolean;
-  readonly toggle: (format: HalfPackageExportFormat) => void;
 }) {
   return (
     <button
-      aria-pressed={selected}
+      aria-checked={selected}
       className={cn(
         "type-table-head flex h-[52px] w-[150px] items-center gap-2 rounded-lg border px-3.5 text-left transition-colors",
         selected
           ? "border-primary bg-primary-soft text-foreground"
           : "border-border bg-background text-muted-foreground",
       )}
-      onClick={() => toggle(format)}
+      onClick={() => select(format)}
+      role="radio"
       type="button"
     >
       {selected ? <Check className="size-4 text-primary" /> : icon}
@@ -213,7 +201,14 @@ function FormatOption({
   );
 }
 
-function AudienceOption({ audience, current, label, onSelect }: { readonly audience: HalfPackageExportAudience; readonly current: HalfPackageExportAudience; readonly label: string; readonly onSelect: (value: HalfPackageExportAudience) => void }) {
-  const selected = audience === current;
-  return <button aria-pressed={selected} className={cn("type-table-head flex h-[46px] min-w-[150px] items-center gap-2 rounded-lg border px-3.5", selected ? "border-primary bg-primary-soft" : "border-border bg-background text-muted-foreground")} onClick={() => onSelect(audience)} type="button">{selected ? <Check className="size-4 text-primary" /> : null}{label}</button>;
+async function downloadExport(record: HalfPackageExportRecord): Promise<void> {
+  const blob = await fetchQuotationExportFile(record);
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = record.fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }

@@ -38,7 +38,7 @@ const pageTitles: Record<AppShellProps["active"], string> = {
   approvals: "审批中心",
   audit: "操作日志",
   catalog: "主材库",
-  "cost-margin": "成本毛利",
+  "cost-margin": "项目成本分析",
   dashboard: "工作台",
   projects: "项目管理",
   quotation: "半包报价",

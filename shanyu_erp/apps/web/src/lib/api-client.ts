@@ -19,6 +19,8 @@ import type {
   PublishedHalfPackageCatalogResponse,
   PublishedHalfPackageCatalogView,
   ProjectDetail,
+  ProjectCostAnalysis,
+  ProjectCostAnalysisResponse,
   ProjectSummary,
   UserSummary,
 } from "@shanyu/contracts";
@@ -221,6 +223,29 @@ export async function fetchHalfPackageCostMargin(
   }
   const payload = (await response.json()) as HalfPackageCostMarginResponse;
   return payload.costMargin;
+}
+
+export async function fetchProjectCostAnalysis(
+  cookieHeader: string,
+  projectId: string,
+  quotationId?: string,
+): Promise<ProjectCostAnalysis | null> {
+  const params = new URLSearchParams();
+  if (quotationId) params.set("quotationId", quotationId);
+  const response = await fetch(
+    `${apiUrl}/projects/${projectId}/half-package-quotation/project-cost-analysis${params.size ? `?${params}` : ""}`,
+    {
+      cache: "no-store",
+      headers: { cookie: cookieHeader },
+    },
+  );
+  if ([401, 403, 404].includes(response.status)) return null;
+  if (!response.ok) {
+    throw new Error(
+      `Project cost analysis request failed with status ${response.status}`,
+    );
+  }
+  return ((await response.json()) as ProjectCostAnalysisResponse).analysis;
 }
 
 export async function fetchSubmissionCheck(

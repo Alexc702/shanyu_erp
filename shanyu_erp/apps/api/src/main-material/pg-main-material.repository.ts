@@ -23,6 +23,7 @@ import {
   type NewMainMaterialImportBatch,
   type NormalizedMainMaterialItem,
 } from "./main-material.repository";
+import { isMainMaterialColorSelectionValid } from "./main-material-selection";
 
 interface CatalogRow {
   id: string;
@@ -1159,11 +1160,8 @@ function assertCompatible(
 }
 
 function assertColor(item: MainMaterialItem, color: string | null): void {
-  if (item.colors.length && (!color || !item.colors.includes(color))) {
+  if (!isMainMaterialColorSelectionValid(item, color)) {
     throw new MainMaterialSelectionError("请选择该商品提供的有效颜色");
-  }
-  if (!item.colors.length && color) {
-    throw new MainMaterialSelectionError("该商品没有可选颜色");
   }
 }
 

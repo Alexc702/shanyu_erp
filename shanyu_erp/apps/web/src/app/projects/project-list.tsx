@@ -97,7 +97,7 @@ export function ProjectList({ projects }: { readonly projects: readonly ProjectS
               <th>外框面积</th>
               <th>主案设计师</th>
               <th>报价阶段</th>
-              <th>半包金额</th>
+              <th>项目总金额</th>
               <th>当前待办</th>
               <th>操作</th>
             </tr>

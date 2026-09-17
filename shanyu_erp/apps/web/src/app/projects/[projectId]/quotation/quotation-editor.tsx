@@ -7,7 +7,7 @@ import type {
 } from "@shanyu/contracts";
 import { ChevronDown } from "lucide-react";
 import Link from "next/link";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/popover";
 import {
   formatQuotationMoney,
+  halfPackageRealtimeTotal,
   quotationLineUpdateForQuantity,
   saveQuotationLine,
 } from "@/lib/quotation-client";
@@ -63,6 +64,9 @@ export function QuotationEditor({
   const [savingLineId, setSavingLineId] = useState<string | null>(null);
   const [message, setMessage] = useState("已从服务端恢复草稿");
   const [error, setError] = useState<string | null>(null);
+  const quotationRef = useRef(initialQuotation);
+  const saveQueueRef = useRef(Promise.resolve());
+  const pendingSaveCountRef = useRef(0);
   const editable = quotation.status === "DRAFT";
   const compactReadOnly =
     !editable &&
@@ -81,33 +85,47 @@ export function QuotationEditor({
       )
     : [];
 
-  async function saveLine(
+  function saveLine(
     line: HalfPackageQuotationLine,
     selected: boolean,
     quantity: string | null,
   ) {
+    pendingSaveCountRef.current += 1;
     setSavingLineId(line.id);
     setError(null);
     setMessage("正在保存…");
-    try {
-      const saved = await saveQuotationLine(quotation.projectId, line.id, {
-        expectedRevision: quotation.revision,
-        quantity,
-        selected,
-      });
-      setQuotation(saved);
-      setDraftQuantities((current) => {
-        const next = { ...current };
-        delete next[line.id];
-        return next;
-      });
-      setMessage(`已保存 · 修订 ${saved.revision}`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "保存失败，请重试");
-      setMessage("保存失败");
-    } finally {
-      setSavingLineId(null);
-    }
+    saveQueueRef.current = saveQueueRef.current.then(async () => {
+      setSavingLineId(line.id);
+      try {
+        const currentQuotation = quotationRef.current;
+        const saved = await saveQuotationLine(
+          currentQuotation.projectId,
+          line.id,
+          {
+            expectedRevision: currentQuotation.revision,
+            quantity,
+            selected,
+          },
+        );
+        quotationRef.current = saved;
+        setQuotation(saved);
+        setDraftQuantities((current) => {
+          const next = { ...current };
+          delete next[line.id];
+          return next;
+        });
+        setError(null);
+        setMessage(`已保存 · 修订 ${saved.revision}`);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "保存失败，请重试");
+        setMessage("保存失败");
+      } finally {
+        pendingSaveCountRef.current -= 1;
+        if (pendingSaveCountRef.current === 0) {
+          setSavingLineId(null);
+        }
+      }
+    });
   }
 
   if (!activeScope) {
@@ -149,8 +167,8 @@ export function QuotationEditor({
           ) : null}
           {canViewCosts ? (
             <Button asChild size="sm" variant="outline">
-              <Link href={`/projects/${quotation.projectId}/quotation/cost-margin`}>
-                查看预计成本毛利
+              <Link href={`/projects/${quotation.projectId}/cost-analysis?quotationId=${encodeURIComponent(quotation.id)}&module=half-package`}>
+                查看半包成本
               </Link>
             </Button>
           ) : null}
@@ -367,7 +385,7 @@ export function QuotationEditor({
           </section>
           <section>
             <p className="quotation-total-label">半包实时总价</p>
-            <strong className="quotation-total">¥ {formatQuotationMoney(quotation.total)}</strong>
+            <strong className="quotation-total">¥ {formatQuotationMoney(halfPackageRealtimeTotal(quotation))}</strong>
           </section>
         </aside>
       </div>

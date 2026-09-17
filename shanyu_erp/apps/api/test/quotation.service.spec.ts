@@ -531,6 +531,142 @@ describe("QuotationService", () => {
     });
   });
 
+  it("returns one server-calculated project cost analysis without treating tax as margin income", async () => {
+    await service.getOrCreateDraft(lead, project.id);
+
+    const analysis = await service.getProjectCostAnalysis(owner, project.id);
+    expect(analysis).toMatchObject({
+      basis: "DRAFT_REALTIME",
+      current: {
+        customerPayableTotal: "12338.8452",
+        expectedCost: "10582.2000",
+        grossMarginRate: "0.0909",
+        grossProfit: "1058.2200",
+        halfPackageTaxAmount: "698.4252",
+        marginBasisIncome: "11640.4200",
+      },
+      customerName: project.customerName,
+      leadDesignerName: lead.displayName,
+      pending: null,
+      projectId: project.id,
+    });
+    expect(analysis.current.modules).toHaveLength(4);
+    expect(analysis.current.modules[0]).toMatchObject({
+      code: "HALF_PACKAGE",
+      customerPrice: "12338.8452",
+      expectedCost: "10582.2000",
+      grossProfit: "1058.2200",
+    });
+    expect(analysis.current.modules[1]).toMatchObject({
+      code: "MAIN_MATERIAL",
+      customerPrice: null,
+      status: "NOT_ENABLED",
+    });
+
+    await expect(
+      service.getProjectCostAnalysis(lead, project.id),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("keeps the current basis and pending adjustment as separate cost scenarios", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const quoted = await service.submit(lead, project.id, draft.revision);
+    await service.updateAdjustment(lead, quoted.id, {
+      action: "SUBMIT_FOR_APPROVAL",
+      discountRate: "0.9500",
+      expectedRevision: quoted.revision,
+      reason: "客户确认优惠",
+      writeOff: "100.0000",
+    });
+
+    const analysis = await service.getProjectCostAnalysis(owner, project.id);
+    expect(analysis).toMatchObject({
+      basis: "PENDING_COMPARISON",
+      current: {
+        customerPayableTotal: "12338.8452",
+        grossProfit: "1058.2200",
+        marginBasisIncome: "11640.4200",
+      },
+      pending: {
+        customerPayableTotal: "11615.9029",
+        expectedCost: "10582.2000",
+        grossProfit: "376.1990",
+        halfPackageTaxAmount: "657.5039",
+        marginBasisIncome: "10958.3990",
+      },
+    });
+  });
+
+  it("includes selected main materials and their service fee in the same version analysis", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const mainMaterial: MainMaterialQuotation = {
+      catalog: { id: "catalog", name: "主材库", versionNumber: 5 },
+      directCost: "218.0000",
+      expectedCost: "100.0000",
+      id: draft.id,
+      lines: [{
+        assetIds: [], baseQuantity: null, brand: "北极鹿", categoryCode: "FLOOR",
+        colors: [], costAmount: "100.0000", costUnitPrice: "100.0000",
+        demandName: "木地板", demandSpec: "1215*167*15/1.2mm", id: "floor-line",
+        itemName: "木地板", itemVersionId: "floor-item", lossRate: "0.0000",
+        materialId: "MAT-FLOOR-BK-01", model: "BK-01", origin: "MANUAL",
+        quantity: "1.0000", saleAmount: "218.0000", saleUnitPrice: "218.0000",
+        scopeName: "项目级", selectedColor: null, series: "", spec: "1215*167*15/1.2mm",
+        unit: "m²",
+      }],
+      managementFee: "21.8000",
+      projectId: project.id,
+      revision: draft.revision,
+      status: "DRAFT",
+      total: "239.8000",
+    };
+    if (!repository.draft) throw new Error("报价草稿不存在");
+    repository.draft = {
+      ...repository.draft,
+      adjustedTotal: "11880.2200",
+      mainMaterialDirectCost: mainMaterial.directCost,
+      mainMaterialExpectedCost: mainMaterial.expectedCost,
+      mainMaterialManagementFee: mainMaterial.managementFee,
+      mainMaterialTotal: mainMaterial.total,
+    };
+    const mainMaterialRepository = {
+      getQuotationById: async () => mainMaterial,
+      initializeAndSyncDraft: async () => mainMaterial,
+    } as unknown as MainMaterialRepository;
+    const projectCostService = new QuotationService(
+      new AccessPolicy(), repository, { append: async () => undefined },
+      new HalfPackageCalculator(), undefined, mainMaterialRepository,
+    );
+
+    const analysis = await projectCostService.getProjectCostAnalysis(
+      owner,
+      project.id,
+      draft.id,
+    );
+    expect(analysis.current.modules[1]).toMatchObject({
+      code: "MAIN_MATERIAL",
+      customerPrice: "239.8000",
+      expectedCost: "100.0000",
+      grossProfit: "139.8000",
+      status: "DRAFT",
+    });
+    expect(analysis.mainMaterial).toMatchObject({
+      catalogVersion: 5,
+      categories: [
+        {
+          categoryCode: "FLOOR",
+          customerPrice: "218.0000",
+          expectedCost: "100.0000",
+        },
+        {
+          categoryCode: "SERVICE_FEE",
+          customerPrice: "21.8000",
+          expectedCost: "0.0000",
+        },
+      ],
+    });
+  });
+
   it("reports missing projects and templates without creating partial drafts", async () => {
     repository.project = null;
     await expect(
@@ -634,6 +770,21 @@ describe("QuotationService", () => {
     ]);
   });
 
+  it("rejects discount rates that are not whole percentages", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const quoted = await service.submit(lead, project.id, draft.revision);
+
+    await expect(
+      service.updateAdjustment(lead, quoted.id, {
+        action: "SUBMIT_FOR_APPROVAL",
+        discountRate: "0.9550",
+        expectedRevision: quoted.revision,
+        reason: "小数折扣不应通过",
+        writeOff: "0.0000",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it("submits a lead adjustment for approval and lets the owner confirm directly", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const quoted = await service.submit(lead, project.id, draft.revision);
@@ -732,6 +883,9 @@ describe("QuotationService", () => {
     const initialExport = await service.createExport(lead, submitted.id, "PDF");
     expect(initialExport).toMatchObject({ format: "PDF" });
     expect(initialExport.payload.subarray(0, 4).toString()).toBe("%PDF");
+    expect((await PDFDocument.load(initialExport.payload)).getSubject()).toBe(
+      "grand-total:12338.8452",
+    );
     expect(await pdfSectionOrder(initialExport.payload)).toEqual([
       "COVER",
       "BUDGET",
@@ -761,6 +915,9 @@ describe("QuotationService", () => {
     expect(exported.payload.subarray(0, 2).toString()).toBe("PK");
     expect(exported.sha256).toHaveLength(64);
     const customerExport = await service.getExport(lead, exported.id);
+    if (!("payload" in customerExport)) {
+      throw new Error("单元测试导出记录应包含内存文件");
+    }
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(
       customerExport.payload as unknown as Parameters<typeof workbook.xlsx.load>[0],

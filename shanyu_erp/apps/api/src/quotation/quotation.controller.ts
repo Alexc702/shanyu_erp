@@ -4,6 +4,8 @@ import {
   Controller,
   Get,
   Headers,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -20,6 +22,7 @@ import type {
   HalfPackageQuotationVersionsResponse,
   HalfPackageSubmissionCheckResponse,
   HalfPackageVersionCompareResponse,
+  ProjectCostAnalysisResponse,
   SubmitHalfPackageQuotationRequest,
   UpdateHalfPackageAdjustmentRequest,
   UpdateHalfPackageMarginBenchmarkRequest,
@@ -30,6 +33,9 @@ import type { Response } from "express";
 import { AuthService } from "../access/auth.service";
 import { readSessionToken } from "../access/session-cookie";
 import { QuotationService } from "./quotation.service";
+import type { QuotationExportJob } from "./quotation-export-job.repository";
+import { QuotationExportStorage } from "./quotation-export.storage";
+import type { QuotationExportRecord } from "./quotation.repository";
 
 @Controller("projects/:projectId/half-package-quotation")
 export class QuotationController {
@@ -46,6 +52,22 @@ export class QuotationController {
     const actor = await this.currentUser(cookieHeader);
     return {
       costMargin: await this.quotationService.getCostMargin(actor, projectId),
+    };
+  }
+
+  @Get("project-cost-analysis")
+  async getProjectCostAnalysis(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("projectId") projectId: string,
+    @Query("quotationId") quotationId?: string,
+  ): Promise<ProjectCostAnalysisResponse> {
+    const actor = await this.currentUser(cookieHeader);
+    return {
+      analysis: await this.quotationService.getProjectCostAnalysis(
+        actor,
+        projectId,
+        quotationId,
+      ),
     };
   }
 
@@ -243,6 +265,7 @@ export class QuotationApprovalController {
   }
 
   @Post(":quotationId/exports")
+  @HttpCode(HttpStatus.ACCEPTED)
   async createExport(
     @Headers("cookie") cookieHeader: string | undefined,
     @Param("quotationId") quotationId: string,
@@ -250,21 +273,17 @@ export class QuotationApprovalController {
   ): Promise<HalfPackageExportResponse> {
     const input = exportInput(body);
     const actor = await this.currentUser(cookieHeader);
-    const created = await this.quotationService.createExport(
+    const job = await this.quotationService.requestExport(
       actor,
       quotationId,
       input.format,
       input.audience ?? "CLIENT",
     );
+    const exported = job.exportId
+      ? await this.quotationService.getExport(actor, job.exportId)
+      : null;
     return {
-      export: {
-        downloadPath: `/quotation-exports/${created.id}`,
-        audience: created.audience,
-        fileName: created.fileName,
-        format: created.format,
-        id: created.id,
-        sha256: created.sha256,
-      },
+      job: exportJobResponse(job, exported),
     };
   }
 
@@ -273,11 +292,35 @@ export class QuotationApprovalController {
   }
 }
 
+@Controller("quotation-export-jobs")
+export class QuotationExportJobController {
+  constructor(
+    private readonly authService: AuthService,
+    private readonly quotationService: QuotationService,
+  ) {}
+
+  @Get(":jobId")
+  async get(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("jobId") jobId: string,
+  ): Promise<HalfPackageExportResponse> {
+    const actor = await this.authService.getSessionUser(
+      readSessionToken(cookieHeader),
+    );
+    const job = await this.quotationService.getExportJob(actor, jobId);
+    const exported = job.exportId
+      ? await this.quotationService.getExport(actor, job.exportId)
+      : null;
+    return { job: exportJobResponse(job, exported) };
+  }
+}
+
 @Controller("quotation-exports")
 export class QuotationExportController {
   constructor(
     private readonly authService: AuthService,
     private readonly quotationService: QuotationService,
+    private readonly exportStorage: QuotationExportStorage,
   ) {}
 
   @Get(":exportId")
@@ -295,8 +338,43 @@ export class QuotationExportController {
       "content-disposition",
       `attachment; filename*=UTF-8''${encodeURIComponent(exported.fileName)}`,
     );
-    response.send(exported.payload);
+    if ("payload" in exported) {
+      response.send(exported.payload);
+      return;
+    }
+    response.setHeader("content-length", String(exported.sizeBytes));
+    await new Promise<void>((resolve, reject) => {
+      const stream = this.exportStorage.open(exported.storagePath);
+      stream.once("error", reject);
+      response.once("finish", resolve);
+      response.once("close", resolve);
+      stream.pipe(response);
+    });
   }
+}
+
+function exportJobResponse(
+  job: QuotationExportJob,
+  exported: QuotationExportRecord | null,
+): HalfPackageExportResponse["job"] {
+  return {
+    audience: job.audience,
+    errorMessage: job.errorMessage,
+    export: exported
+      ? {
+          audience: exported.audience,
+          downloadPath: `/quotation-exports/${exported.id}`,
+          fileName: exported.fileName,
+          format: exported.format,
+          id: exported.id,
+          sha256: exported.sha256,
+        }
+      : null,
+    format: job.format,
+    id: job.id,
+    status: job.status,
+    statusPath: `/quotation-export-jobs/${job.id}`,
+  };
 }
 
 function updateLineInput(body: unknown): UpdateHalfPackageQuotationLineRequest {

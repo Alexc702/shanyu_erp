@@ -20,6 +20,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { apiUrl } from "@/lib/api-url";
 import {
@@ -95,8 +97,11 @@ export function MainMaterialCatalogTable({
   const [brand, setBrand] = useState("");
   const [status, setStatus] = useState<"ALL" | MainMaterialItemView["status"]>("ALL");
   const [dataIssue, setDataIssue] = useState<"ALL" | "MISSING" | "NO_IMAGE">("ALL");
+  const [sourceFile, setSourceFile] = useState("");
   const [page, setPage] = useState(1);
   const brands = useMemo(() => [...new Set(items.map((item) => item.brand).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, "zh-CN")), [items]);
+  const sourceFiles = useMemo(() => [...new Set(items.map((item) => item.sourceFile).filter((value): value is string => Boolean(value)))]
     .sort((left, right) => left.localeCompare(right, "zh-CN")), [items]);
   const filteredItems = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -105,6 +110,7 @@ export function MainMaterialCatalogTable({
       if (status !== "ALL" && item.status !== status) return false;
       if (dataIssue === "MISSING" && !item.missingFields) return false;
       if (dataIssue === "NO_IMAGE" && item.assets.length) return false;
+      if (sourceFile && item.sourceFile !== sourceFile) return false;
       return !normalizedQuery || [item.materialId, item.itemName, item.brand, item.series, item.model, item.spec]
         .some((value) => value.toLowerCase().includes(normalizedQuery));
     }).sort((left, right) => {
@@ -113,7 +119,7 @@ export function MainMaterialCatalogTable({
         left.brand.localeCompare(right.brand, "zh-CN") ||
         left.model.localeCompare(right.model, "zh-CN");
     });
-  }, [brand, dataIssue, items, query, status]);
+  }, [brand, dataIssue, items, query, sourceFile, status]);
   const pageCount = Math.max(1, Math.ceil(filteredItems.length / pageSize));
   const visibleItems = filteredItems.slice((page - 1) * pageSize, page * pageSize);
 
@@ -122,6 +128,7 @@ export function MainMaterialCatalogTable({
     setBrand("");
     setStatus("ALL");
     setDataIssue("ALL");
+    setSourceFile("");
     setPage(1);
   }
 
@@ -172,39 +179,41 @@ export function MainMaterialCatalogTable({
   }
 
   return (
-    <div className="grid gap-3">
-      <div className="grid gap-2 lg:grid-cols-[minmax(260px,1fr)_180px_160px_180px_auto]">
-        <div className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索 material_id、品牌、系列或型号" value={query} /></div>
-        <select aria-label="筛选品牌" className="h-9 rounded-md border border-input bg-background px-3 text-sm" onChange={(event) => { setBrand(event.target.value); setPage(1); }} value={brand}><option value="">全部品牌</option>{brands.map((value) => <option key={value} value={value}>{value}</option>)}</select>
-        <select aria-label="筛选状态" className="h-9 rounded-md border border-input bg-background px-3 text-sm" onChange={(event) => { setStatus(event.target.value as typeof status); setPage(1); }} value={status}><option value="ALL">全部状态</option><option value="ACTIVE">可用</option><option value="PENDING_DATA">待补资料</option><option value="INACTIVE">停用</option></select>
-        <select aria-label="筛选资料完整性" className="h-9 rounded-md border border-input bg-background px-3 text-sm" onChange={(event) => { setDataIssue(event.target.value as typeof dataIssue); setPage(1); }} value={dataIssue}><option value="ALL">全部资料</option><option value="MISSING">仅缺失字段</option><option value="NO_IMAGE">仅无产品图</option></select>
+    <div className="grid gap-3 px-4 pb-4">
+      <div className="grid gap-2 lg:grid-cols-[minmax(250px,1fr)_150px_140px_160px_150px_auto]">
+        <div className="relative"><Search className="absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索 material_id、品名或型号" value={query} /></div>
+        <NativeSelect aria-label="筛选品牌" onChange={(event) => { setBrand(event.target.value); setPage(1); }} value={brand}><option value="">品牌：全部</option>{brands.map((value) => <option key={value} value={value}>{value}</option>)}</NativeSelect>
+        <NativeSelect aria-label="筛选状态" onChange={(event) => { setStatus(event.target.value as typeof status); setPage(1); }} value={status}><option value="ALL">状态：全部</option><option value="ACTIVE">可用</option><option value="PENDING_DATA">待补资料</option><option value="INACTIVE">停用</option></NativeSelect>
+        <NativeSelect aria-label="筛选资料完整性" onChange={(event) => { setDataIssue(event.target.value as typeof dataIssue); setPage(1); }} value={dataIssue}><option value="ALL">缺失字段：全部</option><option value="MISSING">仅缺失字段</option><option value="NO_IMAGE">仅无产品图</option></NativeSelect>
+        <NativeSelect aria-label="筛选数据来源" onChange={(event) => { setSourceFile(event.target.value); setPage(1); }} value={sourceFile}><option value="">来源：全部</option>{sourceFiles.map((value) => <option key={value} value={value}>{value}</option>)}</NativeSelect>
         <Button onClick={resetFilters} size="sm" type="button" variant="ghost">重置</Button>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="type-support text-muted-foreground">筛选结果 {filteredItems.length} 条</span>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+        <span className="type-support text-muted-foreground">显示 {visibleItems.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filteredItems.length)} / {filteredItems.length} 条记录</span>
         {canManage ? (
-          <Button onClick={() => begin(null, "UPSERT")} size="sm" type="button" variant="outline">
+          <Button onClick={() => begin(null, "UPSERT")} size="sm" type="button">
             <Plus />新建主材记录
           </Button>
         ) : null}
       </div>
-      <div className="table-wrap catalog-table-wrap">
-        <table className={canManage ? "min-w-[1120px]" : "min-w-[900px]"}>
-          <thead><tr><th>产品图</th><th>品牌 / 型号</th><th>品名</th><th>规格 / 颜色</th><th>单位</th><th>销售价</th>{canManage ? <th>成本价</th> : null}<th>状态</th><th>操作</th></tr></thead>
-          <tbody>{visibleItems.map((item, index) => (
-            <tr key={item.id}>
-              <td>{item.assets[0] ? <div className="relative size-14 overflow-hidden rounded-md bg-muted"><Image alt={`${item.brand} ${item.model}`} className="object-cover" fill loading={index === 0 ? "eager" : "lazy"} sizes="56px" src={`${apiUrl}${item.assets[0].path}`} unoptimized /></div> : <span className="inline-flex items-center gap-1 text-muted-foreground"><ImageIcon className="size-3.5" />暂无图片</span>}</td>
-              <td><strong>{item.brand || "—"}</strong><span className="block text-xs text-muted-foreground">{item.model || item.series || "—"}</span></td>
-              <td>{item.itemName || "—"}</td>
-              <td>{item.spec || "—"}{item.colors.length ? <span className="block max-w-[260px] truncate text-xs text-muted-foreground">{item.colors.join("、")}</span> : null}</td>
-              <td>{formatMainMaterialUnit(item.unit)}</td>
-              <td>¥ {formatPrice(item.salePrice)}</td>
-              {canManage ? <td>¥ {formatPrice(item.costPrice)}</td> : null}
-              <td><Badge variant={item.status === "ACTIVE" ? "success" : item.status === "PENDING_DATA" ? "warning" : "secondary"}>{item.status === "ACTIVE" ? "可用" : item.status === "PENDING_DATA" ? "待补资料" : "停用"}</Badge></td>
-              <td><div className="flex flex-wrap gap-1"><Button onClick={() => setDetail(item)} size="sm" type="button" variant="ghost"><Eye />详情</Button>{canManage ? <><Button onClick={() => begin(item, "UPSERT")} size="sm" type="button" variant="ghost"><Pencil />编辑</Button>{item.status === "INACTIVE" ? <Button onClick={() => begin(item, "REACTIVATE")} size="sm" type="button" variant="ghost"><RotateCcw />恢复</Button> : <Button onClick={() => begin(item, "DEACTIVATE")} size="sm" type="button" variant="ghost"><StopCircle />停用</Button>}</> : null}</div></td>
-            </tr>
-          ))}{!visibleItems.length ? <tr><td className="py-12 text-center text-muted-foreground" colSpan={canManage ? 9 : 8}>没有符合当前筛选条件的记录</td></tr> : null}</tbody>
-        </table>
+      <div className="overflow-hidden rounded-lg border border-border">
+        <Table className={canManage ? "min-w-[1040px]" : "min-w-[900px]"}>
+          <TableHeader><TableRow className="bg-muted hover:bg-muted"><TableHead className="w-[66px]">图片</TableHead><TableHead className="w-[160px]">材料 ID</TableHead><TableHead className="w-[92px]">分类</TableHead><TableHead className="w-[190px]">品牌 / 名称</TableHead><TableHead className="w-[170px]">型号 / 规格</TableHead><TableHead className="w-[62px]">单位</TableHead><TableHead className="w-[82px]">销售价</TableHead>{canManage ? <TableHead className="w-[82px]">成本价</TableHead> : null}<TableHead className="w-[92px]">状态</TableHead><TableHead className="w-[156px]">操作</TableHead></TableRow></TableHeader>
+          <TableBody>{visibleItems.map((item, index) => (
+            <TableRow key={item.id}>
+              <TableCell>{item.assets[0] ? <button aria-label={`查看 ${item.brand} ${item.model} 详情`} className="relative block size-10 overflow-hidden rounded-md border border-border bg-muted" onClick={() => setDetail(item)} type="button"><Image alt={`${item.brand} ${item.model}`} className="object-cover" fill loading={index === 0 ? "eager" : "lazy"} sizes="40px" src={`${apiUrl}${item.assets[0].path}`} unoptimized /></button> : <span className="inline-flex size-10 items-center justify-center rounded-md border border-dashed text-muted-foreground" title="暂无图片"><ImageIcon className="size-4" /></span>}</TableCell>
+              <TableCell><span className="block max-w-[150px] truncate font-mono text-xs" title={item.materialId}>{item.materialId}</span></TableCell>
+              <TableCell>{item.categoryName}</TableCell>
+              <TableCell><strong>{item.brand || item.itemName || "—"}</strong><span className="block max-w-[180px] truncate text-xs text-muted-foreground">{item.itemName || item.series || "—"}</span></TableCell>
+              <TableCell><span className="block max-w-[160px] truncate">{item.model || item.series || "—"}</span><span className="block max-w-[160px] truncate text-xs text-muted-foreground">{item.spec || "—"}{item.colors.length ? ` · ${item.colors.join("、")}` : ""}</span></TableCell>
+              <TableCell>{formatMainMaterialUnit(item.unit)}</TableCell>
+              <TableCell>¥ {formatPrice(item.salePrice)}</TableCell>
+              {canManage ? <TableCell>¥ {formatPrice(item.costPrice)}</TableCell> : null}
+              <TableCell><Badge variant={item.status === "ACTIVE" ? "success" : item.status === "PENDING_DATA" ? "warning" : "secondary"}>{item.status === "ACTIVE" ? "ACTIVE" : item.status === "PENDING_DATA" ? "待补资料" : "已停用"}</Badge></TableCell>
+              <TableCell><div className="flex gap-1"><Button aria-label="查看详情" onClick={() => setDetail(item)} size="icon" type="button" variant="ghost"><Eye /></Button>{canManage ? <><Button aria-label="编辑主材" onClick={() => begin(item, "UPSERT")} size="icon" type="button" variant="ghost"><Pencil /></Button>{item.status === "INACTIVE" ? <Button aria-label="恢复主材" onClick={() => begin(item, "REACTIVATE")} size="icon" type="button" variant="ghost"><RotateCcw /></Button> : <Button aria-label="停用主材" onClick={() => begin(item, "DEACTIVATE")} size="icon" type="button" variant="ghost"><StopCircle /></Button>}</> : null}</div></TableCell>
+            </TableRow>
+          ))}{!visibleItems.length ? <TableRow><TableCell className="h-32 text-center text-muted-foreground" colSpan={canManage ? 10 : 9}>没有符合当前筛选条件的记录</TableCell></TableRow> : null}</TableBody>
+        </Table>
       </div>
       {pageCount > 1 ? <div className="flex items-center justify-end gap-2"><Button aria-label="上一页" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))} size="icon" variant="outline"><ChevronLeft /></Button><span className="type-support">第 {page} / {pageCount} 页</span><Button aria-label="下一页" disabled={page === pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))} size="icon" variant="outline"><ChevronRight /></Button></div> : null}
 
@@ -217,7 +226,7 @@ export function MainMaterialCatalogTable({
           {operation === "UPSERT" ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <Field disabled={Boolean(source)} label="material_id" onChange={(value) => updateDraft(setDraft, "materialId", value)} required value={draft.materialId} />
-              <label className="grid gap-1.5"><Label>分类 *</Label><select className="h-9 rounded-md border border-input bg-background px-3 text-sm" onChange={(event) => { const selected = categories.find((item) => item.code === event.target.value); if (selected) setDraft((current) => ({ ...current, categoryCode: selected.code, categoryName: selected.name })); }} value={draft.categoryCode}>{categories.map((category) => <option key={category.code} value={category.code}>{category.name}</option>)}</select></label>
+              <label className="grid gap-1.5"><Label>分类 *</Label><NativeSelect onChange={(event) => { const selected = categories.find((item) => item.code === event.target.value); if (selected) setDraft((current) => ({ ...current, categoryCode: selected.code, categoryName: selected.name })); }} value={draft.categoryCode}>{categories.map((category) => <option key={category.code} value={category.code}>{category.name}</option>)}</NativeSelect></label>
               <Field label="品名 / 项目" onChange={(value) => updateDraft(setDraft, "itemName", value)} value={draft.itemName} />
               <Field label="品牌" onChange={(value) => updateDraft(setDraft, "brand", value)} value={draft.brand} />
               <Field label="系列 / 工艺" onChange={(value) => updateDraft(setDraft, "series", value)} value={draft.series} />
@@ -225,7 +234,7 @@ export function MainMaterialCatalogTable({
               <Field label="规格" onChange={(value) => updateDraft(setDraft, "spec", value)} value={draft.spec} />
               <Field label="可选颜色（分号分隔）" onChange={(value) => updateDraft(setDraft, "colors", value)} value={draft.colors} />
               <Field label="单位 *" onChange={(value) => updateDraft(setDraft, "unit", value)} required value={draft.unit} />
-              <label className="grid gap-1.5"><Label>数据状态 *</Label><select className="h-9 rounded-md border border-input bg-background px-3 text-sm" onChange={(event) => updateDraft(setDraft, "status", event.target.value as EditDraft["status"])} value={draft.status}><option value="ACTIVE">可用</option><option value="PENDING_DATA">待补资料</option><option value="INACTIVE">停用</option></select></label>
+              <label className="grid gap-1.5"><Label>数据状态 *</Label><NativeSelect onChange={(event) => updateDraft(setDraft, "status", event.target.value as EditDraft["status"])} value={draft.status}><option value="ACTIVE">可用</option><option value="PENDING_DATA">待补资料</option><option value="INACTIVE">停用</option></NativeSelect></label>
               <Field label="销售价" onChange={(value) => updateDraft(setDraft, "salePrice", value)} type="number" value={draft.salePrice} />
               <Field label="成本价" onChange={(value) => updateDraft(setDraft, "costPrice", value)} type="number" value={draft.costPrice} />
               <div className="sm:col-span-2 mt-1 border-t border-border pt-3"><p className="type-support m-0 font-medium text-foreground">类别专用字段</p></div>

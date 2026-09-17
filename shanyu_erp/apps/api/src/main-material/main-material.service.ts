@@ -42,6 +42,7 @@ import {
   MainMaterialSelectionError,
 } from "./main-material.repository";
 import { parseMainMaterialWorkbook } from "./main-material-workbook";
+import { isMainMaterialColorSelectionValid } from "./main-material-selection";
 
 const categoryOrder: readonly MainMaterialCategoryCode[] = [
   "TILE", "SEAM", "FLOOR", "GLASS_DOOR", "CEILING",
@@ -621,10 +622,9 @@ function refreshBlocker(
     normalizeSpec(item.spec) !== normalizeSpec(line.demandSpec) ||
     !["m2", "m²", "㎡"].includes(item.unit.trim().toLowerCase())
   )) return "新版本中的规格或单位与当前瓷砖需求不兼容";
-  if (item.colors.length && (!line.selectedColor || !item.colors.includes(line.selectedColor))) {
+  if (!isMainMaterialColorSelectionValid(item, line.selectedColor)) {
     return "原选颜色在新版本中不可用";
   }
-  if (!item.colors.length && line.selectedColor) return "新版本不再提供颜色选项";
   return null;
 }
 
