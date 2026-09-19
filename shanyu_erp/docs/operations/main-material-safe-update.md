@@ -15,7 +15,7 @@
 ## 入口
 
 - 应用内 FULL / DELTA / 在线编辑（经 publishImportBatch 发布）：自动在发布事务中执行；分析清单写入 MAIN_MATERIAL_SAFE_UPDATE_ANALYZED 审计。异常将回滚该次发布；有业务差异仅跳过对应报价，不阻止发布新库。
-- 部署中的数据库迁移发布：server-deploy.sh 在迁移后、启动服务前调用下述脚本。部署前备份沿用现有 server-backup.sh。迁移已提交时若脚本失败，只回滚脚本事务并停止部署，不自动回滚迁移或恢复数据库。
+- 部署中的数据库迁移发布：已有库统一使用 server-upgrade.sh 的清单门禁，停写、验证备份和数据基线后，执行迁移→归档预览→固定计划应用→基线复核→后备份→健康检查。详见 [云端受控升级](guarded-version-upgrade.md)。server-deploy.sh 只允许空库首次安装。
 - 独立脚本：apps/api/scripts/reconcile-main-material-drafts.mjs。与发布钩子复用同一个 TypeScript 领域分析器，不维护第二套业务规则。
 
 ## 本地使用
@@ -31,7 +31,7 @@ node --env-file-if-exists=../../.env scripts/reconcile-main-material-drafts.mjs 
 node --env-file-if-exists=../../.env scripts/reconcile-main-material-drafts.mjs --apply --environment=local
 ```
 
-默认 dry-run、默认 local；local 只允许 POSTGRES_HOST 为 127.0.0.1、localhost 或 ::1。不输出密码、连接串等配置。可用 --target=<已发布库UUID> 固定目标，目标已变化则拒绝；apply 会重新分析，不能复用过期预览直接写入。
+默认 dry-run、默认 local；local 只允许 POSTGRES_HOST 为 127.0.0.1、localhost 或 ::1。不输出密码、连接串等配置。--target 固定 UUID，--catalog-hash 固定目标业务内容，--plan-hash 绑定此前预览；apply 在事务内重新分析，计划变化则回滚。test/production 强制要求 target、catalog-hash、release；apply 还必须指定 plan-hash。
 
 报告为 JSON，含目标库、项目地址/ID、报价 ID/版本/revision/status、原库、结果和逐行逐字段前后差异。报告可能含成本，仅供授权运维人员保存。
 
@@ -51,11 +51,12 @@ BLOCKED 是正常保护结果，进程可成功退出；技术错误、目标不
 在 API 容器内，脚本使用容器已有的 PostgreSQL 环境变量；命令为：
 
 ```bash
-node scripts/reconcile-main-material-drafts.mjs --dry-run --environment=test
+node scripts/reconcile-main-material-drafts.mjs --dry-run --environment=test \
+  --target=<已审核UUID> --catalog-hash=<已审核内容哈希> --release=<本次版本>
 # 生产必须显式使用 --environment=production；不要把 test 参数用于生产。
 ```
 
-部署脚本自动根据已有 deployment_environment 传递 test/production。单独 --apply 前由运维明确核对所在服务器、目标库和备份；本脚本不负责 SSH、备份上传或恢复。不将测试报告视为生产验收，不替换原 .env.production，不执行 seed/restore/down -v。
+云端升级必须从 server-upgrade.sh 进入，不再推荐独立执行 --apply。CLI 本身不负责 SSH、备份上传或恢复。不将测试报告视为生产验收，不替换原 .env.production，不执行 seed/restore/down -v。
 
 ## 事务与并发
 

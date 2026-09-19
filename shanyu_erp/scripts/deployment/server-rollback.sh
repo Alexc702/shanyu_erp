@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/server-common.sh"
 
 require_deployment_files
+unset SHANYU_OPERATION_LOCK_HELD
+acquire_operation_lock
+[ ! -e "$DEPLOY_ROOT/.upgrade-maintenance" ] || { echo 'Unresolved upgrade; review committed migrations before rollback' >&2; exit 1; }
+[ "${1:-}" = --schema-compatibility-reviewed ] || { echo 'Manual rollback requires --schema-compatibility-reviewed after explicit authorization' >&2; exit 2; }
 previous_file="$DEPLOY_ROOT/.release.previous.env"
 require_file "$previous_file"
 

@@ -354,7 +354,7 @@ cat >"$deploy_bin/docker" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >>"$FAKE_DEPLOY_DOCKER_LOG"
 if [[ "$*" == *"exec -T postgres"* ]]; then
-  printf '1\n'
+  printf '%s\n' "${FAKE_TABLE_COUNT:-0}"
 fi
 if [[ "$*" == *"bootstrap-admin.mjs"* ]]; then
   IFS= read -r bootstrap_password
@@ -389,11 +389,15 @@ if grep -q "role = 'ADMIN'" "$deploy_log"; then
   echo "Deployment still duplicates the ADMIN existence query." >&2
   exit 1
 fi
-echo "PASS deployment always delegates idempotent ADMIN initialization"
+echo "PASS first deployment delegates idempotent ADMIN initialization"
 echo "PASS deployment passes the ADMIN password through sudo over stdin"
 
-if [ "$(sed -n '1p' "$backup_log")" != "1" ]; then
-  echo "Deployment did not require a successful backup before migrating an existing database." >&2
+if FAKE_TABLE_COUNT=1 FAKE_DEPLOY_DOCKER_LOG="$deploy_log" \
+   FAKE_DEPLOY_BACKUP_LOG="$backup_log" PATH="$deploy_bin:$TEST_ROOT/bin:$PATH" \
+   SHANYU_DEPLOY_ROOT="$deploy_fixture" \
+   bash "$deploy_fixture/scripts/deployment/server-deploy.sh" >"$TEST_ROOT/legacy-refused.out" 2>&1; then
+  echo 'Legacy deployment must refuse an existing database.' >&2
   exit 1
 fi
-echo "PASS existing database requires a successful pre-migration backup"
+grep -q 'Existing database: use server-upgrade.sh' "$TEST_ROOT/legacy-refused.out"
+echo "PASS existing database requires the manifest-pinned upgrade workflow"

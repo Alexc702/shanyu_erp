@@ -21,7 +21,7 @@
     "lint": "pnpm -r --if-present lint",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test && pnpm test:deployment",
-    "test:deployment": "bash scripts/deployment/tests/publish-input-validation.test.sh && bash scripts/deployment/tests/server-backup-cos.test.sh && bash scripts/deployment/tests/server-environment-check.test.sh && bash scripts/deployment/tests/server-admin-bootstrap.test.sh && bash scripts/deployment/tests/export-worker-runtime.test.sh && bash scripts/deployment/tests/verify-deployment-from-mac.test.sh",
+    "test:deployment": "python3 scripts/deployment/tests/guarded-upgrade.test.py && bash scripts/deployment/tests/publish-input-validation.test.sh && bash scripts/deployment/tests/server-backup-cos.test.sh && bash scripts/deployment/tests/server-environment-check.test.sh && bash scripts/deployment/tests/server-admin-bootstrap.test.sh && bash scripts/deployment/tests/export-worker-runtime.test.sh && bash scripts/deployment/tests/verify-deployment-from-mac.test.sh",
     "test:e2e": "pnpm db:migrate && pnpm db:seed && playwright test",
     "db:migrate": "node --env-file-if-exists=.env scripts/run-migrations.mjs up",
     "db:rollback": "node --env-file-if-exists=.env scripts/run-migrations.mjs down",

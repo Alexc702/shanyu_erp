@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/server-common.sh"
 
 require_deployment_files
+unset SHANYU_OPERATION_LOCK_HELD
+acquire_operation_lock
+export SHANYU_OPERATION_LOCK_HELD=1
+[ ! -e "$DEPLOY_ROOT/.upgrade-maintenance" ] || { echo 'Unresolved upgrade maintenance; refusing bootstrap' >&2; exit 1; }
 env_mode="$(stat -c '%a' "$ENV_FILE")"
 case "$env_mode" in
   600|640) ;;
@@ -30,14 +34,14 @@ case "$database_table_count" in
     ;;
 esac
 if [ "$database_table_count" -gt 0 ]; then
-  SHANYU_REQUIRE_RUNNING_POSTGRES=1 "$SCRIPT_DIR/server-backup.sh"
+  echo 'Existing database: use server-upgrade.sh <manifest.json> <environment:release>; legacy redeploy is refused.' >&2
+  exit 1
 else
   echo "Empty database detected; no pre-migration backup is required."
 fi
 compose run --rm --no-deps api node scripts/run-migrations.mjs up
-# Only zero-impact first drafts advance; historical descendants stay pinned.
-compose run --rm --no-deps api node scripts/reconcile-main-material-drafts.mjs \
-  --apply "--environment=$(deployment_environment)"
+# First installation has no historical drafts. Existing databases must use the
+# manifest-pinned preview/apply workflow in server-upgrade.sh.
 
 ADMIN_PASSWORD="$(env_value ADMIN_INITIAL_PASSWORD)"
 printf '%s\n' "$ADMIN_PASSWORD" | \

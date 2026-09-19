@@ -40,6 +40,12 @@ remote() {
 
 trap cleanup EXIT
 
+# Legacy helper is bootstrap-only. Refuse BEFORE building or overwriting live files.
+remote "test ! -e /srv/shanyu-erp/.release.env" || {
+  echo 'Existing deployment: stage verified packages and use manifest-pinned server-upgrade.sh.' >&2
+  exit 1
+}
+
 API_IMAGE="shanyu-erp-api:$RELEASE_VERSION"
 WEB_IMAGE="shanyu-erp-web:$RELEASE_VERSION"
 

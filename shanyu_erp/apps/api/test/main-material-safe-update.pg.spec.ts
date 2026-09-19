@@ -99,6 +99,27 @@ describe.skipIf(!enabled)("safe catalog update / isolated PostgreSQL", () => {
     const once = await state(); await database.transaction(db => reconcileSafeDrafts(db, { apply: true }));
     expect(await state()).toBe(once);
   });
+  it("pins catalog content and the preview, rejecting stale plans atomically", async () => {
+    const q = await draft(); await publish();
+    const preview = await reconcileSafeDrafts(database, { apply: false });
+    const before = await state();
+    await expect(database.transaction(db => reconcileSafeDrafts(db, { apply: true,
+      targetCatalogId: newCatalog, targetCatalogHash: "0".repeat(64), expectedPlanHash: preview.planHash }))).rejects.toThrow();
+    expect(await state()).toBe(before);
+    await client.query("UPDATE half_package_quotations SET adjustment_reason='预览后业务修改' WHERE id=$1", [q.id]);
+    const changed = await state();
+    await expect(database.transaction(db => reconcileSafeDrafts(db, { apply: true,
+      targetCatalogId: newCatalog, targetCatalogHash: preview.targetCatalogHash, expectedPlanHash: preview.planHash }))).rejects.toThrow();
+    expect(await state()).toBe(changed);
+    const fresh = await reconcileSafeDrafts(database, { apply: false });
+    const result = await database.transaction(db => reconcileSafeDrafts(db, { apply: true,
+      targetCatalogId: newCatalog, targetCatalogHash: fresh.targetCatalogHash, expectedPlanHash: fresh.planHash }));
+    expect(result.planHash).toBe(fresh.planHash);
+    expect(result.entries.find(e => e.quotationId === q.id)?.outcome).toBe("UPDATED");
+    const again = await reconcileSafeDrafts(database, { apply: false });
+    expect((await database.transaction(db => reconcileSafeDrafts(db, { apply: true,
+      targetCatalogId: newCatalog, targetCatalogHash: again.targetCatalogHash, expectedPlanHash: again.planHash }))).summary.UPDATED).toBe(0);
+  });
   it.each(["cost_price", "model", "colors"])("skips the whole quote when %s changes", async field => {
     const q = await draft();
     const value = field === "cost_price" ? "750" : field === "model" ? "39AT" : '["黑"]';
