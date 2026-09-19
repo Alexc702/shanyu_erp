@@ -83,6 +83,10 @@ describe("validateHalfPackageWorkbook", () => {
     ]);
     expect(result.items.find(({ itemName }) => itemName === "正泰空开更换")).toMatchObject({
       costUnitPrice: "5.0000",
+      remarks: "正泰（含总开、漏电保护器、空开）按外框面积计算",
+    });
+    expect(result.items.find(({ itemName }) => itemName === "施耐德空开更换")).toMatchObject({
+      remarks: "施耐德m9系列（含总开、漏电保护器、空开）按外框面积计算",
     });
     expect(
       result.items

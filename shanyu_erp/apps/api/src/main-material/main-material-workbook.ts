@@ -4,10 +4,13 @@ import type {
   MainMaterialImportValidation,
 } from "@shanyu/contracts";
 import ExcelJS from "exceljs";
+import { readMainMaterialXlsx } from "./main-material-xlsx-reader";
 
-import type {
-  MainMaterialDelta,
-  NormalizedMainMaterialItem,
+import { normalizeCabinetVariant } from "./main-material-cabinet-mapping";
+import {
+  MainMaterialSelectionError,
+  type MainMaterialDelta,
+  type NormalizedMainMaterialItem,
 } from "./main-material.repository";
 
 const categoryNames: Readonly<Record<MainMaterialCategoryCode, string>> = {
@@ -68,8 +71,7 @@ export async function parseMainMaterialWorkbook(
   buffer: Buffer,
   mode: MainMaterialImportMode,
 ): Promise<ParsedMainMaterialWorkbook> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
+  const workbook = await readMainMaterialXlsx(buffer);
   return mode === "FULL" ? parseFull(workbook) : parseDelta(workbook);
 }
 
@@ -150,7 +152,56 @@ function parseFull(workbook: ExcelJS.Workbook): ParsedMainMaterialWorkbook {
     });
   }
   if (!items.length) blockers.push("主材库没有可导入记录");
-  return result("FULL", items, blockers, warnings);
+  const options = glassDoorOptions(workbook, items, blockers);
+  const mapped = items.map((item) => {
+    try {
+      return normalizeCabinetVariant(options.has(item.materialId)
+        ? { ...item, selectionOptions: options.get(item.materialId) } : item);
+    } catch (error) {
+      if (!(error instanceof MainMaterialSelectionError)) throw error;
+      blockers.push(error.message);
+      return item;
+    }
+  });
+  return result("FULL", mapped, blockers, warnings);
+}
+
+function glassDoorOptions(
+  workbook: ExcelJS.Workbook,
+  items: readonly NormalizedMainMaterialItem[],
+  blockers: string[],
+): Map<string, NonNullable<NormalizedMainMaterialItem["selectionOptions"]>> {
+  const result = new Map<string, NonNullable<NormalizedMainMaterialItem["selectionOptions"]>>();
+  const sheet = workbook.getWorksheet("玻璃门选型");
+  if (!sheet) return result; // Older templates retain published associations by stable ID.
+  const columns = headerMap(sheet.getRow(14));
+  for (const header of ["material_id", "选项类型", "选项顺序", "选项名称", "选项图引用"]) {
+    if (!columns.has(header)) blockers.push(`玻璃门选型缺少字段：${header}`);
+  }
+  if (blockers.length) return result;
+  const known = new Set(items.filter((i) => i.categoryCode === "GLASS_DOOR").map((i) => i.materialId));
+  for (let n = 15; n <= sheet.rowCount; n++) {
+    const row = sheet.getRow(n), id = cell(row, columns, "material_id");
+    if (!id) continue;
+    const type = cell(row, columns, "选项类型");
+    const name = cell(row, columns, "选项名称");
+    const imageReference = cell(row, columns, "选项图引用");
+    const order = positiveInteger(cell(row, columns, "选项顺序"));
+    if (!known.has(id) || !["门框颜色", "玻璃颜色"].includes(type) || !name || !imageReference || !order) {
+      blockers.push(`玻璃门选型第 ${n} 行关联或选项无效`); continue;
+    }
+    const previous = result.get(id) ?? [];
+    if (previous.some((option) => option.type === type && (option.name === name || option.order === order))) {
+      blockers.push(`玻璃门选型第 ${n} 行重复颜色或顺序`); continue;
+    }
+    result.set(id, [...previous, { type: type as "门框颜色" | "玻璃颜色", name, imageReference, order }]);
+  }
+  for (const item of items.filter((i) => i.categoryCode === "GLASS_DOOR")) {
+    const entries = result.get(item.materialId);
+    if (!entries) blockers.push(`${item.materialId} 缺少玻璃门选型关联`);
+    else result.set(item.materialId, [...entries].sort((a, b) => a.order - b.order));
+  }
+  return result;
 }
 
 function parseDelta(workbook: ExcelJS.Workbook): ParsedMainMaterialWorkbook {

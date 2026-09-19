@@ -20,12 +20,14 @@
     "@nestjs/platform-express": "12.0.1",
     "@shanyu/contracts": "workspace:*",
     "exceljs": "4.4.0",
+    "jszip": "3.10.1",
     "node-pg-migrate": "^9.0.0",
     "pdf-lib": "^1.17.1",
     "pdfkit": "^0.20.2",
     "pg": "^8.23.0",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "saxes": "6.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

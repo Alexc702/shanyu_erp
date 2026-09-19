@@ -14,6 +14,7 @@ import {
   mainMaterialBaseQuantity,
   mainMaterialColorAsset,
   mainMaterialDefaultQuantity,
+  mainMaterialDisplayModel,
   mainMaterialDemandEditing,
   mainMaterialGlassColorAsset,
   mainMaterialGlassColors,
@@ -22,6 +23,11 @@ import {
 } from "./main-material-view-model";
 
 describe("main material view model", () => {
+  it("uses the renamed epoxy grout item name instead of its old generic model label", () => {
+    expect(mainMaterialDisplayModel({ materialId: "MAT-SEAM-A179F09722C2", itemName: "环氧彩砂", model: "美缝" })).toBe("环氧彩砂");
+    expect(mainMaterialDisplayModel({ materialId: "other", itemName: "木地板", model: "BK-01" })).toBe("BK-01");
+    expect(mainMaterialDisplayModel({ materialId: "MAT-SEAM-A179F09722C2", itemName: "环氧彩砂", model: "新型号" })).toBe("新型号");
+  });
   it("formats every square-metre spelling consistently", () => {
     expect(["M2", "m2", "m²", "㎡"].map(formatMainMaterialUnit)).toEqual([
       "M²", "M²", "M²", "M²",
@@ -159,9 +165,12 @@ describe("main material view model", () => {
     });
   });
 
-  it("edits both demand fields for non-tiles but keeps tile base quantity read-only", () => {
+  it("edits measured material demand but keeps tile base quantity read-only", () => {
     const tile = quotationLine("AUTO_TILE", "TILE", "50.0000", "55.7500");
-    const seam = quotationLine("MANUAL", "SEAM", null, "6.0000");
+    const seam = {
+      ...quotationLine("MANUAL", "SEAM", null, "6.0000"),
+      item: { ...item("seam", "", ""), saleUnitPrice: "25.0000", unit: "M²" },
+    };
 
     expect(mainMaterialDemandEditing(tile, true)).toEqual({
       baseQuantity: false,
@@ -177,6 +186,37 @@ describe("main material view model", () => {
     });
     expect(mainMaterialBaseQuantity(tile)).toBe("50.0000");
     expect(mainMaterialBaseQuantity(seam)).toBe("6.0000");
+  });
+
+  it.each(["M", "米", "M²", "平米", "m", " m² ", "M2", "㎡", "平方", "平方米"])(
+    "keeps loss editable for measured unit %s",
+    (unit) => {
+      const line = {
+        ...quotationLine("MANUAL", "FLOOR", "2.0000", "2.0000"),
+        item: { ...item("measured", "", ""), saleUnitPrice: "100.0000", unit },
+      };
+      expect(mainMaterialDemandEditing(line, true)).toEqual({ baseQuantity: true, lossRate: true });
+      expect(mainMaterialDemandEditing(line, false)).toEqual({ baseQuantity: false, lossRate: false });
+    },
+  );
+
+  it.each(["套", "个", "樘", "台", "片", "处", ""])(
+    "makes loss read-only without changing quantity or stored values for unit %s",
+    (unit) => {
+      const line = {
+        ...quotationLine("MANUAL", "BATHROOM", "2.0000", "2.1000"),
+        item: { ...item("counted", "", ""), saleUnitPrice: "100.0000", unit },
+        lossRate: "0.0500",
+      };
+      const before = structuredClone(line);
+      expect(mainMaterialDemandEditing(line, true)).toEqual({ baseQuantity: true, lossRate: false });
+      expect(line).toEqual(before);
+    },
+  );
+
+  it("does not enable loss for a manual line without a selected unit", () => {
+    expect(mainMaterialDemandEditing(quotationLine("MANUAL", "BATHROOM", "1", "1"), true))
+      .toEqual({ baseQuantity: true, lossRate: false });
   });
 
   it("uses the project outer-frame area for sealant quantity", () => {

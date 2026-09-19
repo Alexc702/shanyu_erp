@@ -35,22 +35,22 @@ interface BaselineCatalog {
   };
 }
 
-describe("main material 0917 glass door selection baseline", () => {
+describe("main material 0919 workbook baseline", () => {
   it("matches the approved workbook counts and only references packaged images", async () => {
     const root = resolve(process.cwd(), "assets/main-materials/v1");
     const catalog = JSON.parse(
-      await readFile(resolve(root, "catalog.json"), "utf8"),
+      await readFile(resolve(root, "catalog-0919.json"), "utf8"),
     ) as BaselineCatalog;
 
     expect(catalog.summary).toEqual({
-      activeCount: 602,
-      assetCount: 462,
-      itemCount: 695,
+      activeCount: 601,
+      assetCount: 450,
+      itemCount: 694,
       pendingCount: 89,
-      referencedImageItemCount: 581,
+      referencedImageItemCount: 580,
     });
-    expect(catalog.items).toHaveLength(695);
-    expect(catalog.assets).toHaveLength(462);
+    expect(catalog.items).toHaveLength(694);
+    expect(catalog.assets).toHaveLength(450);
     expect(
       Object.fromEntries(
         [...new Set(catalog.items.map((item) => item.categoryCode))].map((code) => [
@@ -60,7 +60,7 @@ describe("main material 0917 glass door selection baseline", () => {
       ),
     ).toEqual({
       BATHROOM: 206,
-      CEILING: 10,
+      CEILING: 9,
       CUSTOM: 7,
       FLOOR: 62,
       GLASS_DOOR: 22,
@@ -84,7 +84,7 @@ describe("main material 0917 glass door selection baseline", () => {
 
   it("keeps every floor model separate with its matching image and does not make incomplete items selectable", async () => {
     const catalog = JSON.parse(
-      await readFile(resolve(process.cwd(), "assets/main-materials/v1/catalog.json"), "utf8"),
+      await readFile(resolve(process.cwd(), "assets/main-materials/v1/catalog-0919.json"), "utf8"),
     ) as BaselineCatalog;
     const expectedFloorModels = [
       "BK-01", "BK-02", "BK-03", "BK-04", "BK-05", "BK-06", "BK-07", "BK-08",
@@ -118,12 +118,12 @@ describe("main material 0917 glass door selection baseline", () => {
     expect(catalog.items.every((item) => Boolean(
       item.sourceFile && item.sourceSheet && item.sourceRow,
     ))).toBe(true);
-    expect(catalog.items.filter((item) => item.assetIds.length > 0)).toHaveLength(581);
+    expect(catalog.items.filter((item) => item.assetIds.length > 0)).toHaveLength(580);
   });
 
-  it("keeps the approved 0915 catalog values and indexed images", async () => {
+  it("keeps the latest approved catalog values and indexed images", async () => {
     const catalog = JSON.parse(
-      await readFile(resolve(process.cwd(), "assets/main-materials/v1/catalog.json"), "utf8"),
+      await readFile(resolve(process.cwd(), "assets/main-materials/v1/catalog-0919.json"), "utf8"),
     ) as BaselineCatalog;
     const byCategory = (code: string) => catalog.items.filter((item) => item.categoryCode === code);
 
@@ -185,8 +185,8 @@ describe("main material 0917 glass door selection baseline", () => {
       colors: ["瓷泳黑", "瓷泳灰", "月光拉丝灰", "珐琅铜", "波光白", "米其灰", "月光灰"],
       imageReference: "",
     });
-    expect(aluminumDoorCasing?.attributes.glassColors).toBeUndefined();
-    expect(aluminumDoorCasing?.attributes.glassColorAssetMap).toBeUndefined();
+    expect(JSON.parse(aluminumDoorCasing?.attributes.glassColors ?? "[]")).toEqual([]);
+    expect(JSON.parse(aluminumDoorCasing?.attributes.glassColorAssetMap ?? "{}")).toEqual({});
     expect(glassDoors.map((item) => item.model)).toEqual(expect.arrayContaining([
       "偏轴门（手动预埋五金）",
       "中轴门（手动预埋五金）",
@@ -216,6 +216,8 @@ describe("main material 0917 glass door selection baseline", () => {
     );
 
     const ceiling = byCategory("CEILING");
+    expect(ceiling.some((item) => item.materialId === "MAT-CEILING-34CB9DC54076")).toBe(false);
+    expect(byCategory("SEAM").find((item) => item.materialId === "MAT-SEAM-A179F09722C2")?.itemName).toBe("环氧彩砂");
     expect(ceiling.filter((item) => item.model.startsWith("铝扣板吊顶")).map((item) => item.model)).toEqual([
       "铝扣板吊顶暖白", "铝扣板吊顶珍珠白",
     ]);
@@ -225,11 +227,12 @@ describe("main material 0917 glass door selection baseline", () => {
     ].includes(item.model)).every((item) => item.unit === "M²")).toBe(true);
     expect(ceiling.filter((item) => item.itemName === "凉霸").map((item) => [
       item.attributes.panelSize, item.attributes.lightingPower,
-    ])).toEqual([["300*300", ""], ["300*600", ""], ["100*667", ""]]);
+    ])).toEqual([["300*600", ""], ["100*667", ""]]);
     expect(ceiling.find((item) => item.model === "300H-66")?.salePrice).toBe("200.00");
     expect(ceiling.find((item) => item.itemName === "排风扇")).toMatchObject({
-      assetIds: ["43eb6a4b1a9995c48016f6e40009aa5fc4d5b932a3667b080e0bb083fe11a011"],
-      imageReference: "xlsx://主材库/本科吊顶_v1.xlsx#电器加灯具!row=11;count=1",
+      materialId: "MAT-CEILING-2378BE98E6AB",
+      model: "300H-66",
+      costPrice: "120.00",
       salePrice: "200.00",
     });
 
@@ -288,7 +291,7 @@ describe("main material 0917 glass door selection baseline", () => {
       "拉丝玫瑰金", "拉丝金", "铬色",
     ].sort());
     expect(bathroom.find((item) => item.materialId === "MAT-BATHROOM-CA0F9C7F63E6")?.model).toBe(
-      "全智能马桶 FSN0320D-G",
+      "壁挂马桶 FSN0320D-G",
     );
     expect([
       "MAT-BATHROOM-C4DA5BD71DE9",
@@ -312,7 +315,7 @@ describe("main material 0917 glass door selection baseline", () => {
       ["开门系列", "开门 39AT"],
       ["移门系列", "移门 46A"],
       ["开门系列", "开门 34A"],
-      ["移门系列", "移门 41A"],
+      ["开门系列", "开门 41A"],
     ]);
     expect(new Set(shower.map((item) => item.assetIds[0])).size).toBe(6);
 

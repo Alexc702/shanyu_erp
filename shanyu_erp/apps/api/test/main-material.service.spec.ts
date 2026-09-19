@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import type { ProjectDetail, SessionUser } from "@shanyu/contracts";
 import { describe, expect, it, vi } from "vitest";
 
@@ -12,6 +12,7 @@ import type {
   MainMaterialRepository,
 } from "../src/main-material/main-material.repository";
 import { MainMaterialService } from "../src/main-material/main-material.service";
+import { MainMaterialSelectionError } from "../src/main-material/main-material.repository";
 
 describe("MainMaterialService", () => {
   it("filters pending items and all costs for a lead designer", async () => {
@@ -76,6 +77,16 @@ describe("MainMaterialService", () => {
     await expect(service.validateOnlineEdit(lead, input)).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it("returns a validation error instead of creating an online batch with invalid colour assets", async () => {
+    const repository = createRepository();
+    repository.validateDelta.mockRejectedValue(new MainMaterialSelectionError("缺少有效色卡资产关联"));
+    await expect(createService(repository).validateOnlineEdit(owner, {
+      changeReason: "更新颜色", expectedRecordVersion: 1, materialId: "MAT-GLASS-TEST",
+      operation: "UPSERT", values: { color: "未登记颜色" },
+    })).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.createImportBatch).not.toHaveBeenCalled();
+  });
+
   it("shows selected-item differences before explicitly refreshing a draft catalog", async () => {
     const repository = createRepository();
     const latestItem = {
@@ -84,6 +95,7 @@ describe("MainMaterialService", () => {
       costPrice: "0.20",
       id: "item-v2",
       model: "TI0T-REV",
+      itemName: "古堡砖",
       salePrice: "0.40",
     };
     repository.getPublishedCatalog.mockResolvedValue({
@@ -105,7 +117,7 @@ describe("MainMaterialService", () => {
       status: "UPDATED",
     });
     expect(checked.differences[0]?.fields.map((field) => field.label)).toEqual(
-      expect.arrayContaining(["型号", "销售价", "成本价"]),
+      expect.arrayContaining(["品名 / 项目", "型号", "销售价", "成本价"]),
     );
 
     const refreshed = { ...quotation, catalog: { id: "catalog-v2", name: "山屿 ERP 主材库 V2", versionNumber: 2 }, revision: 2 };
@@ -145,6 +157,16 @@ describe("MainMaterialService", () => {
       lossRate: "0.1150",
       quantity: "11.7075",
     });
+  });
+
+  it.each(["deleted", "color"])("marks %s selections unavailable before draft refresh", async (kind) => {
+    const repository = createRepository();
+    repository.getQuotationByProject.mockResolvedValue({ ...quotation, lines: [{ ...quotation.lines[0], selectedColor: "旧色" }] });
+    repository.initializeAndSyncDraft.mockResolvedValue({ ...quotation, lines: [{ ...quotation.lines[0], selectedColor: "旧色" }] });
+    repository.getPublishedCatalog.mockResolvedValue({ ...catalog, id: "new", versionNumber: 2, items: kind === "deleted" ? [] : [{ ...item, colors: ["新色"] }] });
+    const result = await createService(repository).checkCatalogUpdate(owner, project.id);
+    expect(result.differences[0]).toMatchObject({ status: "UNAVAILABLE", reason: kind === "deleted" ? "新版本中已删除" : "原选颜色在新版本中不可用" });
+    expect(repository.refreshDraftCatalog).not.toHaveBeenCalled();
   });
 });
 

@@ -160,7 +160,7 @@ describe("HalfPackageCalculator", () => {
     });
   });
 
-  it("matches all 178 cached V4 Excel quantities, line amounts, and summary values", async () => {
+  it("matches all 178 cached V5 Excel quantities, line amounts, and tax-free summary values", async () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(
       resolve(process.cwd(), "../../../半包报价单_v5.xlsx"),
@@ -252,7 +252,8 @@ describe("HalfPackageCalculator", () => {
     expect(result.managementFee).toBe(
       decimal4(requiredCellResult(sheet, "G202")),
     );
-    expect(result.total).toBe(decimal4(requiredCellResult(sheet, "G204")));
+    expect(sheet.getCell("C203").text).toBe("总造价");
+    expect(result.total).toBe(decimal4(requiredCellResult(sheet, "G203")));
   });
 });
 

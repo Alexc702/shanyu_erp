@@ -29,7 +29,7 @@ interface ExportContext {
 
 export interface QuotationExportSummaryRow {
   readonly amount: string;
-  readonly label: "直接费" | "管理费" | "折扣和抹零" | "税金" | "总造价";
+  readonly label: "直接费" | "管理费" | "折扣和抹零" | "总造价";
   readonly number: string;
   readonly remarks: string;
 }
@@ -37,9 +37,6 @@ export interface QuotationExportSummaryRow {
 export interface QuotationExportSummary {
   readonly grandTotal: string;
   readonly rows: readonly QuotationExportSummaryRow[];
-  readonly taxableTotal: string;
-  readonly taxAmount: string;
-  readonly taxRate: "0.0600";
 }
 
 interface ExportLine {
@@ -493,10 +490,9 @@ export function buildQuotationExportSummary(
     (decimal4Units(quotation.discountRate) !== 10_000n ||
       decimal4Units(quotation.writeOff) !== 0n);
   const beforeAdjustment = addDecimal4(directCost, managementFee);
-  const taxableTotal = adjustmentApproved
+  const grandTotal = adjustmentApproved
     ? quotation.adjustedTotal
     : beforeAdjustment;
-  const taxAmount = multiplyDecimal4(taxableTotal, "0.0600");
   const rows: QuotationExportSummaryRow[] = [
     {
       amount: directCost,
@@ -513,32 +509,21 @@ export function buildQuotationExportSummary(
   ];
   if (adjustmentApproved) {
     rows.push({
-      amount: subtractDecimal4(taxableTotal, beforeAdjustment),
+      amount: subtractDecimal4(grandTotal, beforeAdjustment),
       label: "折扣和抹零",
       number: "（3）",
       remarks: `获批折扣率 ${formatPercentage(quotation.discountRate)}，抹零 ${formatDecimal2(quotation.writeOff)} 元。`,
     });
   }
-  rows.push(
-    {
-      amount: taxAmount,
-      label: "税金",
-      number: adjustmentApproved ? "（4）" : "（3）",
-      remarks: "固定为工程总价6%",
-    },
-    {
-      amount: addDecimal4(taxableTotal, taxAmount),
-      label: "总造价",
-      number: adjustmentApproved ? "（5）" : "（4）",
-      remarks: "",
-    },
-  );
+  rows.push({
+    amount: grandTotal,
+    label: "总造价",
+    number: adjustmentApproved ? "（4）" : "（3）",
+    remarks: "",
+  });
   return {
-    grandTotal: addDecimal4(taxableTotal, taxAmount),
+    grandTotal,
     rows,
-    taxableTotal,
-    taxAmount,
-    taxRate: "0.0600",
   };
 }
 
@@ -1368,14 +1353,6 @@ function addDecimal4(left: string, right: string): string {
 
 function subtractDecimal4(left: string, right: string): string {
   return fixed4(decimal4Units(left) - decimal4Units(right));
-}
-
-function multiplyDecimal4(left: string, right: string): string {
-  const product = decimal4Units(left) * decimal4Units(right);
-  const rounded = product >= 0n
-    ? (product + 5_000n) / 10_000n
-    : (product - 5_000n) / 10_000n;
-  return fixed4(rounded);
 }
 
 function formatDecimal2(value: string): string {

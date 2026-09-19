@@ -35,6 +35,9 @@ else
   echo "Empty database detected; no pre-migration backup is required."
 fi
 compose run --rm --no-deps api node scripts/run-migrations.mjs up
+# Only zero-impact first drafts advance; historical descendants stay pinned.
+compose run --rm --no-deps api node scripts/reconcile-main-material-drafts.mjs \
+  --apply "--environment=$(deployment_environment)"
 
 ADMIN_PASSWORD="$(env_value ADMIN_INITIAL_PASSWORD)"
 printf '%s\n' "$ADMIN_PASSWORD" | \

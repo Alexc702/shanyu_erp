@@ -838,12 +838,7 @@ export class PgQuotationRepository implements QuotationRepository {
         [source.id],
       );
       await insertDraft(database, cloned);
-      await cloneMainMaterialQuoteLines(
-        database,
-        source.id,
-        cloned.id,
-        true,
-      );
+      await cloneMainMaterialQuoteLines(database, source, cloned);
       const status = action === "RETURNED" ? "RETURNED" : "APPROVED";
       const updated = await database.query(
         `UPDATE half_package_quotations
@@ -890,36 +885,10 @@ export class PgQuotationRepository implements QuotationRepository {
       const row = locked.rows[0];
       if (!row) throw new QuotationRevisionConflictError();
       const lockedSource = await this.hydrateDraft(database, row);
-      const publishedCatalog = await database.query<{ id: string }>(
-        `SELECT id FROM main_material_catalog_versions
-          WHERE status = 'PUBLISHED' LIMIT 1`,
+      // Historical business content is inherited without adopting the new catalog.
+      const cloned = cloneAsVersion(
+        lockedSource, actorUserId, lockedSource.versionNumber + 1, true,
       );
-      const preserveAdjustment = lockedSource.status === "RETURNED";
-      const provisionalMainTotal = lockedSource.mainMaterialTotal ?? "0.0000";
-      const provisionalAdjustedTotal = preserveAdjustment
-        ? lockedSource.adjustedTotal
-        : addDecimal4(lockedSource.total, provisionalMainTotal);
-      const provisionalGrossProfit = subtractDecimal4(
-        subtractDecimal4(provisionalAdjustedTotal, lockedSource.expectedCost),
-        lockedSource.mainMaterialExpectedCost ?? "0.0000",
-      );
-      const cloned = {
-        ...cloneAsVersion(
-        lockedSource,
-        actorUserId,
-        lockedSource.versionNumber + 1,
-        preserveAdjustment,
-        ),
-        adjustedTotal: provisionalAdjustedTotal,
-        grossMarginRate: decimalRate(provisionalGrossProfit, provisionalAdjustedTotal),
-        grossProfit: provisionalGrossProfit,
-        mainMaterialCatalogVersionId:
-          publishedCatalog.rows[0]?.id ?? lockedSource.mainMaterialCatalogVersionId ?? null,
-        mainMaterialDirectCost: lockedSource.mainMaterialDirectCost ?? "0.0000",
-        mainMaterialExpectedCost: lockedSource.mainMaterialExpectedCost ?? "0.0000",
-        mainMaterialManagementFee: lockedSource.mainMaterialManagementFee ?? "0.0000",
-        mainMaterialTotal: provisionalMainTotal,
-      };
       await database.query(
         `UPDATE half_package_quotations
             SET is_current = false, updated_at = current_timestamp
@@ -927,13 +896,7 @@ export class PgQuotationRepository implements QuotationRepository {
         [lockedSource.id],
       );
       await insertDraft(database, cloned);
-      await cloneMainMaterialQuoteLines(
-        database,
-        lockedSource.id,
-        cloned.id,
-        false,
-      );
-      await recalculateMainMaterialTotals(database, cloned.id);
+      await cloneMainMaterialQuoteLines(database, lockedSource, cloned);
       return cloned.id;
     });
     const draft = await this.findById(draftId);
@@ -1346,257 +1309,43 @@ function cloneAsVersion(
   };
 }
 
-interface MaterialCloneRow {
-  asset_ids: string[];
-  base_quantity: string | null;
-  brand: string | null;
-  category_code: string;
-  cost_amount: string | null;
-  cost_unit_price: string | null;
-  demand_name: string;
-  demand_spec: string;
-  id: string;
-  item_name: string | null;
-  item_version_id: string | null;
-  loss_rate: string;
-  material_id: string | null;
-  model: string | null;
-  origin: "AUTO_TILE" | "MANUAL";
-  quote_quantity: string;
-  sale_amount: string | null;
-  sale_unit_price: string | null;
-  scope_name: string;
-  selected_color: string | null;
-  series: string | null;
-  sort_order: number;
-  source_half_package_line_id: string | null;
-  spec: string | null;
-  unit: string | null;
-}
-
-interface MaterialTargetItemRow {
-  asset_ids: string[];
-  brand: string;
-  colors: string[];
-  cost_price: string;
-  id: string;
-  item_name: string;
-  material_id: string;
-  model: string;
-  sale_price: string;
-  series: string;
-  spec: string;
-  unit: string;
-}
-
 async function cloneMainMaterialQuoteLines(
   database: DatabaseExecutor,
-  sourceQuotationId: string,
-  targetQuotationId: string,
-  preserveExactSnapshot: boolean,
+  source: QuotationDraft,
+  target: QuotationDraft,
 ): Promise<void> {
-  const sourceResult = await database.query<MaterialCloneRow>(
-    `SELECT id, origin, source_half_package_line_id, category_code,
-            scope_name, demand_name, demand_spec, base_quantity, loss_rate,
-            quote_quantity, item_version_id, material_id, item_name, brand,
-            series, model, spec, selected_color, unit, sale_unit_price,
-            cost_unit_price, sale_amount, cost_amount, asset_ids, sort_order
-       FROM main_material_quote_lines
-      WHERE quotation_id = $1
-      ORDER BY sort_order, id`,
-    [sourceQuotationId],
+  // Use actual clone IDs: version_item_id and sort_order can repeat.
+  const halfLineIds = new Map(source.scopes.flatMap((scope, scopeIndex) =>
+    scope.lines.map((line, lineIndex) => [
+      line.id, target.scopes[scopeIndex]!.lines[lineIndex]!.id,
+    ] as const),
+  ));
+  const lines = await database.query<{ id: string; source_half_package_line_id: string | null }>(
+    "SELECT id, source_half_package_line_id FROM main_material_quote_lines WHERE quotation_id = $1 ORDER BY id",
+    [source.id],
   );
-  if (!sourceResult.rowCount) return;
-
-  const lineMapResult = await database.query<{
-    new_id: string;
-    old_id: string;
-  }>(
-    `SELECT old_line.id AS old_id, new_line.id AS new_id
-       FROM half_package_quotation_spaces old_scope
-       JOIN half_package_quotation_lines old_line
-         ON old_line.quotation_space_id = old_scope.id
-       JOIN half_package_quotation_spaces new_scope
-         ON new_scope.quotation_id = $2
-        AND (
-          new_scope.project_space_id = old_scope.project_space_id
-          OR (new_scope.project_space_id IS NULL AND old_scope.project_space_id IS NULL
-              AND new_scope.name = old_scope.name)
-        )
-       JOIN half_package_quotation_lines new_line
-         ON new_line.quotation_space_id = new_scope.id
-        AND new_line.version_item_id = old_line.version_item_id
-      WHERE old_scope.quotation_id = $1`,
-    [sourceQuotationId, targetQuotationId],
-  );
-  const lineIds = new Map(
-    lineMapResult.rows.map((row) => [row.old_id, row.new_id] as const),
-  );
-  const targetItemResult = preserveExactSnapshot
-    ? { rows: [] as MaterialTargetItemRow[] }
-    : await database.query<MaterialTargetItemRow>(
-        `SELECT item.id, item.material_id, item.item_name, item.brand,
-                item.series, item.model, item.spec, item.colors, item.unit,
-                item.sale_price, item.cost_price,
-                coalesce((SELECT jsonb_agg(link.asset_id ORDER BY link.sort_order)
-                  FROM main_material_item_assets link
-                 WHERE link.catalog_version_id = item.catalog_version_id
-                   AND link.material_id = item.material_id), '[]'::jsonb) AS asset_ids
-           FROM main_material_item_versions item
-           JOIN half_package_quotations quotation
-             ON quotation.id = $1
-            AND quotation.main_material_catalog_version_id = item.catalog_version_id
-          WHERE item.data_status = 'ACTIVE'
-            AND item.sale_price IS NOT NULL AND item.cost_price IS NOT NULL`,
-        [targetQuotationId],
-      );
-  const targetItems = new Map(
-    targetItemResult.rows.map((item) => [item.material_id, item] as const),
-  );
-
-  for (const source of sourceResult.rows) {
-    const mappedHalfLineId = source.source_half_package_line_id
-      ? lineIds.get(source.source_half_package_line_id) ?? null
-      : null;
-    if (source.origin === "AUTO_TILE" && !mappedHalfLineId) continue;
-    const targetItem = preserveExactSnapshot || !source.material_id
-      ? null
-      : targetItems.get(source.material_id) ?? null;
-    const compatible = preserveExactSnapshot
-      ? Boolean(source.item_version_id)
-      : Boolean(
-          targetItem &&
-          (source.origin !== "AUTO_TILE" ||
-            (normalizeMaterialSpec(targetItem.spec) === normalizeMaterialSpec(source.demand_spec) &&
-              ["m2", "m²", "㎡"].includes(targetItem.unit.trim().toLowerCase()))) &&
-          (!targetItem.colors.length ||
-            Boolean(source.selected_color && targetItem.colors.includes(source.selected_color))),
-        );
-    const itemVersionId = compatible
-      ? preserveExactSnapshot ? source.item_version_id : targetItem?.id ?? null
-      : null;
-    const saleUnitPrice = compatible
-      ? preserveExactSnapshot ? source.sale_unit_price : targetItem?.sale_price ?? null
-      : null;
-    const costUnitPrice = compatible
-      ? preserveExactSnapshot ? source.cost_unit_price : targetItem?.cost_price ?? null
-      : null;
+  for (const line of lines.rows) {
+    const mappedId = line.source_half_package_line_id
+      ? halfLineIds.get(line.source_half_package_line_id) : null;
+    if (line.source_half_package_line_id && !mappedId) {
+      throw new Error("原报价主材来源行无法映射，已停止创建草稿");
+    }
     await database.query(
       `INSERT INTO main_material_quote_lines
-         (id, quotation_id, origin, source_half_package_line_id,
-          category_code, scope_name, demand_name, demand_spec, base_quantity,
-          loss_rate, quote_quantity, item_version_id, material_id, item_name,
-          brand, series, model, spec, selected_color, unit, sale_unit_price,
-          cost_unit_price, sale_amount, cost_amount, asset_ids, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-               $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
-               CASE WHEN $21::numeric IS NULL THEN NULL
-                 ELSE round($11::numeric * $21::numeric, 4) END,
-               CASE WHEN $22::numeric IS NULL THEN NULL
-                 ELSE round($11::numeric * $22::numeric, 4) END,
-               $23::jsonb, $24)`,
-      [
-        randomUUID(), targetQuotationId, source.origin, mappedHalfLineId,
-        source.category_code, source.scope_name, source.demand_name,
-        source.demand_spec, source.base_quantity, source.loss_rate,
-        source.quote_quantity, itemVersionId,
-        compatible ? preserveExactSnapshot ? source.material_id : targetItem?.material_id ?? null : null,
-        compatible ? preserveExactSnapshot ? source.item_name : targetItem?.item_name ?? null : null,
-        compatible ? preserveExactSnapshot ? source.brand : targetItem?.brand ?? null : null,
-        compatible ? preserveExactSnapshot ? source.series : targetItem?.series ?? null : null,
-        compatible ? preserveExactSnapshot ? source.model : targetItem?.model ?? null : null,
-        compatible ? preserveExactSnapshot ? source.spec : targetItem?.spec ?? null : null,
-        compatible ? source.selected_color : null,
-        compatible ? preserveExactSnapshot ? source.unit : targetItem?.unit ?? null : null,
-        saleUnitPrice, costUnitPrice,
-        JSON.stringify(
-          compatible
-            ? preserveExactSnapshot ? source.asset_ids : targetItem?.asset_ids ?? []
-            : [],
-        ),
-        source.sort_order,
-      ],
+        (id, quotation_id, origin, source_half_package_line_id, category_code,
+         scope_name, demand_name, demand_spec, base_quantity, base_quantity_overridden,
+         loss_rate, quote_quantity, item_version_id, material_id, item_name, brand,
+         series, model, spec, selected_color, unit, sale_unit_price, cost_unit_price,
+         sale_amount, cost_amount, asset_ids, sort_order)
+       SELECT $1, $2, origin, $3, category_code, scope_name, demand_name, demand_spec,
+         base_quantity, base_quantity_overridden, loss_rate, quote_quantity,
+         item_version_id, material_id, item_name, brand, series, model, spec,
+         selected_color, unit, sale_unit_price, cost_unit_price,
+         sale_amount, cost_amount, asset_ids, sort_order
+       FROM main_material_quote_lines WHERE id = $4`,
+      [randomUUID(), target.id, mappedId, line.id],
     );
   }
-}
-
-async function recalculateMainMaterialTotals(
-  database: DatabaseExecutor,
-  quotationId: string,
-): Promise<void> {
-  await database.query(
-    `WITH totals AS (
-       SELECT coalesce(sum(sale_amount), 0)::numeric(16,4) AS direct_cost,
-              coalesce(sum(cost_amount), 0)::numeric(16,4) AS expected_cost
-         FROM main_material_quote_lines
-        WHERE quotation_id = $1
-     )
-     UPDATE half_package_quotations q
-        SET main_material_direct_cost = totals.direct_cost,
-            main_material_management_fee = round(totals.direct_cost * 0.1000, 4),
-            main_material_total = round(totals.direct_cost * 1.1000, 4),
-            main_material_expected_cost = totals.expected_cost,
-            adjusted_total = greatest(round(
-              (q.total + round(totals.direct_cost * 1.1000, 4))
-              * q.discount_rate - q.write_off, 4), 0),
-            gross_profit = round(greatest(round(
-              (q.total + round(totals.direct_cost * 1.1000, 4))
-              * q.discount_rate - q.write_off, 4), 0)
-              - q.expected_cost - totals.expected_cost, 4),
-            gross_margin_rate = CASE WHEN greatest(round(
-              (q.total + round(totals.direct_cost * 1.1000, 4))
-              * q.discount_rate - q.write_off, 4), 0) = 0 THEN NULL
-              ELSE round((greatest(round(
-                (q.total + round(totals.direct_cost * 1.1000, 4))
-                * q.discount_rate - q.write_off, 4), 0)
-                - q.expected_cost - totals.expected_cost) /
-                greatest(round((q.total + round(totals.direct_cost * 1.1000, 4))
-                * q.discount_rate - q.write_off, 4), 0), 4) END,
-            updated_at = current_timestamp
-       FROM totals
-      WHERE q.id = $1`,
-    [quotationId],
-  );
-}
-
-function addDecimal4(left: string, right: string): string {
-  return fixed4(decimal4Units(left) + decimal4Units(right));
-}
-
-function subtractDecimal4(left: string, right: string): string {
-  return fixed4(decimal4Units(left) - decimal4Units(right));
-}
-
-function decimalRate(numerator: string, denominator: string): string | null {
-  const denominatorUnits = decimal4Units(denominator);
-  if (denominatorUnits === 0n) return null;
-  return fixed4(divideRounded(decimal4Units(numerator) * 10_000n, denominatorUnits));
-}
-
-function decimal4Units(value: string): bigint {
-  const match = /^(-?)(\d+)(?:\.(\d{1,4}))?$/.exec(value.trim());
-  if (!match) throw new Error("金额格式不正确");
-  const units = BigInt(match[2] ?? "0") * 10_000n + BigInt((match[3] ?? "").padEnd(4, "0"));
-  return match[1] === "-" ? -units : units;
-}
-
-function divideRounded(numerator: bigint, denominator: bigint): bigint {
-  const negative = (numerator < 0n) !== (denominator < 0n);
-  const left = numerator < 0n ? -numerator : numerator;
-  const right = denominator < 0n ? -denominator : denominator;
-  const quotient = (left + right / 2n) / right;
-  return negative ? -quotient : quotient;
-}
-
-function fixed4(units: bigint): string {
-  const sign = units < 0n ? "-" : "";
-  const absolute = units < 0n ? -units : units;
-  return `${sign}${absolute / 10_000n}.${String(absolute % 10_000n).padStart(4, "0")}`;
-}
-
-function normalizeMaterialSpec(value: string): string {
-  return value.toLowerCase().replaceAll("×", "*").replaceAll("x", "*")
-    .replaceAll("mm", "").replaceAll(" ", "");
 }
 
 const quotationSelect = `SELECT q.id, q.project_id, q.project_address,

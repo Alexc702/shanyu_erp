@@ -151,7 +151,6 @@ function AnalysisHeader({
 function CurrentSummary({ analysis }: { readonly analysis: ProjectCostAnalysis }) {
   return (
     <>
-      <TaxStrip scenario={analysis.current} />
       <MetricGrid scenario={analysis.current} />
       <ModuleTable analysis={analysis} scenario={analysis.current} />
       <FormulaNote />
@@ -403,21 +402,11 @@ function MainMaterialDetail({ analysis }: { readonly analysis: ProjectCostAnalys
   );
 }
 
-function TaxStrip({ scenario }: { readonly scenario: ProjectCostAnalysisScenario }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted px-4 py-3">
-      <span className="type-support text-muted-foreground">半包税金（单列）</span>
-      <strong className="type-entity">{money(scenario.halfPackageTaxAmount)}</strong>
-      <Badge variant="secondary">不计毛利收入</Badge>
-    </div>
-  );
-}
-
 function MetricGrid({ scenario }: { readonly scenario: ProjectCostAnalysisScenario }) {
   return (
     <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="项目成本指标">
-      <MetricCard label="客户应付总价" note="含半包 6% 税金" value={money(scenario.customerPayableTotal)} />
-      <MetricCard label="毛利口径收入" note="不含半包税金与第三方代购" value={money(scenario.marginBasisIncome)} />
+      <MetricCard label="客户应付总价" note="含管理费，不另计半包税金" value={money(scenario.customerPayableTotal)} />
+      <MetricCard label="毛利口径收入" note="不含第三方代购" value={money(scenario.marginBasisIncome)} />
       <MetricCard label="预计成本" note="仅计入综合毛利的模块成本" value={money(scenario.expectedCost)} />
       <MetricCard label="预计毛利" note="毛利口径收入 − 预计成本" value={money(scenario.grossProfit)} />
       <MetricCard label="综合毛利率" note="预计毛利 ÷ 毛利口径收入" value={formatMarginRate(scenario.grossMarginRate)} />
@@ -447,7 +436,7 @@ function ModuleMoney({ emphasis = false, value }: { readonly emphasis?: boolean;
 }
 
 function FormulaNote() {
-  return <p className="type-support m-0 rounded-md bg-primary-soft px-3 py-3 font-medium text-primary">毛利口径收入 = 半包税前收入 + 主材收入 + 其他纳入毛利模块收入；半包税金与第三方代购返点不参与综合毛利率。</p>;
+  return <p className="type-support m-0 rounded-md bg-primary-soft px-3 py-3 font-medium text-primary">毛利口径收入 = 半包收入 + 主材收入 + 其他纳入毛利模块收入；第三方代购返点不参与综合毛利率。</p>;
 }
 
 function costAnalysisHref(analysis: ProjectCostAnalysis): string {

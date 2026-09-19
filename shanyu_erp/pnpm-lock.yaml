@@ -41,6 +41,9 @@ importers:
       exceljs:
         specifier: 4.4.0
         version: 4.4.0
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       node-pg-migrate:
         specifier: ^9.0.0
         version: 9.0.0(@types/pg@8.23.1)(pg@8.23.0)
@@ -59,6 +62,9 @@ importers:
       rxjs:
         specifier: 7.8.2
         version: 7.8.2
+      saxes:
+        specifier: 6.0.0
+        version: 6.0.0
     devDependencies:
       '@eslint/js':
         specifier: ^9.0.0
@@ -3612,6 +3618,10 @@ packages:
   saxes@5.0.1:
     resolution: {integrity: sha512-5LBh1Tls8c9xgGjw3QrMwETmTMVk0oFgvrFSvWx62llR2hcEInrKNZ2GZCCuuy2lvWrdl5jhbpeqc5hRYKFOcw==}
     engines: {node: '>=10'}
+
+  saxes@6.0.0:
+    resolution: {integrity: sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==}
+    engines: {node: '>=v12.22.7'}
 
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
@@ -7647,6 +7657,10 @@ snapshots:
   safer-buffer@2.1.2: {}
 
   saxes@5.0.1:
+    dependencies:
+      xmlchars: 2.2.0
+
+  saxes@6.0.0:
     dependencies:
       xmlchars: 2.2.0
 

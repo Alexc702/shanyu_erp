@@ -38,10 +38,13 @@ import {
   type MainMaterialDelta,
   type MainMaterialQuotation,
   type MainMaterialRepository,
+  type NormalizedMainMaterialItem,
   MainMaterialRevisionConflictError,
   MainMaterialSelectionError,
 } from "./main-material.repository";
 import { parseMainMaterialWorkbook } from "./main-material-workbook";
+import { MainMaterialWorkbookReadError } from "./main-material-xlsx-reader";
+import { validateFullImport } from "./main-material-import-mapping";
 import { isMainMaterialColorSelectionValid } from "./main-material-selection";
 
 const categoryOrder: readonly MainMaterialCategoryCode[] = [
@@ -103,7 +106,7 @@ export class MainMaterialService {
     projectId: string,
   ): Promise<MainMaterialQuotationView> {
     await this.authorizedProject(actor, projectId);
-    const quotation = await this.repository.initializeAndSyncDraft(projectId)
+    const quotation = await this.repository.initializeAndSyncDraft(projectId, true)
       ?? await this.repository.getQuotationByProject(projectId);
     if (!quotation) {
       throw new ConflictException("请先保存半包报价，再开始主材选型");
@@ -116,7 +119,7 @@ export class MainMaterialService {
     projectId: string,
   ): Promise<PublishedMainMaterialCatalogView> {
     await this.authorizedProject(actor, projectId);
-    const quotation = await this.repository.initializeAndSyncDraft(projectId)
+    const quotation = await this.repository.initializeAndSyncDraft(projectId, true)
       ?? await this.repository.getQuotationByProject(projectId);
     if (!quotation) {
       throw new ConflictException("请先保存半包报价，再开始主材选型");
@@ -357,10 +360,20 @@ export class MainMaterialService {
     let parsed;
     try {
       parsed = await parseMainMaterialWorkbook(input.buffer, input.mode);
-    } catch {
-      throw new BadRequestException("无法读取主材库 Excel，请检查文件是否损坏");
+    } catch (error) {
+      throw new BadRequestException(error instanceof MainMaterialWorkbookReadError
+        ? error.message : "主材库 Excel 解析失败，请检查文件格式与模板兼容性");
     }
     let validation = parsed.validation;
+    if (input.mode === "FULL" && validation.blockerCount === 0) {
+      const current = await this.repository.getPublishedCatalog();
+      try {
+        validateFullImport(parsed.payload as readonly NormalizedMainMaterialItem[], current?.items ?? []);
+      } catch (error) {
+        if (!(error instanceof MainMaterialSelectionError)) throw error;
+        validation = { ...validation, blockerCount: 1, blockers: [error.message] };
+      }
+    }
     if (input.mode === "DELTA" && validation.blockerCount === 0) {
       try {
         const checked = await this.repository.validateDelta(
@@ -464,7 +477,9 @@ export class MainMaterialService {
       operation: input.operation,
       values,
     };
-    const checked = await this.repository.validateDelta([delta]);
+    const checked = await this.repository.validateDelta([delta]).catch((error: unknown) => {
+      throw translateError(error);
+    });
     const hash = createHash("sha256")
       .update(JSON.stringify(delta))
       .digest("hex");
@@ -578,6 +593,7 @@ function catalogDifferences(
     }
     if (!item) continue;
     const fields: MainMaterialCatalogFieldDifferenceView[] = [];
+    addDifference(fields, "itemName", "品名 / 项目", line.itemName ?? "", item.itemName);
     addDifference(fields, "brand", "品牌", line.brand ?? "", item.brand);
     addDifference(fields, "series", "系列 / 工艺", line.series ?? "", item.series);
     addDifference(fields, "model", "型号", line.model ?? "", item.model);
@@ -642,7 +658,7 @@ function addDifference(
 function toItemView(item: MainMaterialItem, includeCosts: boolean): MainMaterialItemView {
   return {
     assets: item.assetIds.map((id) => ({ id, path: `/catalog/main-materials/assets/${id}` })),
-    attributes: item.attributes,
+    attributes: Object.fromEntries(Object.entries(item.attributes).filter(([key]) => key !== "selectionReferences")),
     brand: item.brand,
     categoryCode: item.categoryCode,
     categoryName: item.categoryName,

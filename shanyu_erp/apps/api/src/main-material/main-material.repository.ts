@@ -92,6 +92,12 @@ export interface MainMaterialQuotation {
 }
 
 export interface NormalizedMainMaterialItem {
+  readonly selectionOptions?: readonly {
+    readonly type: "门框颜色" | "玻璃颜色";
+    readonly name: string;
+    readonly imageReference: string;
+    readonly order: number;
+  }[];
   readonly attributes: Readonly<Record<string, string>>;
   readonly brand: string;
   readonly categoryCode: MainMaterialCategoryCode;
@@ -149,7 +155,7 @@ export interface MainMaterialRepository {
   getPublishedCatalog(): Promise<MainMaterialCatalog | null>;
   getQuotationById(quotationId: string): Promise<MainMaterialQuotation | null>;
   getQuotationByProject(projectId: string): Promise<MainMaterialQuotation | null>;
-  initializeAndSyncDraft(projectId: string): Promise<MainMaterialQuotation | null>;
+  initializeAndSyncDraft(projectId: string, preserveInherited?: boolean): Promise<MainMaterialQuotation | null>;
   refreshDraftCatalog(input: {
     readonly expectedRevision: number;
     readonly projectId: string;

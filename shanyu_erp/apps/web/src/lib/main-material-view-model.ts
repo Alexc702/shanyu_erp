@@ -21,6 +21,14 @@ const internalAttributeKeys = new Set([
 
 const aluminumDoorCasingMaterialId = "MAT-GLASS_DOOR-FBACE026D73F";
 
+export function mainMaterialDisplayModel(
+  item: Pick<MainMaterialItemView, "materialId" | "itemName" | "model">,
+): string {
+  return item.materialId === "MAT-SEAM-A179F09722C2" && item.model === "美缝"
+    ? item.itemName
+    : item.model || item.itemName;
+}
+
 export function formatMainMaterialUnit(unit: string): string {
   return ["m2", "m²", "㎡"].includes(unit.trim().toLowerCase()) ? "M²" : unit;
 }
@@ -48,9 +56,12 @@ export function mainMaterialDemandEditing(
   line: MainMaterialQuotationLineView,
   editable: boolean,
 ): { readonly baseQuantity: boolean; readonly lossRate: boolean } {
+  const unit = formatMainMaterialUnit(
+    line.item?.unit ?? (line.origin === "AUTO_TILE" ? "M²" : ""),
+  ).trim().toLowerCase();
   return {
     baseQuantity: editable && line.origin === "MANUAL",
-    lossRate: editable,
+    lossRate: editable && ["m", "米", "m²", "平米", "平方", "平方米"].includes(unit),
   };
 }
 

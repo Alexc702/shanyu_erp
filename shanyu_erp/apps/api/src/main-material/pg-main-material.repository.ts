@@ -24,6 +24,8 @@ import {
   type NormalizedMainMaterialItem,
 } from "./main-material.repository";
 import { isMainMaterialColorSelectionValid } from "./main-material-selection";
+import { reconcileSafeDrafts } from "./main-material-safe-update";
+import { mapFullImportItem, normalizeMaterialVariant, validateFullImport } from "./main-material-import-mapping";
 
 interface CatalogRow {
   id: string;
@@ -217,6 +219,7 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
     actorUserId: string,
   ): Promise<MainMaterialCatalog> {
     const versionId = await this.database.transaction(async (database) => {
+      await database.query("LOCK TABLE main_material_catalog_versions IN SHARE ROW EXCLUSIVE MODE");
       const batchResult = await database.query<ImportRow>(
         `${importSelect} WHERE id = $1 FOR UPDATE`,
         [batchId],
@@ -237,9 +240,9 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
       if (!current) throw new MainMaterialSelectionError("当前没有已发布主材库");
       const currentItems = await this.listItems(database, current.id);
       const normalized = batch.mode === "FULL"
-        ? (batch.normalized_payload as NormalizedMainMaterialItem[])
+        ? validateFullImport(batch.normalized_payload as NormalizedMainMaterialItem[], currentItems)
         : applyDelta(
-            currentItems.map(toNormalizedItem),
+            currentItems,
             batch.normalized_payload as MainMaterialDelta[],
           );
       const nextVersionResult = await database.query<{ next_version: number }>(
@@ -297,6 +300,11 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
           WHERE id = $1 AND status = 'VALIDATED'`,
         [batchId, id],
       );
+      const report = await reconcileSafeDrafts(database, { apply: true, actorUserId, targetCatalogId: id });
+      await database.query(`INSERT INTO audit_events
+        (id, action, actor_user_id, occurred_at, result, target_type, target_id, metadata)
+        VALUES ($1, 'MAIN_MATERIAL_SAFE_UPDATE_ANALYZED', $2, current_timestamp,
+          'SUCCESS', 'MAIN_MATERIAL_CATALOG', $3, $4)`, [randomUUID(), actorUserId, id, report]);
       return id;
     });
     const result = await this.database.query<CatalogRow>(
@@ -313,7 +321,7 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
   ): Promise<{ readonly pendingItemCount: number }> {
     const current = await this.getPublishedCatalog();
     if (!current) throw new MainMaterialSelectionError("当前没有已发布主材库");
-    const normalized = applyDelta(current.items.map(toNormalizedItem), changes);
+    const normalized = applyDelta(current.items, changes);
     return {
       pendingItemCount: normalized.filter((item) => item.status === "PENDING_DATA").length,
     };
@@ -329,14 +337,16 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
 
   async initializeAndSyncDraft(
     projectId: string,
+    preserveInherited = false,
   ): Promise<MainMaterialQuotation | null> {
     await this.database.transaction(async (database) => {
       const quotationResult = await database.query<{
         id: string;
         main_material_catalog_version_id: string | null;
+        parent_version_id: string | null;
         status: string;
       }>(
-        `SELECT id, status, main_material_catalog_version_id
+        `SELECT id, status, main_material_catalog_version_id, parent_version_id
            FROM half_package_quotations
           WHERE project_id = $1 AND is_current
           FOR UPDATE`,
@@ -344,6 +354,7 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
       );
       const quotation = quotationResult.rows[0];
       if (!quotation || quotation.status !== "DRAFT") return;
+      if (preserveInherited && quotation.parent_version_id) return;
       let changed = false;
       if (!quotation.main_material_catalog_version_id) {
         const attached = await database.query(
@@ -838,10 +849,11 @@ function toNormalizedItem(item: MainMaterialItem): NormalizedMainMaterialItem {
 }
 
 function applyDelta(
-  source: readonly NormalizedMainMaterialItem[],
+  source: readonly MainMaterialItem[],
   changes: readonly MainMaterialDelta[],
 ): NormalizedMainMaterialItem[] {
-  const items = new Map(source.map((item) => [item.materialId, item] as const));
+  const previous = new Map(source.map((item) => [item.materialId, item] as const));
+  const items = new Map(source.map((item) => [item.materialId, toNormalizedItem(item)] as const));
   for (const change of changes) {
     const current = items.get(change.materialId);
     if (!current) {
@@ -887,9 +899,12 @@ function applyDelta(
           ? "ACTIVE"
           : deltaText(values, "data_status", current.status) as MainMaterialDataStatus,
       unit: deltaText(values, "unit", current.unit),
-    });
+    }, current);
     validatePublishedItem(next);
-    items.set(change.materialId, next);
+    // DELTA and online edits use the same asset checks as FULL publication,
+    // but only changed records advance their optimistic-concurrency token.
+    const mapped = mapFullImportItem(next, previous.get(change.materialId));
+    items.set(change.materialId, { ...mapped, recordVersion: next.recordVersion });
   }
   return [...items.values()];
 }
@@ -974,7 +989,7 @@ function validatePublishedItem(item: NormalizedMainMaterialItem): void {
     throw new MainMaterialSelectionError(`${item.materialId} 数据状态无效`);
   }
   if (!item.itemName && !item.model) throw new MainMaterialSelectionError(`${item.materialId} 缺少品名/型号`);
-  if (!item.unit) throw new MainMaterialSelectionError(`${item.materialId} 缺少单位`);
+  if (item.status === "ACTIVE" && !item.unit) throw new MainMaterialSelectionError(`${item.materialId} 缺少单位`);
   if (item.status === "ACTIVE" && (!item.salePrice || !item.costPrice)) {
     throw new MainMaterialSelectionError(`${item.materialId} 缺少销售价或成本价`);
   }
@@ -984,8 +999,10 @@ function validatePublishedItem(item: NormalizedMainMaterialItem): void {
 }
 
 function normalizeSelectableState(
-  item: NormalizedMainMaterialItem,
+  sourceItem: NormalizedMainMaterialItem,
+  previous?: NormalizedMainMaterialItem,
 ): NormalizedMainMaterialItem {
+  const item = normalizeMaterialVariant(sourceItem, previous);
   const required: string[] = [];
   if (!item.itemName && !item.model) required.push("品名/型号");
   if (!item.unit) required.push("单位");

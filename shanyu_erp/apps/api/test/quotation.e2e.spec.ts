@@ -453,11 +453,11 @@ describe("half-package quotation HTTP interface", () => {
           "直接费",
           "管理费",
           "折扣和抹零",
-          "税金",
           "总造价",
         ]);
-        expect(summary.at(-2)?.amount).toBe(7.71);
-        expect(summary.at(-1)?.amount).toBe(136.29);
+        expect(summary.at(-1)?.amount).toBe(128.58);
+        expect(JSON.stringify(workbook.getWorksheet("半包报价单")?.getSheetValues()))
+          .not.toContain("税金");
         expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues())))
           .not.toContain("成本");
       }
@@ -590,6 +590,13 @@ describe("half-package quotation PostgreSQL concurrency", () => {
 
         let initial = quotations[0];
         if (!initial) throw new Error("并发请求未返回报价");
+        const initialLines = (
+          initial.scopes as Array<{ lines: Array<{ itemName: string; remarks: string }> }>
+        ).flatMap((scope) => scope.lines);
+        expect(initialLines.find((line) => line.itemName === "正泰空开更换")?.remarks)
+          .toBe("正泰（含总开、漏电保护器、空开）按外框面积计算");
+        expect(initialLines.find((line) => line.itemName === "施耐德空开更换")?.remarks)
+          .toBe("施耐德m9系列（含总开、漏电保护器、空开）按外框面积计算");
         const initialItemNames = (
           initial.scopes as Array<{ lines: Array<{ itemName: string }> }>
         ).flatMap((scope) => scope.lines.map((line) => line.itemName));
@@ -803,9 +810,9 @@ describe("half-package quotation PostgreSQL concurrency", () => {
           .set("Cookie", cookie)
           .expect(200);
         expect(catalogResponse.body.catalog).toMatchObject({
-          name: "山屿 ERP 主材库 0917 铝合金门套选型修正版",
+          name: "山屿 ERP 主材库 0919 总表统一版",
         });
-        expect(catalogResponse.body.catalog.items).toHaveLength(602);
+        expect(catalogResponse.body.catalog.items).toHaveLength(601);
         let materialQuotation = materialResponse.body.quotation as {
           lines: Array<{
             baseQuantity: string | null;

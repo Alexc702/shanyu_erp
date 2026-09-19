@@ -138,6 +138,8 @@ export class QuotationService {
     const project = await this.authorizedProject(actor, projectId);
     const existing = await this.quotationRepository.findDraft(projectId);
     if (existing) {
+      // Opening an inherited draft must not repair or expand its saved snapshot.
+      if (existing.parentVersionId) return toView(existing);
       const repaired = await this.repairAcceptanceDraft(actor, existing);
       return toView(
         await this.addMissingProjectScopes(actor, project, repaired),
@@ -552,18 +554,17 @@ export class QuotationService {
       source,
       actor.id,
     );
-    const repaired = await this.repairAcceptanceDraft(actor, created);
     await this.auditRepository.append({
       action: "QUOTATION_EDITING_CONTINUED",
       actorUserId: actor.id,
-      afterState: { version: repaired.versionNumber },
+      afterState: { version: created.versionNumber },
       beforeState: { version: source.versionNumber },
       occurredAt: new Date(),
       result: "SUCCESS",
-      targetId: repaired.id,
+      targetId: created.id,
       targetType: "HALF_PACKAGE_QUOTATION",
     });
-    return toView(repaired);
+    return toView(created);
   }
 
   async updateAdjustment(
@@ -2004,10 +2005,6 @@ function projectCostScenario(
     mainMaterial,
     marginBasisIncome,
   );
-  const halfPackageTaxAmount = multiplyDecimal4(
-    halfPackageIncome,
-    "0.0600",
-  );
   const halfPackageCost = quotation.expectedCost;
   const mainMaterialCost =
     mainMaterial?.expectedCost ??
@@ -2026,28 +2023,23 @@ function projectCostScenario(
   const mainMaterialEnabled =
     mainMaterial?.lines.some((line) => line.saleAmount !== null) ?? false;
   return {
-    customerPayableTotal: addDecimal4(
-      marginBasisIncome,
-      halfPackageTaxAmount,
-    ),
+    customerPayableTotal: marginBasisIncome,
     expectedCost,
     grossMarginRate: decimalRate(grossProfit, marginBasisIncome),
     grossProfit,
-    halfPackageTaxAmount,
+    // Keep the response field compatible; half-package quotes no longer add tax.
+    halfPackageTaxAmount: "0.0000",
     marginBasisIncome,
     modules: [
       {
         code: "HALF_PACKAGE",
-        customerPrice: addDecimal4(
-          halfPackageIncome,
-          halfPackageTaxAmount,
-        ),
+        customerPrice: halfPackageIncome,
         expectedCost: halfPackageCost,
         grossMarginRate: decimalRate(halfPackageProfit, halfPackageIncome),
         grossProfit: halfPackageProfit,
-        note: "含半包管理费与 6% 税金",
+        note: "含半包管理费",
         status: quotation.status === "DRAFT" ? "DRAFT" : "COMPLETED",
-        taxAmount: halfPackageTaxAmount,
+        taxAmount: "0.0000",
       },
       {
         code: "MAIN_MATERIAL",
@@ -2186,12 +2178,6 @@ function addDecimal4(left: string, right: string): string {
 
 function subtractDecimal4(left: string, right: string): string {
   return fixed4(decimal4Units(left) - decimal4Units(right));
-}
-
-function multiplyDecimal4(left: string, right: string): string {
-  return fixed4(
-    divideRounded(decimal4Units(left) * decimal4Units(right), 10_000n),
-  );
 }
 
 function adjustedProjectTotal(

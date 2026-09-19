@@ -531,18 +531,18 @@ describe("QuotationService", () => {
     });
   });
 
-  it("returns one server-calculated project cost analysis without treating tax as margin income", async () => {
+  it("returns project cost analysis without adding half-package tax", async () => {
     await service.getOrCreateDraft(lead, project.id);
 
     const analysis = await service.getProjectCostAnalysis(owner, project.id);
     expect(analysis).toMatchObject({
       basis: "DRAFT_REALTIME",
       current: {
-        customerPayableTotal: "12338.8452",
+        customerPayableTotal: "11640.4200",
         expectedCost: "10582.2000",
         grossMarginRate: "0.0909",
         grossProfit: "1058.2200",
-        halfPackageTaxAmount: "698.4252",
+        halfPackageTaxAmount: "0.0000",
         marginBasisIncome: "11640.4200",
       },
       customerName: project.customerName,
@@ -553,7 +553,7 @@ describe("QuotationService", () => {
     expect(analysis.current.modules).toHaveLength(4);
     expect(analysis.current.modules[0]).toMatchObject({
       code: "HALF_PACKAGE",
-      customerPrice: "12338.8452",
+      customerPrice: "11640.4200",
       expectedCost: "10582.2000",
       grossProfit: "1058.2200",
     });
@@ -583,15 +583,15 @@ describe("QuotationService", () => {
     expect(analysis).toMatchObject({
       basis: "PENDING_COMPARISON",
       current: {
-        customerPayableTotal: "12338.8452",
+        customerPayableTotal: "11640.4200",
         grossProfit: "1058.2200",
         marginBasisIncome: "11640.4200",
       },
       pending: {
-        customerPayableTotal: "11615.9029",
+        customerPayableTotal: "10958.3990",
         expectedCost: "10582.2000",
         grossProfit: "376.1990",
-        halfPackageTaxAmount: "657.5039",
+        halfPackageTaxAmount: "0.0000",
         marginBasisIncome: "10958.3990",
       },
     });
@@ -867,24 +867,21 @@ describe("QuotationService", () => {
       .toEqual([
         { amount: 10582.2, label: "直接费", number: "（1）" },
         { amount: 1058.22, label: "管理费", number: "（2）" },
-        { amount: 698.43, label: "税金", number: "（3）" },
-        { amount: 12338.85, label: "总造价", number: "（4）" },
+        { amount: 11640.42, label: "总造价", number: "（3）" },
       ]);
     const quotedHalfPackage = quotedWorkbook.getWorksheet("半包报价单");
     const quotedManagementRow = quotationSummaryRowNumber(
       quotedHalfPackage,
       "管理费",
     );
-    const quotedTaxRow = quotationSummaryRowNumber(quotedHalfPackage, "税金");
     const quotedTotalRow = quotationSummaryRowNumber(quotedHalfPackage, "总造价");
-    expect(quotedTaxRow).toBe(quotedManagementRow + 1);
-    expect(quotedTotalRow).toBe(quotedTaxRow + 1);
-    expect(quotedHalfPackage?.getRow(quotedTaxRow).hidden).toBe(false);
+    expect(quotedTotalRow).toBe(quotedManagementRow + 1);
+    expect(JSON.stringify(quotedHalfPackage?.getSheetValues())).not.toContain("税金");
     const initialExport = await service.createExport(lead, submitted.id, "PDF");
     expect(initialExport).toMatchObject({ format: "PDF" });
     expect(initialExport.payload.subarray(0, 4).toString()).toBe("%PDF");
     expect((await PDFDocument.load(initialExport.payload)).getSubject()).toBe(
-      "grand-total:12338.8452",
+      "grand-total:11640.4200",
     );
     expect(await pdfSectionOrder(initialExport.payload)).toEqual([
       "COVER",
@@ -1007,8 +1004,7 @@ describe("QuotationService", () => {
     expect(quotationSummaryRows(worksheet)).toEqual([
       { amount: 10582.2, label: "直接费", number: "（1）" },
       { amount: 1058.22, label: "管理费", number: "（2）" },
-      { amount: 698.43, label: "税金", number: "（3）" },
-      { amount: 12338.85, label: "总造价", number: "（4）" },
+      { amount: 11640.42, label: "总造价", number: "（3）" },
     ]);
     expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues()))).not.toContain("成本");
     expect(workbookFormulaCells(workbook)).toEqual([]);
@@ -1024,8 +1020,7 @@ describe("QuotationService", () => {
         { amount: 10582.2, label: "直接费", number: "（1）" },
         { amount: 1058.22, label: "管理费", number: "（2）" },
         { amount: -582.02, label: "折扣和抹零", number: "（3）" },
-        { amount: 663.5, label: "税金", number: "（4）" },
-        { amount: 11721.9, label: "总造价", number: "（5）" },
+        { amount: 11058.4, label: "总造价", number: "（4）" },
       ],
       adjustmentRemark: "获批折扣率 95.00%，抹零 0.00 元。",
       name: "已批准折扣",
@@ -1037,8 +1032,7 @@ describe("QuotationService", () => {
         { amount: 10582.2, label: "直接费", number: "（1）" },
         { amount: 1058.22, label: "管理费", number: "（2）" },
         { amount: -100, label: "折扣和抹零", number: "（3）" },
-        { amount: 692.43, label: "税金", number: "（4）" },
-        { amount: 12232.85, label: "总造价", number: "（5）" },
+        { amount: 11540.42, label: "总造价", number: "（4）" },
       ],
       adjustmentRemark: "获批折扣率 100.00%，抹零 100.00 元。",
       name: "已批准抹零",
@@ -1050,8 +1044,7 @@ describe("QuotationService", () => {
         { amount: 10582.2, label: "直接费", number: "（1）" },
         { amount: 1058.22, label: "管理费", number: "（2）" },
         { amount: -682.02, label: "折扣和抹零", number: "（3）" },
-        { amount: 657.5, label: "税金", number: "（4）" },
-        { amount: 11615.9, label: "总造价", number: "（5）" },
+        { amount: 10958.4, label: "总造价", number: "（4）" },
       ],
       adjustmentRemark: "获批折扣率 95.00%，抹零 100.00 元。",
       name: "已批准折扣和抹零",
@@ -1090,18 +1083,18 @@ describe("QuotationService", () => {
     ]);
     const halfPackage = workbook.getWorksheet("半包报价单");
     expect(quotationSummaryRows(halfPackage)).toEqual(expected);
-    const taxRow = halfPackage?.findRow(
-      quotationSummaryRowNumber(halfPackage, "税金"),
-    );
+    expect(JSON.stringify(halfPackage?.getSheetValues())).not.toContain("税金");
     const adjustmentRow = halfPackage?.findRow(
       quotationSummaryRowNumber(halfPackage, "折扣和抹零"),
     );
     expect(adjustmentRow?.getCell(9).text).toBe(adjustmentRemark);
-    expect(taxRow?.getCell(9).text).toBe("固定为工程总价6%");
     expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues())))
       .not.toContain("成本");
 
     const pdf = await service.createExport(owner, approved.id, "PDF");
+    expect((await PDFDocument.load(pdf.payload)).getSubject()).toBe(
+      `grand-total:${approved.adjustedTotal}`,
+    );
     expect(await pdfSectionOrder(pdf.payload)).toEqual([
       "COVER",
       "BUDGET",
