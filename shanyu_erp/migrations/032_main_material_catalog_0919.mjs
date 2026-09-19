@@ -5,7 +5,7 @@ const catalogId = "32323232-3232-4232-8232-323232323232";
 const previousSourceHash = "de4429313900a87943be5643266f8936c45e878a8d9ba77c963857a7633268ec";
 
 export async function up(pgm) {
-  const baseline = JSON.parse(await readFile(resolve("apps/api/assets/main-materials/v1/catalog-0919.json"), "utf8"));
+  const baseline = await readBaselineCatalog();
   pgm.sql(`DO $migration$
   DECLARE source_id uuid; source_hash_value text; next_version integer;
   BEGIN
@@ -63,3 +63,18 @@ export async function down(pgm) {
 
 function literal(value) { return `'${String(value).replaceAll("'", "''")}'`; }
 function json(value) { return `${literal(JSON.stringify(value))}::jsonb`; }
+
+async function readBaselineCatalog() {
+  const candidates = [
+    resolve(process.cwd(), "apps/api/assets/main-materials/v1/catalog-0919.json"),
+    resolve(process.cwd(), "assets/main-materials/v1/catalog-0919.json"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(await readFile(candidate, "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  throw new Error("找不到0919主材库基线资产");
+}
