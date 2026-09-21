@@ -5,6 +5,7 @@ import type {
 } from "@shanyu/contracts";
 
 import type { QuantityRule } from "./half-package-calculator";
+import type { ModuleAdjustment } from "./project-pricing";
 
 export const QUOTATION_REPOSITORY = Symbol("QUOTATION_REPOSITORY");
 
@@ -24,6 +25,7 @@ export type QuotationAdjustmentStatus =
   | "CONFIRMED";
 
 export interface ConfirmedQuotationAdjustment {
+  readonly mainMaterialAdjustment?: ModuleAdjustment | null;
   readonly adjustedTotal: string;
   readonly discountRate: string;
   readonly expectedRevision: number;
@@ -90,6 +92,8 @@ export interface QuotationDraftScope {
 }
 
 export interface QuotationDraft {
+  readonly mainMaterialAdjustment?: ModuleAdjustment | null;
+  readonly designFeeUnitPrice?: string | null;
   readonly adjustmentReason: string | null;
   readonly adjustmentStatus: QuotationAdjustmentStatus;
   readonly adjustedTotal: string;
@@ -171,6 +175,7 @@ export interface QuotationRepository {
     actorUserId: string,
     reason: string | null,
     expectedRevision: number,
+    mainMaterialAdjustment?: ModuleAdjustment | null,
   ): Promise<QuotationDraft>;
   updateMarginBenchmarkRate(
     quotationId: string,

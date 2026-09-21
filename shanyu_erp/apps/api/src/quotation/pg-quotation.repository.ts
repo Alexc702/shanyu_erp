@@ -19,6 +19,7 @@ import {
   type ProjectsRepository,
 } from "../project/projects.repository";
 import type { QuantityRule } from "./half-package-calculator";
+import { PgMainMaterialRepository } from "../main-material/pg-main-material.repository";
 import {
   type ConfirmedQuotationAdjustment,
   type NewQuotationDraft,
@@ -62,6 +63,8 @@ interface TemplateItemRow {
 }
 
 interface QuotationRow {
+  main_material_adjustment: QuotationDraft["mainMaterialAdjustment"];
+  design_fee_unit_price: string | null;
   adjustment_reason: string | null;
   adjustment_status: QuotationDraft["adjustmentStatus"];
   adjusted_total: string;
@@ -452,7 +455,7 @@ export class PgQuotationRepository implements QuotationRepository {
         `UPDATE half_package_quotations
             SET direct_cost = $3, expected_cost = $4, gross_profit = $5,
                 gross_margin_rate = $6, management_fee = $7, total = $8,
-                adjusted_total = $9, revision = $10,
+                adjusted_total = $9, revision = $10, design_fee_unit_price = $12,
                 updated_at = current_timestamp
           WHERE id = $1 AND project_id = $2 AND status = 'DRAFT'
             AND is_current AND revision = $11`,
@@ -468,11 +471,25 @@ export class PgQuotationRepository implements QuotationRepository {
           input.adjustedTotal,
           input.revision,
           expectedRevision,
+          input.designFeeUnitPrice ?? null,
         ],
       );
       if (updated.rowCount !== 1) {
         throw new QuotationRevisionConflictError();
       }
+      const changedSources = await database.query<{ id: string }>(
+        `SELECT l.id FROM half_package_quotation_lines l
+          JOIN half_package_quotation_spaces s ON s.id = l.quotation_space_id
+          JOIN jsonb_to_recordset($2::jsonb) AS incoming(id uuid, selected boolean, quantity numeric)
+            ON incoming.id = l.id
+          WHERE s.quotation_id = $1
+            AND (l.selected IS DISTINCT FROM incoming.selected
+              OR l.calculated_quantity IS DISTINCT FROM incoming.quantity)`,
+        [input.id, JSON.stringify(input.scopes.flatMap(scope => scope.lines.map(line => ({
+          id: line.id, selected: line.selected, quantity: line.calculatedQuantity,
+        }))))],
+      );
+      const changedSourceIds = changedSources.rows.map(line => line.id);
       for (const scope of input.scopes) {
         const scopeUpdate = await database.query(
           `UPDATE half_package_quotation_spaces
@@ -515,6 +532,10 @@ export class PgQuotationRepository implements QuotationRepository {
             throw new Error("报价工程项不存在");
           }
         }
+      }
+      // Explicit half-package edits sync demands atomically, without upgrading the bound catalog.
+      if (input.mainMaterialCatalogVersionId && changedSourceIds.length) {
+        await PgMainMaterialRepository.syncDraftDemands(database, input.projectId, false, changedSourceIds);
       }
     });
     const saved = await this.findDraft(input.projectId);
@@ -665,12 +686,13 @@ export class PgQuotationRepository implements QuotationRepository {
     actorUserId: string,
     reason: string | null,
     expectedRevision: number,
+    mainMaterialAdjustment?: QuotationDraft["mainMaterialAdjustment"],
   ): Promise<QuotationDraft> {
     const updated = await this.database.query(
       `UPDATE half_package_quotations
           SET discount_rate = $2, write_off = $3, adjusted_total = $4,
               gross_profit = $5, gross_margin_rate = $6,
-              adjustment_status = 'PENDING_APPROVAL',
+              adjustment_status = 'PENDING_APPROVAL', main_material_adjustment = $10,
               adjustment_reason = $7,
               adjustment_submitted_by_user_id = $8,
               adjustment_submitted_at = current_timestamp,
@@ -688,6 +710,7 @@ export class PgQuotationRepository implements QuotationRepository {
         reason,
         actorUserId,
         expectedRevision,
+        mainMaterialAdjustment ?? null,
       ],
     );
     if (updated.rowCount !== 1) throw new QuotationRevisionConflictError();
@@ -798,6 +821,7 @@ export class PgQuotationRepository implements QuotationRepository {
               SET discount_rate = $2, write_off = $3, adjusted_total = $4,
                   gross_profit = $5, gross_margin_rate = $6,
                   adjustment_status = 'CONFIRMED', adjustment_reason = $7,
+                  main_material_adjustment = $10,
                   adjustment_submitted_by_user_id = $8,
                   adjustment_submitted_at = current_timestamp,
                   revision = revision + 1, updated_at = current_timestamp
@@ -814,11 +838,13 @@ export class PgQuotationRepository implements QuotationRepository {
             adjustment.reason,
             actorUserId,
             adjustment.expectedRevision,
+            adjustment.mainMaterialAdjustment ?? null,
           ],
         );
         if (adjusted.rowCount !== 1) throw new QuotationRevisionConflictError();
         source = {
           ...source,
+          mainMaterialAdjustment: adjustment.mainMaterialAdjustment ?? null,
           adjustedTotal: adjustment.adjustedTotal,
           adjustmentReason: adjustment.reason,
           adjustmentStatus: "CONFIRMED",
@@ -989,6 +1015,8 @@ export class PgQuotationRepository implements QuotationRepository {
       adjustmentReason: row.adjustment_reason,
       adjustmentStatus: row.adjustment_status,
       adjustedTotal: row.adjusted_total,
+      mainMaterialAdjustment: row.main_material_adjustment,
+      designFeeUnitPrice: row.design_fee_unit_price,
       costTemplateVersionId: row.cost_template_version_id,
       costTemplateVersionNumber: row.cost_template_version_number,
       createdByUserId: row.created_by_user_id,
@@ -1061,10 +1089,10 @@ async function insertDraft(
         adjustment_reason, margin_benchmark_rate,
         main_material_catalog_version_id, main_material_direct_cost,
         main_material_management_fee, main_material_total,
-        main_material_expected_cost)
+        main_material_expected_cost, main_material_adjustment, design_fee_unit_price)
      VALUES ($1, $2, $3, 'DRAFT', $4, $5, $6, $7, $8, $9, $10, $11,
              $12, $13, $14, $15, $16, $17, $18, $19, $20, true, $21, $22,
-             $23, $24, $25, $26, $27, $28, $29)`,
+             $23, $24, $25, $26, $27, $28, $29, $30, $31)`,
     [
       input.id,
       input.projectId,
@@ -1095,6 +1123,8 @@ async function insertDraft(
       input.mainMaterialManagementFee ?? "0.0000",
       input.mainMaterialTotal ?? "0.0000",
       input.mainMaterialExpectedCost ?? "0.0000",
+      input.mainMaterialAdjustment ?? null,
+      input.designFeeUnitPrice ?? null,
     ],
   );
   for (const scope of input.scopes) {
@@ -1365,6 +1395,7 @@ const quotationSelect = `SELECT q.id, q.project_id, q.project_address,
                                  q.main_material_management_fee,
                                  q.main_material_total,
                                  q.main_material_expected_cost,
+                                 q.main_material_adjustment, q.design_fee_unit_price,
                                  q.margin_benchmark_rate,
                                  q.gross_profit, q.gross_margin_rate,
                                  q.management_fee, q.total, q.adjusted_total,

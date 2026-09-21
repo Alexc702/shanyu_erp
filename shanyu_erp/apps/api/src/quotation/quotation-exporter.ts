@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import PDFDocument from "pdfkit";
+import { calculateProjectPricing } from "./project-pricing";
 
 import type {
   QuotationDraft,
@@ -29,7 +30,7 @@ interface ExportContext {
 
 export interface QuotationExportSummaryRow {
   readonly amount: string;
-  readonly label: "直接费" | "管理费" | "折扣和抹零" | "总造价";
+  readonly label: "直接费" | "管理费" | "设计费" | "折扣和抹零" | "总造价";
   readonly number: string;
   readonly remarks: string;
 }
@@ -143,6 +144,7 @@ export class QuotationExporter {
       budgetSource.rowCount,
     );
 
+    addProjectSummaryWorksheet(workbook, context);
     const sheet = workbook.addWorksheet("半包报价单", {
       pageSetup: { ...source.pageSetup },
       properties: { ...source.properties },
@@ -292,6 +294,7 @@ export class QuotationExporter {
     document.registerFont("NotoSansSC", font).font("NotoSansSC");
     profile.mark("pdf-assets-loaded");
     addIntroductoryPdfPages(document, staticAssets, context);
+    addProjectSummaryPdfPage(document, context);
     profile.mark("introductory-pages-drawn");
     const rows = pdfRows(context);
     profile.mark("rows-built");
@@ -369,7 +372,7 @@ async function readTemplate(): Promise<Buffer> {
   throw new Error(`找不到半包报价导出模板：${templateFileName}`);
 }
 
-async function readPdfFont(): Promise<Buffer> {
+export async function readPdfFont(): Promise<Buffer> {
   const candidates = [
     join(process.cwd(), "assets", "fonts", pdfFontFileName),
     join(process.cwd(), "apps", "api", "assets", "fonts", pdfFontFileName),
@@ -384,7 +387,7 @@ async function readPdfFont(): Promise<Buffer> {
   throw new Error(`找不到 PDF 中文字体：${pdfFontFileName}`);
 }
 
-async function readPdfStaticAsset(fileName: string): Promise<Buffer> {
+export async function readPdfStaticAsset(fileName: string): Promise<Buffer> {
   const candidates = [
     join(process.cwd(), "assets", "pdf", fileName),
     join(process.cwd(), "apps", "api", "assets", "pdf", fileName),
@@ -488,8 +491,9 @@ export function buildQuotationExportSummary(
     quotation.status === "APPROVED" &&
     quotation.adjustmentStatus === "CONFIRMED" &&
     (decimal4Units(quotation.discountRate) !== 10_000n ||
-      decimal4Units(quotation.writeOff) !== 0n);
-  const beforeAdjustment = addDecimal4(directCost, managementFee);
+      decimal4Units(quotation.writeOff) !== 0n ||
+      (quotation.mainMaterialAdjustment != null && (decimal4Units(quotation.mainMaterialAdjustment.discountRate) !== 10_000n || decimal4Units(quotation.mainMaterialAdjustment.writeOff) !== 0n)));
+  const beforeAdjustment = addDecimal4(addDecimal4(directCost, managementFee), calculateProjectPricing(quotation).designFeeAmount ?? "0.0000");
   const grandTotal = adjustmentApproved
     ? quotation.adjustedTotal
     : beforeAdjustment;
@@ -507,24 +511,79 @@ export function buildQuotationExportSummary(
       remarks: "管理费统一按工程总价10%计算。",
     },
   ];
+  const designFeeAmount = calculateProjectPricing(quotation).designFeeAmount;
+  if (designFeeAmount !== null) rows.push({ amount: designFeeAmount, label: "设计费", number: "（3）", remarks: "按外框面积计价，不参与折扣与抹零。" });
   if (adjustmentApproved) {
     rows.push({
       amount: subtractDecimal4(grandTotal, beforeAdjustment),
       label: "折扣和抹零",
-      number: "（3）",
-      remarks: `获批折扣率 ${formatPercentage(quotation.discountRate)}，抹零 ${formatDecimal2(quotation.writeOff)} 元。`,
+      number: `（${rows.length + 1}）`,
+      remarks: quotation.mainMaterialAdjustment
+        ? `半包折扣 ${formatPercentage(quotation.discountRate)}、抹零 ${formatDecimal2(quotation.writeOff)} 元；主材折扣 ${formatPercentage(quotation.mainMaterialAdjustment.discountRate)}、抹零 ${formatDecimal2(quotation.mainMaterialAdjustment.writeOff)} 元。`
+        : `获批折扣率 ${formatPercentage(quotation.discountRate)}，抹零 ${formatDecimal2(quotation.writeOff)} 元。`,
     });
   }
   rows.push({
     amount: grandTotal,
     label: "总造价",
-    number: adjustmentApproved ? "（4）" : "（3）",
+    number: `（${rows.length + 1}）`,
     remarks: "",
   });
   return {
     grandTotal,
     rows,
   };
+}
+
+export function projectSummaryRows(quotation: QuotationDraft, mainMaterial: MainMaterialQuotation | null = null) {
+  const approved = quotation.status === "APPROVED" && quotation.adjustmentStatus === "CONFIRMED";
+  const pricing = calculateProjectPricing({ ...quotation,
+    mainMaterialTotal: quotation.mainMaterialTotal ?? mainMaterial?.total ?? "0.0000",
+    ...(!approved ? { discountRate: "1.0000", writeOff: "0.0000", mainMaterialAdjustment: { discountRate: "1.0000", writeOff: "0.0000" } } : {}),
+  });
+  const rows = [{ name: "半包工程", amount: pricing.halfPackageAdjustedTotal }];
+  if (quotation.mainMaterialCatalogVersionId || mainMaterial?.lines.length || decimal4Units(quotation.mainMaterialTotal ?? "0") > 0n) {
+    rows.push({ name: "主材报价", amount: pricing.mainMaterialAdjustedTotal });
+  }
+  if (pricing.designFeeAmount !== null) rows.push({ name: "设计费", amount: pricing.designFeeAmount });
+  return rows;
+}
+
+function addProjectSummaryWorksheet(workbook: ExcelJS.Workbook, context: ExportContext) {
+  const sheet = workbook.addWorksheet("项目报价汇总", { pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 1 } });
+  sheet.columns = [{ width: 48 }, { width: 25 }];
+  sheet.mergeCells("A1:B1"); sheet.getCell("A1").value = "项目报价汇总";
+  sheet.getRow(1).height = 42;
+  sheet.mergeCells("A2:B2"); sheet.getCell("A2").value = `${context.quotation.projectAddress} · V${context.quotation.versionNumber}`;
+  sheet.getRow(2).height = 30;
+  sheet.addRow(["报价模块", "模块金额（元）"]);
+  for (const row of projectSummaryRows(context.quotation, context.mainMaterial)) sheet.addRow([row.name, number2(row.amount)]);
+  sheet.addRow(["项目合计", number2(context.summary.grandTotal)]);
+  sheet.eachRow((row, index) => {
+    row.height = index === 1 ? 42 : 32;
+    row.eachCell((cell, column) => {
+      cell.font = { name: "宋体", size: index === 1 ? 20 : 11, bold: index === 1 || index === 3 || index === sheet.rowCount };
+      cell.alignment = { vertical: "middle", horizontal: index <= 2 ? "center" : column === 2 ? "right" : "left", wrapText: true };
+      if (index >= 3) cell.border = { bottom: { style: "thin", color: { argb: "FFD4D4D8" } } };
+      if (index === 3 || index === sheet.rowCount) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF4F4F5" } };
+    });
+    if (index > 3) row.getCell(2).numFmt = '#,##0.00';
+  });
+  sheet.pageSetup.printArea = `A1:B${sheet.rowCount}`;
+}
+
+function addProjectSummaryPdfPage(document: PDFKit.PDFDocument, context: ExportContext) {
+  document.addPage({ size: "A4", layout: "portrait", margin: 36 });
+  document.font("NotoSansSC").fontSize(21).fillColor("#18181b").text("项目报价汇总", 36, 88, { width: 523 });
+  document.fontSize(10.5).fillColor("#71717a").text(`${context.quotation.projectAddress} · 当前生效报价 V${context.quotation.versionNumber}`, 36, 138, { width: 523 });
+  const rows = [{ name: "报价模块", amount: "模块金额（元）" }, ...projectSummaryRows(context.quotation, context.mainMaterial).map(row => ({ ...row, amount: formatDecimal2(row.amount) })), { name: "项目合计", amount: formatDecimal2(context.summary.grandTotal) }];
+  rows.forEach((row, index) => {
+    const y = 174 + index * 42;
+    if (index === 0 || index === rows.length - 1) document.rect(36, y, 523, 42).fill("#f4f4f5");
+    document.strokeColor("#d4d4d8").lineWidth(0.5).moveTo(36, y + 42).lineTo(559, y + 42).stroke();
+    document.fillColor("#18181b").fontSize(11).text(row.name, 48, y + 13, { width: 310 });
+    document.text(row.amount, 370, y + 13, { width: 177, align: "right" });
+  });
 }
 
 function summaryTemplateRow(label: QuotationExportSummaryRow["label"]): number {

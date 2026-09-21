@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 import { isMainMaterialColorSelectionValid } from "../src/main-material/main-material-selection";
 
 describe("main material colour selection", () => {
+  it("0920 requires both an approved shower type and colour without changing legacy selections", () => {
+    const item = { categoryCode: "SHOWER", colors: ["亮银", "黑色"],
+      attributes: { showerTypes: JSON.stringify(["钻石型", "T型", "一固一开"]) } };
+    expect(isMainMaterialColorSelectionValid(item, "类型：T型｜颜色：亮银")).toBe(true);
+    for (const value of [null, "亮银", "类型：弧形｜颜色：亮银", "类型：T型｜颜色：白色"]) {
+      expect(isMainMaterialColorSelectionValid(item, value)).toBe(false);
+    }
+    expect(isMainMaterialColorSelectionValid({ ...item, attributes: {} }, "亮银")).toBe(true);
+  });
   it("validates the two-stage glass-door selection", () => {
     const item = {
       attributes: { glassColors: JSON.stringify(["8MM 超白玻", "8mm欧洲灰"]) },

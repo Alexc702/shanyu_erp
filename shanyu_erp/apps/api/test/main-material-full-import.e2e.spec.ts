@@ -34,6 +34,8 @@ it("publishes FULL with valid mappings and monotonic versions without changing h
     });
     const published = await repository.publishImportBatch(batch.id, actorId);
     expect(published.items).toHaveLength(694);
+    expect(published.items.find((item) => item.materialId === "MAT-SHOWER-DC6F85FFDF14")?.assetIds[0])
+      .toBe("b81f83d09bc071504448c4d6f5a9dae0c2b0770ced1aad8292a6ef374a579766");
     expect(published.items.filter((i) => i.status === "ACTIVE")).toHaveLength(601);
     const oldById = new Map(old.items.map((i) => [i.materialId, i]));
     for (const item of published.items) {

@@ -41,6 +41,9 @@ export function normalizeCabinetVariant<Item extends NormalizedMainMaterialItem>
       ...item.attributes,
       variantGroup: `定制浴室柜:${item.itemName}`,
       variantColor,
+      ...(item.remarks?.match(/0920型号展示补充：([^。]+)/)?.[1]
+        ? { configurationDescription: item.remarks.match(/0920型号展示补充：([^。]+)/)![1]! }
+        : {}),
     },
   };
 }

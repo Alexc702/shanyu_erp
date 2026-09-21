@@ -6,10 +6,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   decodeMainMaterialGlassDoorSelection,
+  decodeMainMaterialShowerSelection,
+  encodeMainMaterialShowerSelection,
   encodeMainMaterialGlassDoorSelection,
   findMainMaterialVariant,
   formatMainMaterialScopeName,
   formatMainMaterialUnit,
+  formatMainMaterialQuantity,
   groupMainMaterialCandidates,
   mainMaterialBaseQuantity,
   mainMaterialColorAsset,
@@ -23,6 +26,22 @@ import {
 } from "./main-material-view-model";
 
 describe("main material view model", () => {
+  it("0920 round-trips shower type and colour, including incomplete picker states", () => {
+    for (const [type, color] of [["T型", "亮银"], ["一固一开", ""], ["", "黑色"]]) {
+      expect(decodeMainMaterialShowerSelection(encodeMainMaterialShowerSelection(type!, color!))).toEqual({ type, color });
+    }
+    expect(decodeMainMaterialShowerSelection("亮银")).toEqual({ type: "", color: "亮银" });
+  });
+  it.each(["M", "米", "M²", "平米", "m", "m²", "㎡", "平方"])("0920 formats %s quantities for display without modifying their value", (unit) => {
+    const raw = "3.1250";
+    expect(formatMainMaterialQuantity(raw, unit)).toBe("3.1");
+    expect(raw).toBe("3.1250");
+    expect(formatMainMaterialQuantity("2.1500", unit)).toBe("2.2");
+  });
+  it.each(["套", "个", "樘"])("0920 displays integer %s quantities without rounding stored values", (unit) => {
+    expect(formatMainMaterialQuantity("2.1000", unit)).toBe("2");
+    expect(formatMainMaterialQuantity("2.5000", unit)).toBe("3");
+  });
   it("uses the renamed epoxy grout item name instead of its old generic model label", () => {
     expect(mainMaterialDisplayModel({ materialId: "MAT-SEAM-A179F09722C2", itemName: "环氧彩砂", model: "美缝" })).toBe("环氧彩砂");
     expect(mainMaterialDisplayModel({ materialId: "other", itemName: "木地板", model: "BK-01" })).toBe("BK-01");

@@ -37,10 +37,13 @@ import {
 } from "@/lib/main-material-client";
 import {
   decodeMainMaterialGlassDoorSelection,
+  decodeMainMaterialShowerSelection,
   encodeMainMaterialGlassDoorSelection,
+  encodeMainMaterialShowerSelection,
   findMainMaterialVariant,
   formatMainMaterialScopeName,
   formatMainMaterialUnit,
+  formatMainMaterialQuantity,
   groupMainMaterialCandidates,
   mainMaterialBaseQuantity,
   mainMaterialCandidateKey,
@@ -50,6 +53,7 @@ import {
   mainMaterialDemandEditing,
   mainMaterialGlassColorAsset,
   mainMaterialGlassColors,
+  mainMaterialShowerTypes,
   mainMaterialProductAsset,
   mainMaterialVariantColor,
   visibleMainMaterialAttributes,
@@ -97,6 +101,7 @@ export function MainMaterialsEditor({
   const [frameColor, setFrameColor] = useState("");
   const [glassColor, setGlassColor] = useState("");
   const [quantity, setQuantity] = useState("1");
+  const [focusedQuantityId, setFocusedQuantityId] = useState<string | null>(null);
   const [tileQuery, setTileQuery] = useState("");
   const [onlyIncompleteTiles, setOnlyIncompleteTiles] = useState(false);
   const [working, setWorking] = useState(false);
@@ -262,10 +267,14 @@ export function MainMaterialsEditor({
   }
 
   const selectedGlassColors = selectedItem ? mainMaterialGlassColors(selectedItem) : [];
+  const selectedShowerTypes = selectedItem ? mainMaterialShowerTypes(selectedItem) : [];
+  const showerSelection = decodeMainMaterialShowerSelection(color);
   const selectionIncomplete = selectedItem?.categoryCode === "GLASS_DOOR"
     ? Boolean(selectedGlassColors.length && !glassColor) ||
       Boolean(selectedItem.colors.length && !frameColor)
-    : Boolean(selectedItem?.colors.length && !color);
+    : selectedShowerTypes.length
+      ? !selectedShowerTypes.includes(showerSelection.type) || !selectedItem?.colors.includes(showerSelection.color)
+      : Boolean(selectedItem?.colors.length && !color);
 
   async function removeLine(line: MainMaterialQuotationLine) {
     if (working || line.origin !== "MANUAL") return;
@@ -430,7 +439,7 @@ export function MainMaterialsEditor({
 
         <Card className="min-w-0 border-border py-0 shadow-none">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-            <div><h2 className="type-section-title">{category === "TILE" ? "瓷砖需求" : categoryNames[category]}</h2><p className="type-support m-0 text-muted-foreground">{category === "TILE" ? `按空间与半包来源逐行保留 · ${tileLines.filter((line) => line.item).length} / ${tileLines.length} 已完成` : `按需添加 · 基础数量与损耗可编辑 · 共 ${visibleLines.length} 项`}</p></div>
+            <div><h2 className="type-section-title">{category === "TILE" ? "瓷砖需求" : categoryNames[category]}</h2><p className="type-support m-0 text-muted-foreground">{category === "TILE" ? `按空间与半包来源逐行保留 · ${tileLines.filter((line) => line.item).length} / ${tileLines.length} 已完成` : `按需添加 · 基础数量可编辑 · 共 ${visibleLines.length} 项`}</p></div>
             {category === "TILE" ? <div className="flex flex-wrap items-center gap-2"><div className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="h-8 w-52 pl-9" onChange={(event) => setTileQuery(event.target.value)} placeholder="搜索空间、工程项或型号" value={tileQuery} /></div><Button aria-pressed={onlyIncompleteTiles} onClick={() => setOnlyIncompleteTiles((current) => !current)} size="sm" variant={onlyIncompleteTiles ? "secondary" : "outline"}>仅看未完成</Button></div> : editable ? <Button onClick={() => openPicker(null, category)} size="sm"><Plus />添加主材</Button> : null}
           </div>
           {filteredVisibleLines.length ? (
@@ -440,14 +449,15 @@ export function MainMaterialsEditor({
                   <col className="w-[72px]" />
                   <col className="w-[108px]" />
                   <col className="w-[88px]" />
-                  <col className="w-[88px]" />
+                  {category === "TILE" ? <col className="w-[88px]" /> : null}
                   <col className="w-[68px]" />
                   <col className="w-[40px]" />
                   <col className="w-[100px]" />
                   <col className="w-[72px]" />
+                  <col className="w-[72px]" />
                   <col className="w-[112px]" />
                 </colgroup>
-                <TableHeader><TableRow className="bg-muted hover:bg-muted"><TableHead className="sticky left-0 z-20 border-r border-border bg-muted">{category === "TILE" ? "半包来源" : "空间"}</TableHead><TableHead>主材 / 规格</TableHead><TableHead className="px-1">基础数量</TableHead><TableHead className="px-1">损耗</TableHead><TableHead className="px-1">报价数量</TableHead><TableHead className="px-1">单位</TableHead><TableHead className="whitespace-normal">品牌 / 型号</TableHead><TableHead className="px-2">金额</TableHead><TableHead className="sticky right-0 z-30 w-[112px] border-l border-border bg-muted text-right">操作</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow className="bg-muted hover:bg-muted"><TableHead className="sticky left-0 z-20 border-r border-border bg-muted">{category === "TILE" ? "半包来源" : "空间"}</TableHead><TableHead>主材 / 规格</TableHead><TableHead className="px-1">基础数量</TableHead>{category === "TILE" ? <TableHead className="px-1">损耗</TableHead> : null}<TableHead className="px-1">报价数量</TableHead><TableHead className="px-1">单位</TableHead><TableHead className="whitespace-normal">品牌 / 型号</TableHead><TableHead className="px-2">单价</TableHead><TableHead className="px-2">金额</TableHead><TableHead className="sticky right-0 z-30 w-[112px] border-l border-border bg-muted text-right">操作</TableHead></TableRow></TableHeader>
                 <TableBody>{filteredVisibleLines.map((line, index) => {
                   const baseQuantity = mainMaterialBaseQuantity(line);
                   const demandEditing = mainMaterialDemandEditing(line, editable);
@@ -463,15 +473,16 @@ export function MainMaterialsEditor({
                   const scopeLines = visibleLines.filter((candidate) => candidate.scopeName === line.scopeName);
                   return (
                     <Fragment key={line.id}>
-                    {showScopeHeading ? <TableRow className="bg-primary-soft hover:bg-primary-soft"><TableCell className="h-9 py-2 font-semibold text-primary" colSpan={9}><div className="flex items-center justify-between"><span>{formatMainMaterialScopeName(line.scopeName)}</span><span className="type-support">{scopeLines.filter((candidate) => candidate.item).length} / {scopeLines.length} 已完成 · 小计 {money(String(scopeLines.reduce((sum, candidate) => sum + Number(candidate.amount ?? 0), 0)))}</span></div></TableCell></TableRow> : null}
+                    {showScopeHeading ? <TableRow className="bg-primary-soft hover:bg-primary-soft"><TableCell className="h-9 py-2 font-semibold text-primary" colSpan={category === "TILE" ? 10 : 9}><div className="flex items-center justify-between"><span>{formatMainMaterialScopeName(line.scopeName)}</span><span className="type-support">{scopeLines.filter((candidate) => candidate.item).length} / {scopeLines.length} 已完成 · 小计 {money(String(scopeLines.reduce((sum, candidate) => sum + Number(candidate.amount ?? 0), 0)))}</span></div></TableCell></TableRow> : null}
                     <TableRow>
-                      <TableCell className="sticky left-0 z-10 border-r border-border bg-background"><strong>{formatMainMaterialScopeName(line.scopeName)}</strong></TableCell>
+                      <TableCell className="sticky left-0 z-10 whitespace-normal break-words border-r border-border bg-background"><strong>{formatMainMaterialScopeName(line.scopeName)}</strong></TableCell>
                       <TableCell className="whitespace-normal break-words"><strong className="block">{line.demandName}</strong><span className="type-support mt-0.5 block whitespace-normal break-words text-muted-foreground">{line.demandSpec || line.item?.spec || "—"}</span></TableCell>
-                      <TableCell className="px-1">{demandEditing.baseQuantity ? <Input aria-label={`${formatMainMaterialScopeName(line.scopeName)}${line.demandName}基础数量`} className="w-20" inputMode="decimal" min="0" onChange={(event) => setDemandDrafts((current) => ({ ...current, [line.id]: { ...draft, baseQuantity: event.target.value } }))} value={draft.baseQuantity} /> : <div className="grid gap-0.5"><span>{baseQuantity ? number(baseQuantity) : "—"}</span>{line.origin === "AUTO_TILE" ? <span className="type-support text-muted-foreground">半包报价同步</span> : null}</div>}</TableCell>
-                      <TableCell className="px-1">{demandEditing.lossRate ? <div className="flex items-center gap-1"><Input aria-label={`${formatMainMaterialScopeName(line.scopeName)}${line.demandName}损耗率`} className="w-16" inputMode="decimal" max="100" min="0" onChange={(event) => setDemandDrafts((current) => ({ ...current, [line.id]: { ...draft, lossPercent: event.target.value } }))} value={draft.lossPercent} /><span>%</span></div> : `${formatPercent(Number(line.lossRate) * 100)}%`}</TableCell>
-                      <TableCell className="px-1 font-semibold">{number(line.quantity)}</TableCell>
+                      <TableCell className="px-1">{demandEditing.baseQuantity ? <Input aria-label={`${formatMainMaterialScopeName(line.scopeName)}${line.demandName}基础数量`} className="w-20" inputMode="decimal" min="0" onChange={(event) => setDemandDrafts((current) => ({ ...current, [line.id]: { ...draft, baseQuantity: event.target.value } }))} onFocus={() => setFocusedQuantityId(line.id)} onBlur={() => setFocusedQuantityId(null)} value={focusedQuantityId === line.id ? draft.baseQuantity : formatMainMaterialQuantity(draft.baseQuantity, line.item?.unit ?? "M²")} /> : <div className="grid gap-0.5"><span>{baseQuantity ? formatMainMaterialQuantity(baseQuantity, line.item?.unit ?? "M²") : "—"}</span>{line.origin === "AUTO_TILE" ? <span className="type-support text-muted-foreground">半包报价同步</span> : null}</div>}</TableCell>
+                      {category === "TILE" ? <TableCell className="px-1">{demandEditing.lossRate ? <div className="flex items-center gap-1"><Input aria-label={`${formatMainMaterialScopeName(line.scopeName)}${line.demandName}损耗率`} className="w-16" inputMode="decimal" max="100" min="0" onChange={(event) => setDemandDrafts((current) => ({ ...current, [line.id]: { ...draft, lossPercent: event.target.value } }))} value={draft.lossPercent} /><span>%</span></div> : `${formatPercent(Number(line.lossRate) * 100)}%`}</TableCell> : null}
+                      <TableCell className="px-1 font-semibold">{formatMainMaterialQuantity(line.quantity, line.item?.unit ?? "M²")}</TableCell>
                       <TableCell className="whitespace-normal break-words px-1">{formatMainMaterialUnit(line.item?.unit ?? (line.origin === "AUTO_TILE" ? "M²" : "—"))}</TableCell>
                       <TableCell className="whitespace-normal break-words">{line.item ? <><strong className="block whitespace-normal break-words">{line.item.brand || "—"}</strong><span className="type-support block whitespace-normal break-words text-muted-foreground">{mainMaterialDisplayModel(line.item)}{line.selectedColor ? ` · ${line.selectedColor}` : ""}</span></> : <Badge variant="warning">待选择</Badge>}</TableCell>
+                      <TableCell className="px-2">{line.item ? money(line.item.saleUnitPrice) : "—"}</TableCell>
                       <TableCell className="px-2 font-semibold">{line.amount ? money(line.amount) : "—"}</TableCell>
                       <TableCell className="sticky right-0 z-20 w-[112px] border-l border-border bg-background px-1"><div className="grid justify-items-end gap-1 whitespace-nowrap">{demandChanged ? <Button className="h-8 px-1" disabled={working} onClick={() => saveDemand(line)} size="sm">保存数量</Button> : null}<div className="flex flex-nowrap items-center justify-end gap-1"><Button className="h-8 px-1" disabled={!editable || working} onClick={() => openPicker(line, category)} size="sm" variant="outline">{line.item ? "更换" : "选择型号"}</Button>{line.origin === "MANUAL" && editable ? <Button aria-label="删除主材行" className="size-8" disabled={working} onClick={() => removeLine(line)} size="icon" variant="ghost"><Trash2 /></Button> : null}</div></div></TableCell>
                     </TableRow>
@@ -481,7 +492,7 @@ export function MainMaterialsEditor({
               </Table>
             </div>
           ) : <div className="grid min-h-56 place-items-center p-6 text-center text-muted-foreground"><div><ShoppingBag className="mx-auto mb-2 size-7" /><p className="type-body m-0">{category === "TILE" && (tileQuery || onlyIncompleteTiles) ? "没有符合当前筛选条件的瓷砖需求" : "当前分类尚未添加主材"}</p></div></div>}
-          <div className="flex items-start gap-2 border-t border-border bg-primary-soft/60 px-4 py-3 text-primary"><Info className="mt-0.5 size-4 shrink-0" /><p className="type-support m-0">{category === "TILE" ? "报价数量 = 半包有效数量 ×（1 + 损耗%）。瓷砖基础数量只读，请回半包报价修改。" : "报价数量 = 基础数量 ×（1 + 损耗%）；保存时同时校验基础数量大于 0。"}</p></div>
+          <div className="flex items-start gap-2 border-t border-border bg-primary-soft/60 px-4 py-3 text-primary"><Info className="mt-0.5 size-4 shrink-0" /><p className="type-support m-0">{category === "TILE" ? "报价数量 = 半包有效数量 ×（1 + 损耗%）。瓷砖基础数量只读，请回半包报价修改；金额按原始精度计价。" : "基础数量可编辑，保存时校验大于 0；数量仅按单位格式显示，金额按原始精度计价。"}</p></div>
         </Card>
 
         <div className="grid h-fit gap-3">
@@ -545,6 +556,8 @@ function ItemDetail({ canViewCosts, item, color, frameColor, glassColor, quantit
   const [colorOpen, setColorOpen] = useState(false);
   const mappedColorAsset = mainMaterialColorAsset(item, color);
   const glassColors = mainMaterialGlassColors(item);
+  const showerTypes = mainMaterialShowerTypes(item);
+  const showerSelection = decodeMainMaterialShowerSelection(color);
   const mappedGlassColorAsset = mainMaterialGlassColorAsset(item, glassColor);
   const productAsset = mainMaterialProductAsset(item);
   const image = item.categoryCode === "GLASS_DOOR"
@@ -566,8 +579,15 @@ function ItemDetail({ canViewCosts, item, color, frameColor, glassColor, quantit
     {image ? <button aria-label="查看高清产品图" className="group relative h-[214px] overflow-hidden rounded-lg bg-muted" onClick={() => setImageOpen(true)} type="button"><Image alt={`${item.brand} ${item.model}`} className="object-contain" fill sizes="474px" src={`${apiUrl}${image.path}`} unoptimized /><span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-background/90 px-2 py-1 text-xs opacity-0 shadow-sm transition group-hover:opacity-100"><ZoomIn className="size-3.5" />查看大图</span></button> : <div className="grid h-[214px] place-items-center rounded-lg bg-muted text-muted-foreground"><ImageIcon /></div>}
     {!hasIndexedColorAssets && item.assets.length > 1 ? <div className="flex gap-2 overflow-x-auto">{item.assets.slice(0, 6).map((asset) => <button aria-label="查看商品附图" className={cn("relative size-16 shrink-0 overflow-hidden rounded border", image?.id === asset.id ? "border-primary ring-2 ring-primary/20" : "border-border")} key={asset.id} onClick={() => setSelectedAssetId(asset.id)} type="button"><Image alt="商品附图" className="object-contain" fill sizes="64px" src={`${apiUrl}${asset.path}`} unoptimized /></button>)}</div> : null}
     <div><h3 className="type-entity">{item.brand || item.itemName}</h3><p className="type-body m-0 text-muted-foreground">{item.series} {mainMaterialDisplayModel(item)}</p></div>
+    {item.attributes.configurationDescription ? <p className="type-body m-0 whitespace-normal break-words">{item.attributes.configurationDescription}</p> : null}
     <div className="grid grid-cols-2 gap-2 text-sm"><Detail label="品名" value={item.itemName} /><Detail label="规格" value={item.spec} /><Detail label="单位" value={formatMainMaterialUnit(item.unit)} /><Detail label="销售价" value={item.salePrice ? money(item.salePrice) : "待补"} />{canViewCosts && item.costPrice ? <Detail label="成本价" value={money(item.costPrice)} /> : null}{visibleMainMaterialAttributes(item.attributes).slice(0, 6).map(([key, value]) => <Detail key={key} label={attributeLabel(key)} value={value} />)}</div>
+    {showerTypes.length ? <div className="grid gap-3">
+      <label className="grid gap-1.5 text-sm font-medium">类型<NativeSelect className="h-10 font-normal" value={showerSelection.type} onChange={(event) => setColor(encodeMainMaterialShowerSelection(event.target.value, showerSelection.color))}><option value="">请选择类型</option>{showerTypes.map((type) => <option key={type} value={type}>{type}</option>)}</NativeSelect></label>
+      <IndexedColorPicker assetFor={(candidate) => mainMaterialColorAsset(item, candidate)} label="颜色" options={item.colors} value={showerSelection.color} onChange={(value) => setColor(encodeMainMaterialShowerSelection(showerSelection.type, value))} />
+    </div> : null}
+    {!showerTypes.length ? <>
     {variants.length > 1 ? item.attributes.variantGroup?.startsWith("定制浴室柜:") ? <div className="grid gap-1.5 text-sm font-medium"><span>颜色</span><Popover onOpenChange={setColorOpen} open={colorOpen}><PopoverTrigger asChild><Button className="h-10 justify-between font-normal" variant="outline"><span>{color || "请选择颜色"}</span><ChevronDown className="size-4 text-muted-foreground" /></Button></PopoverTrigger><PopoverContent align="start" className="max-h-72 w-[var(--radix-popover-trigger-width)] overflow-y-auto p-1">{variants.map((variant) => { const candidate = mainMaterialVariantColor(variant); const swatch = variant.assets[0]; return <button className={cn("flex w-full items-center justify-between gap-3 rounded-sm px-2 py-2 text-left text-sm hover:bg-muted", color === candidate && "bg-primary-soft text-primary")} key={variant.id} onClick={() => selectVariant(candidate)} type="button"><span>{candidate}</span>{swatch ? <span className="relative size-9 shrink-0 overflow-hidden rounded border border-border"><Image alt={`${candidate}色卡`} className="object-contain" fill sizes="36px" src={`${apiUrl}${swatch.path}`} unoptimized /></span> : <span className="grid size-9 place-items-center rounded border border-dashed text-xs text-muted-foreground">无图</span>}</button>; })}</PopoverContent></Popover></div> : <label className="grid gap-1.5 text-sm font-medium">颜色<NativeSelect className="h-10 font-normal" onChange={(event) => selectVariant(event.target.value)} value={color}><option value="">请选择颜色</option>{variants.map((variant) => { const candidate = mainMaterialVariantColor(variant); return <option key={variant.id} value={candidate}>{candidate}</option>; })}</NativeSelect></label> : item.categoryCode === "GLASS_DOOR" && (glassColors.length || item.colors.length) ? <div className="grid gap-3">{item.colors.length ? <IndexedColorPicker assetFor={(candidate) => mainMaterialColorAsset(item, candidate)} label="门框颜色" onChange={setFrameColor} options={item.colors} value={frameColor} /> : null}{glassColors.length ? <IndexedColorPicker assetFor={(candidate) => mainMaterialGlassColorAsset(item, candidate)} label="玻璃颜色" onChange={setGlassColor} options={glassColors} value={glassColor} /> : null}</div> : item.colors.length ? <label className="grid gap-1.5 text-sm font-medium">颜色<NativeSelect className="h-10 font-normal" onChange={(event) => setColor(event.target.value)} value={color}><option value="">请选择颜色</option>{item.colors.map((candidate) => <option key={candidate} value={candidate}>{candidate}</option>)}</NativeSelect></label> : null}
+    </> : null}
     {showQuantity ? <label className="grid gap-1.5 text-sm font-medium">数量<Input inputMode="decimal" min="0" onChange={(event) => setQuantity(event.target.value)} value={quantity} /></label> : null}
   </div>;
 
@@ -582,7 +602,6 @@ function IndexedColorPicker({ assetFor, label, onChange, options, value }: { rea
 function Detail({ label, value }: { readonly label: string; readonly value: string }) { return <div className="rounded-md bg-muted px-3 py-2"><span className="block text-xs text-muted-foreground">{label}</span><strong className="mt-0.5 block font-medium">{value || "—"}</strong></div>; }
 function Summary({ emphasis = false, label, value }: { readonly emphasis?: boolean; readonly label: string; readonly value: string }) { return <div className="flex items-center justify-between gap-2"><span className="type-table-body text-muted-foreground">{label}</span><strong className={emphasis ? "text-xl text-primary" : "text-base"}>{money(value)}</strong></div>; }
 function money(value: string) { return `¥${Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
-function number(value: string) { return Number(value).toFixed(2); }
 function formatPercent(value: number) { return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4))); }
 function normalizeSpec(value: string) { return value.toLowerCase().replaceAll("×", "*").replaceAll("x", "*").replaceAll("mm", "").replaceAll(" ", ""); }
 function sortedUnique(values: readonly string[]) { return [...new Set(values.filter(Boolean))].sort((left, right) => left.localeCompare(right, "zh-CN")); }

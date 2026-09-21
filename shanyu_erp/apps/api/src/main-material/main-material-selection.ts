@@ -8,6 +8,11 @@ export function isMainMaterialColorSelectionValid(
   item: ColorSelectableMainMaterial,
   color: string | null,
 ): boolean {
+  const showerTypes = item.categoryCode === "SHOWER" ? parseStringArray(item.attributes.showerTypes) : [];
+  if (showerTypes.length) {
+    const match = /^类型：(.+)｜颜色：(.+)$/.exec(color ?? "");
+    return Boolean(match && showerTypes.includes(match[1]!) && item.colors.includes(match[2]!));
+  }
   const glassColors = item.categoryCode === "GLASS_DOOR"
     ? parseStringArray(item.attributes.glassColors)
     : [];

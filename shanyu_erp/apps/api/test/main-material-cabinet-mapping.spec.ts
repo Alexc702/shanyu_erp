@@ -6,6 +6,15 @@ import { normalizeCabinetVariant } from "../src/main-material/main-material-cabi
 import type { NormalizedMainMaterialItem } from "../src/main-material/main-material.repository";
 
 describe("custom bathroom cabinet mapping", () => {
+  it("0920 maps the confirmed display configuration without changing cabinet identity or prices", () => {
+    const original = cabinet();
+    const text = "定制镜柜、免漆柜体、科勒陶瓷盆（按米收费）、不含龙头";
+    const result = normalizeCabinetVariant({ ...original, remarks: `原配置；0920型号展示补充：${text}。保留整柜分组和核心主材颜色映射。` });
+    expect(result.attributes.configurationDescription).toBe(text);
+    expect(result.attributes.variantGroup).toBe(`定制浴室柜:${original.itemName}`);
+    expect(result).toMatchObject({ materialId: original.materialId, unit: original.unit, salePrice: original.salePrice, costPrice: original.costPrice });
+    expect(normalizeCabinetVariant(result)).toEqual(result);
+  });
   it.each([
     "免漆浴室柜（主卫）", "免漆浴室柜（公卫）",
     "烤漆浴室柜（主卫）", "烤漆浴室柜（公卫）",

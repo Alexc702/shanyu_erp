@@ -59,6 +59,29 @@ describe("QuotationService", () => {
     );
   });
 
+  it("0920 stores a draft design fee, distinguishes zero and unset, and rejects quoted edits", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const saved = await service.updateDesignFee(lead, project.id, "50", draft.revision);
+    expect(saved.designFeeAmount).toBe("6500.0000");
+    expect(saved.projectTotal).toBe("18140.4200");
+    const zero = await service.updateDesignFee(lead, project.id, "0", saved.revision);
+    expect(zero.designFeeAmount).toBe("0.0000");
+    const unset = await service.updateDesignFee(lead, project.id, null, zero.revision);
+    expect(unset.designFeeAmount).toBeNull();
+    await expect(service.updateDesignFee(lead, project.id, "-1", unset.revision)).rejects.toBeInstanceOf(BadRequestException);
+    await service.submit(lead, project.id, unset.revision);
+    await expect(service.updateDesignFee(lead, project.id, "20", unset.revision)).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("0920 submits independent module discounts and leaves design fees undiscounted", async () => {
+    await service.getOrCreateDraft(lead, project.id);
+    repository.draft = { ...repository.draft!, total: "100000.0000", mainMaterialTotal: "60000.0000", designFeeUnitPrice: "50", status: "QUOTED" };
+    const adjusted = await service.updateAdjustment(lead, repository.draft.id, { action: "SUBMIT_FOR_APPROVAL", discountRate: "0.95", writeOff: "0", mainMaterialAdjustment: { discountRate: "0.98", writeOff: "300" }, expectedRevision: repository.draft.revision, reason: "验收" });
+    expect(adjusted.adjustedTotal).toBe("160000.0000");
+    expect(adjusted.mainMaterialAdjustment).toEqual({ discountRate: "0.98", writeOff: "300" });
+    expect(adjusted.designFeeAmount).toBe("6500.0000");
+  });
+
   it("creates one draft from the published snapshot and all applicable sections", async () => {
     const quotation = await service.getOrCreateDraft(lead, project.id);
 
@@ -114,6 +137,80 @@ describe("QuotationService", () => {
 
     await service.getOrCreateDraft(owner, project.id);
     expect(repository.createdCount).toBe(1);
+  });
+
+  it("0920 keeps living-room pipe items without appending balcony duplicates", async () => {
+    repository.template = { ...template, items: [...template.items,
+      item("living-pipe", "LIVING_DINING", "包管道（1根）", "项", "280.0000"),
+    ] };
+    const view = await service.getOrCreateDraft(lead, project.id);
+    const living = view.scopes.find((scope) => scope.name === "客餐厅（包阳台）")!;
+    expect(living.lines.filter((line) => line.itemName === "包管道（1根）")).toHaveLength(1);
+    expect(living.lines.every((line) => line.sectionName !== "七、阳台工程")).toBe(true);
+  });
+
+  it("0920 permits editing and clearing CHINT quantity while preserving its initial area", async () => {
+    repository.template = { ...template, items: [...template.items,
+      item("chint", "ELECTRICAL", "正泰空开更换", "M2", "8.0000", "5.0000", "正泰空开，单个电箱配置，室外柜另计"),
+      item("schneider", "ELECTRICAL", "施耐德空开更换", "M2", "10.0000", "6.0000", "施耐德，单个电箱配置，安装另计"),
+    ] };
+    let view = await service.getOrCreateDraft(lead, project.id);
+    const line = view.scopes.flatMap((scope) => scope.lines).find((line) => line.itemName === "正泰空开更换")!;
+    expect(line).toMatchObject({ quantitySource: "MANUAL", quantity: "130.0000" });
+    for (const row of view.scopes.flatMap((scope) => scope.lines).filter((row) => row.itemName.includes("空开更换"))) {
+      expect(row.remarks).not.toContain("单个电箱配置");
+      expect(row.remarks).toContain("另计");
+    }
+    view = await service.updateLine(lead, project.id, line.id, { expectedRevision: view.revision, quantity: "2", selected: true });
+    expect(view.scopes.flatMap((scope) => scope.lines).find((row) => row.id === line.id)?.quantity).toBe("2.0000");
+    view = await service.updateLine(lead, project.id, line.id, { expectedRevision: view.revision, quantity: null, selected: false });
+    const reopened = await service.getOrCreateDraft(lead, project.id);
+    expect(reopened.scopes.flatMap((scope) => scope.lines).find((row) => row.id === line.id)).toMatchObject({ quantity: null, selected: false, amount: null });
+  });
+
+  it.each([false, true])("0920 preserves entered duplicate pipe quantities and blocks submission (derived=%s)", async (derived) => {
+    repository.template = { ...template, items: [...template.items,
+      item("living-pipe", "LIVING_DINING", "包管道（1根）", "项", "280.0000"),
+    ] };
+    await service.getOrCreateDraft(lead, project.id);
+    const draft = repository.draft!;
+    repository.draft = {
+      ...draft,
+      parentVersionId: derived ? "historical-parent" : null,
+      scopes: draft.scopes.map((scope) => {
+        const original = scope.lines.find((line) => line.itemName === "包管道（1根）");
+        if (!original) return scope;
+        return { ...scope, lines: [
+          ...scope.lines.map((line) => line.id === original.id
+            ? { ...line, selected: true, manualQuantity: "2.0000", calculatedQuantity: "2.0000" } : line),
+          { ...original, id: "legacy-balcony-pipe", sectionCode: "BALCONY", selected: true,
+            manualQuantity: "3.0000", calculatedQuantity: "3.0000" },
+        ] };
+      }),
+    };
+    const reopened = await service.getOrCreateDraft(lead, project.id);
+    expect(reopened.scopes.flatMap((scope) => scope.lines)
+      .filter((line) => line.itemName === "包管道（1根）").map((line) => line.quantity)).toEqual(["2.0000", "3.0000"]);
+    await expect(service.submit(lead, project.id, reopened.revision)).rejects.toThrow("重复包管");
+  });
+
+  it.each([
+    ["WALL", "双面石膏板隔墙", "石膏板隔墙隔音棉"],
+    ["KITCHEN_BATHROOM", "防水石膏板吊平顶", "顶面基层处理(防水腻子）"],
+  ] as const)("0920 verifies the existing %s reference chain with quantity, then clearing", async (section, sourceName, targetName) => {
+    repository.project = { ...project, spaces: [space("bathroom", "BATHROOM", "主卫")] };
+    repository.template = { ...template, items: [...template.items,
+      item("reference-source", section, sourceName, "M2", "20.0000"),
+      item("reference-target", section, targetName, "M2", "10.0000"),
+    ] };
+    let view = await service.getOrCreateDraft(lead, project.id);
+    const source = view.scopes.flatMap((scope) => scope.lines).find((row) => row.itemName === sourceName)!;
+    const target = () => view.scopes.flatMap((scope) => scope.lines).find((row) => row.itemName === targetName)!;
+    expect(target()).toMatchObject({ quantity: null, amount: null });
+    view = await service.updateLine(lead, project.id, source.id, { expectedRevision: view.revision, quantity: "3.125", selected: true });
+    expect(target()).toMatchObject({ quantity: "3.1250", amount: "31.2500" });
+    view = await service.updateLine(lead, project.id, source.id, { expectedRevision: view.revision, quantity: null, selected: false });
+    expect(target()).toMatchObject({ quantity: null, amount: null });
   });
 
   it("applies the six acceptance catalog rules to new drafts", async () => {
@@ -292,7 +389,7 @@ describe("QuotationService", () => {
       主卧: 3,
       主卫: 1,
       厨房: 1,
-      "客餐厅（包阳台）": 3,
+      "客餐厅（包阳台）": 2,
       生活阳台: 2,
       衣帽间: 3,
     });
@@ -566,6 +663,18 @@ describe("QuotationService", () => {
     await expect(
       service.getProjectCostAnalysis(lead, project.id),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it.each([null, "0", "50"])("excludes design fee %s from cost metrics without changing customer payable", async (unitPrice) => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const before = await service.getProjectCostAnalysis(owner, project.id);
+    await service.updateDesignFee(lead, project.id, unitPrice, draft.revision);
+    const analysis = await service.getProjectCostAnalysis(owner, project.id);
+    expect(analysis.current.designFeeAmount).toBe(unitPrice === null ? null : unitPrice === "0" ? "0.0000" : "6500.0000");
+    expect(analysis.current.customerPayableTotal).toBe(unitPrice === "50" ? "18140.4200" : "11640.4200");
+    for (const key of ["marginBasisIncome", "expectedCost", "grossProfit", "grossMarginRate", "modules"] as const) {
+      expect(analysis.current[key]).toEqual(before.current[key]);
+    }
   });
 
   it("keeps the current basis and pending adjustment as separate cost scenarios", async () => {
@@ -860,6 +969,7 @@ describe("QuotationService", () => {
     expect(quotedWorkbook.worksheets.map((sheet) => sheet.name)).toEqual([
       "封面",
       "预算说明书",
+      "项目报价汇总",
       "半包报价单",
       "主材报价单",
     ]);
@@ -922,6 +1032,7 @@ describe("QuotationService", () => {
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
       "封面",
       "预算说明书",
+      "项目报价汇总",
       "半包报价单",
       "主材报价单",
     ]);
@@ -1078,6 +1189,7 @@ describe("QuotationService", () => {
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
       "封面",
       "预算说明书",
+      "项目报价汇总",
       "半包报价单",
       "主材报价单",
     ]);
@@ -1328,6 +1440,8 @@ class InMemoryQuotationRepository implements QuotationRepository {
     grossMarginRate: string | null,
     _actorUserId: string,
     reason: string | null,
+    _expectedRevision?: number,
+    mainMaterialAdjustment?: QuotationDraft["mainMaterialAdjustment"],
   ): Promise<QuotationDraft> {
     if (!this.draft) throw new QuotationRevisionConflictError();
     this.draft = {
@@ -1335,6 +1449,7 @@ class InMemoryQuotationRepository implements QuotationRepository {
       adjustedTotal,
       adjustmentReason: reason,
       adjustmentStatus: "PENDING_APPROVAL",
+      mainMaterialAdjustment,
       discountRate,
       grossMarginRate,
       grossProfit,

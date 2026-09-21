@@ -15,11 +15,12 @@ describe("cabinet mappings at publication", () => {
     // An older validated FULL batch can still contain raw spreadsheet names.
     const payload = mode === "FULL" ? [{
       ...previous, model: "洞石米白", colors: ["洞石米白"], sourceRow: "97",
+      remarks: "0920型号展示补充：免漆柜体+台面+台盆。",
       attributes: { imageReference: previous.attributes.imageReference },
     }] : [{
       operation: "UPSERT", materialId: previous.materialId,
       expectedRecordVersion: previous.recordVersion, changeReason: "更新核心主材颜色",
-      values: { color: previous.colors[0], remarks: "核对颜色与整柜售价" },
+      values: { color: previous.colors[0], remarks: "0920型号展示补充：免漆柜体+台面+台盆。" },
     }];
     let publishedId = "previous-catalog";
     const query = vi.fn(async (sql: string, values?: readonly unknown[]) => {
@@ -61,6 +62,7 @@ describe("cabinet mappings at publication", () => {
     expect(JSON.parse(values[14] as string)).toMatchObject({
       variantGroup: "定制浴室柜:免漆浴室柜（主卫）", variantColor: expectedColor,
       imageReference: previous.attributes.imageReference,
+      configurationDescription: "免漆柜体+台面+台盆",
     });
     expect(query.mock.calls.find(([sql]) => sql.includes("INSERT INTO main_material_item_assets"))?.[0])
       .toContain("old.material_id = next.material_id");

@@ -7,7 +7,7 @@ import type {
 import { PencilLine } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
   AlertDialog,
@@ -40,30 +40,13 @@ import {
   updateQuotationAdjustment,
 } from "@/lib/quotation-client";
 
-const adjustedTotalEvent = "shanyu:quotation-adjusted-total";
-
 export function QuotationLiveAmount({
   initialAmount,
-  quotationId,
 }: {
   readonly initialAmount: string;
   readonly quotationId: string;
 }) {
-  const [amount, setAmount] = useState(initialAmount);
-
-  useEffect(() => {
-    function update(event: Event) {
-      const detail = (event as CustomEvent<{
-        amount: string;
-        quotationId: string;
-      }>).detail;
-      if (detail.quotationId === quotationId) setAmount(detail.amount);
-    }
-    window.addEventListener(adjustedTotalEvent, update);
-    return () => window.removeEventListener(adjustedTotalEvent, update);
-  }, [quotationId]);
-
-  return <>{formatProjectMoney(amount)}</>;
+  return <>{formatProjectMoney(initialAmount)}</>;
 }
 
 export function ContinueEditingButton({
@@ -140,40 +123,37 @@ export function QuotationAdjustment({
     discountRateToWholePercent(initialQuotation.discountRate),
   );
   const [writeOff, setWriteOff] = useState(String(Number(initialQuotation.writeOff)));
+  const [materialPercent, setMaterialPercent] = useState(discountRateToWholePercent(initialQuotation.mainMaterialAdjustment?.discountRate ?? "1.0000"));
+  const [materialWriteOff, setMaterialWriteOff] = useState(initialQuotation.mainMaterialAdjustment?.writeOff ?? "0");
   const [reason, setReason] = useState(initialQuotation.adjustmentReason ?? "");
   const [busy, setBusy] = useState(false);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const total = Number(initialQuotation.total);
-  const percent = Number(discountPercent);
-  const writeOffAmount = Number(writeOff || "0");
+  const total = previewUnits(initialQuotation.halfPackageTotal ?? initialQuotation.total);
   const validDiscountPercent = isValidDiscountPercent(discountPercent);
   const validAdjustment =
-    validDiscountPercent &&
-    Number.isFinite(writeOffAmount) &&
-    writeOffAmount >= 0 &&
-    /^\d*(?:\.\d{0,2})?$/.test(writeOff);
-  const discountedTotal = validAdjustment ? total * (percent / 100) : total;
-  const discountSavings = Math.max(0, total - discountedTotal);
-  const writeOffSavings = validAdjustment
-    ? Math.min(writeOffAmount, discountedTotal)
-    : 0;
-  const adjustedTotal = Math.max(0, discountedTotal - writeOffSavings);
-
-  useEffect(() => {
-    window.dispatchEvent(new CustomEvent(adjustedTotalEvent, {
-      detail: {
-        amount: adjustedTotal.toFixed(4),
-        quotationId: initialQuotation.id,
-      },
-    }));
-  }, [adjustedTotal, initialQuotation.id]);
+    validDiscountPercent && isValidDiscountPercent(materialPercent) && /^\d+(?:\.\d{1,4})?$/.test(materialWriteOff) &&
+    /^\d+(?:\.\d{1,2})?$/.test(writeOff);
+  const discountedTotal = validAdjustment ? (total * BigInt(discountPercent) + BigInt(50)) / BigInt(100) : total;
+  const materialBase = previewUnits(initialQuotation.mainMaterialTotal ?? "0");
+  const materialDiscounted = validAdjustment ? (materialBase * BigInt(materialPercent) + BigInt(50)) / BigInt(100) : materialBase;
+  const halfAdjusted = positive(discountedTotal - (validAdjustment ? previewUnits(writeOff) : BigInt(0)));
+  const materialAdjusted = positive(materialDiscounted - (validAdjustment ? previewUnits(materialWriteOff) : BigInt(0)));
+  const halfAdjustedTotal = previewDecimal(halfAdjusted);
+  const materialAdjustedTotal = previewDecimal(materialAdjusted);
+  const discountSavings = previewDecimal(total - discountedTotal + materialBase - materialDiscounted);
+  const writeOffSavings = previewDecimal(discountedTotal - halfAdjusted + materialDiscounted - materialAdjusted);
+  const adjustedTotal = previewDecimal(halfAdjusted + materialAdjusted + previewUnits(initialQuotation.designFeeAmount ?? "0"));
 
   function requestConfirmation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!validAdjustment) {
       setMessage("折扣须为 0–100 的整数；抹零须为非负金额");
+      return;
+    }
+    if (previewUnits(writeOff) > discountedTotal || previewUnits(materialWriteOff) > materialDiscounted) {
+      setMessage("抹零不能超过对应模块的折后金额");
       return;
     }
     setMessage(null);
@@ -185,17 +165,17 @@ export function QuotationAdjustment({
       setMessage("请填写调整原因后再提交");
       return;
     }
-    const percent = Number(discountPercent);
     setBusy(true);
     setMessage(null);
     try {
       await updateQuotationAdjustment(projectId, initialQuotation.id, {
         action:
           mode === "OWNER_CONFIRM" ? "CONFIRM" : "SUBMIT_FOR_APPROVAL",
-        discountRate: (percent / 100).toFixed(4),
+        discountRate: previewDecimal(BigInt(discountPercent) * BigInt(100)),
+        mainMaterialAdjustment: { discountRate: previewDecimal(BigInt(materialPercent) * BigInt(100)), writeOff: materialWriteOff },
         expectedRevision: initialQuotation.revision,
         reason: reason.trim() || null,
-        writeOff: Number(writeOff || "0").toFixed(4),
+        writeOff: previewDecimal(previewUnits(writeOff)),
       });
       setConfirmationOpen(false);
       router.refresh();
@@ -206,13 +186,26 @@ export function QuotationAdjustment({
     }
   }
 
+  if (mode === "PENDING" && !initialQuotation.mainMaterialAdjustment) {
+    return <Card className="border-border py-0 shadow-none"><CardContent className="grid gap-3 p-4">
+      <h2 className="type-section-title">折扣与抹零 · 历史整体优惠方案</h2>
+      <p className="type-support text-muted-foreground">此申请按原版本半包与主材合计计算优惠，不拆分为独立模块优惠；审批期间只读，原金额保持不变。</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <span>整体折扣 {discountPercent}%</span>
+        <span>整体抹零 ¥{formatQuotationMoney(initialQuotation.writeOff)}</span>
+        <strong>待审批项目报价 ¥{formatQuotationMoney(initialQuotation.adjustedTotal)}</strong>
+      </div>
+      <p className="type-support">调整原因：{initialQuotation.adjustmentReason || "未填写"}</p>
+    </CardContent></Card>;
+  }
+
   return (
     <>
       <Card className="border-border py-0 shadow-none">
         <CardContent className="grid gap-4 p-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="type-section-title">半包折扣与抹零</h2>
+            <h2 className="type-section-title">折扣与抹零 · 待审批方案预览</h2>
             <p className="type-support m-0 text-muted-foreground">
               {mode === "PENDING"
                 ? "已提交何老板审批；审批期间不可再次调整或导出"
@@ -222,7 +215,7 @@ export function QuotationAdjustment({
           <div className="grid gap-1 text-right">
             <span className="type-support text-muted-foreground">折后项目报价</span>
             <strong className="text-xl">
-              ¥{formatQuotationMoney(adjustedTotal.toFixed(4))}
+              ¥{formatQuotationMoney(mode === "PENDING" ? initialQuotation.adjustedTotal : adjustedTotal)}
             </strong>
           </div>
         </div>
@@ -233,9 +226,9 @@ export function QuotationAdjustment({
           >
             <div className="grid items-end gap-3 md:grid-cols-[minmax(180px,1fr)_96px_118px_minmax(180px,1fr)]">
               <div className="grid gap-1 type-table-head">
-                <span>模块原价</span>
+                <span>半包原价</span>
                 <div className="flex h-10 items-center rounded-md bg-muted px-3 type-body font-medium">
-                  ¥{formatQuotationMoney(initialQuotation.total)}
+                  ¥{formatQuotationMoney(initialQuotation.halfPackageTotal ?? initialQuotation.total)}
                 </div>
               </div>
               <label className="grid gap-1 type-table-head">
@@ -269,10 +262,19 @@ export function QuotationAdjustment({
               <div className="grid gap-1 type-table-head">
                 <span>折后报价</span>
                 <div className="flex h-10 items-center rounded-md bg-primary-soft px-3 type-body font-semibold text-primary">
-                  ¥{formatQuotationMoney(adjustedTotal.toFixed(4))}
+                  ¥{formatQuotationMoney(halfAdjustedTotal)}
                 </div>
               </div>
             </div>
+            <Button type="button" size="sm" variant="outline" className="justify-self-end" disabled={busy || mode === "PENDING"} onClick={() => { setDiscountPercent("100"); setWriteOff("0"); }}>半包恢复无优惠</Button>
+            <div className="grid items-end gap-3 md:grid-cols-[minmax(180px,1fr)_96px_118px_minmax(180px,1fr)]">
+              <div className="grid gap-1 type-table-head"><span>主材原价</span><div className="flex h-10 items-center rounded-md bg-muted px-3">¥{formatQuotationMoney(initialQuotation.mainMaterialTotal ?? "0")}</div></div>
+              <label className="grid gap-1 type-table-head">主材折扣（%）<Input disabled={busy || mode === "PENDING"} inputMode="numeric" min="0" max="100" step="1" value={materialPercent} onChange={e => { if (/^\d*$/.test(e.target.value)) setMaterialPercent(e.target.value); }} /></label>
+              <label className="grid gap-1 type-table-head">主材抹零（元）<Input disabled={busy || mode === "PENDING"} inputMode="decimal" value={materialWriteOff} onChange={e => setMaterialWriteOff(e.target.value)} /></label>
+              <div className="grid gap-1 type-table-head"><span>主材折后报价</span><div className="flex h-10 items-center rounded-md bg-primary-soft px-3 text-primary">¥{formatQuotationMoney(materialAdjustedTotal)}</div></div>
+            </div>
+            <Button type="button" size="sm" variant="outline" className="justify-self-end" disabled={busy || mode === "PENDING"} onClick={() => { setMaterialPercent("100"); setMaterialWriteOff("0"); }}>主材恢复无优惠</Button>
+            {!validAdjustment && mode !== "PENDING" ? <p role="alert" className="type-support text-destructive">请完整填写 0–100 的整数折扣及非负抹零金额；当前预览不作为有效提交值。</p> : null}
             <label className="grid gap-1 type-table-head">
               调整原因（必填）
               <Input
@@ -313,16 +315,16 @@ export function QuotationAdjustment({
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">调整后</span>
               <strong className="text-primary">
-                ¥{formatQuotationMoney(adjustedTotal.toFixed(4))}
+                ¥{formatQuotationMoney(adjustedTotal)}
               </strong>
             </div>
             <div className="flex justify-between gap-4 border-t border-border pt-3">
               <span className="text-muted-foreground">折扣优惠</span>
-              <strong>¥{formatQuotationMoney(discountSavings.toFixed(4))}</strong>
+              <strong>¥{formatQuotationMoney(discountSavings)}</strong>
             </div>
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">抹零优惠</span>
-              <strong>¥{formatQuotationMoney(writeOffSavings.toFixed(4))}</strong>
+              <strong>¥{formatQuotationMoney(writeOffSavings)}</strong>
             </div>
             <div className="grid gap-1 border-t border-border pt-3">
               <span className="text-muted-foreground">调整原因（必填）</span>
@@ -359,3 +361,10 @@ function formatProjectMoney(value: string): string {
     minimumFractionDigits: 2,
   }).format(Number(value));
 }
+
+function previewUnits(value: string): bigint {
+  const [whole, fraction = ""] = (value || "0").split(".");
+  return BigInt(whole || "0") * BigInt(10000) + BigInt(fraction.padEnd(4, "0"));
+}
+function previewDecimal(value: bigint): string { return `${value / BigInt(10000)}.${(value % BigInt(10000)).toString().padStart(4, "0")}`; }
+function positive(value: bigint): bigint { return value > BigInt(0) ? value : BigInt(0); }

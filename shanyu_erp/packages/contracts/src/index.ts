@@ -221,6 +221,10 @@ export interface HalfPackageQuotationScope {
 }
 
 export interface HalfPackageQuotation {
+  readonly mainMaterialAdjustment?: { readonly discountRate: string; readonly writeOff: string } | null;
+  readonly designFeeUnitPrice?: string | null;
+  readonly designFeeAmount?: string | null;
+  readonly designFeeArea?: string;
   readonly adjustmentReason: string | null;
   readonly adjustmentStatus: HalfPackageAdjustmentStatus;
   readonly adjustedTotal: string;
@@ -446,6 +450,7 @@ export interface SubmitHalfPackageQuotationRequest {
 }
 
 export interface UpdateHalfPackageAdjustmentRequest {
+  readonly mainMaterialAdjustment?: { readonly discountRate: string; readonly writeOff: string };
   readonly action: "SUBMIT_FOR_APPROVAL" | "CONFIRM";
   readonly discountRate: string;
   readonly expectedRevision: number;
@@ -683,6 +688,7 @@ export interface ProjectCostAnalysisModule {
 
 export interface ProjectCostAnalysisScenario {
   readonly customerPayableTotal: string;
+  readonly designFeeAmount?: string | null;
   readonly expectedCost: string;
   readonly grossMarginRate: string | null;
   readonly grossProfit: string;

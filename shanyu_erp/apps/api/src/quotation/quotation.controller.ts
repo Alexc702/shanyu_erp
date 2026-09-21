@@ -150,6 +150,19 @@ export class QuotationController {
     };
   }
 
+  @Patch("design-fee")
+  async updateDesignFee(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("projectId") projectId: string,
+    @Body() body: unknown,
+  ): Promise<HalfPackageQuotationResponse> {
+    const input = body as Record<string, unknown> | null;
+    if (!input || (input.unitPrice !== null && typeof input.unitPrice !== "string") || typeof input.expectedRevision !== "number") {
+      throw new BadRequestException("设计费信息不完整");
+    }
+    return { quotation: await this.quotationService.updateDesignFee(await this.currentUser(cookieHeader), projectId, input.unitPrice as string | null, input.expectedRevision) };
+  }
+
   @Patch("versions/:quotationId/margin-benchmark")
   async updateMarginBenchmark(
     @Headers("cookie") cookieHeader: string | undefined,
@@ -287,6 +300,30 @@ export class QuotationApprovalController {
     };
   }
 
+  @Post(":quotationId/selection-sheet")
+  @HttpCode(HttpStatus.ACCEPTED)
+  async createSelectionSheet(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("quotationId") quotationId: string,
+    @Body() body: unknown,
+  ): Promise<HalfPackageExportResponse> {
+    const actor = await this.currentUser(cookieHeader);
+    const accepted = (body as { acceptPlaceholders?: unknown } | null)?.acceptPlaceholders === true;
+    const job = await this.quotationService.requestSelectionSheet(actor, quotationId, accepted);
+    return { job: exportJobResponse(job, null) };
+  }
+
+  @Get(":quotationId/selection-sheet")
+  async latestSelectionSheet(
+    @Headers("cookie") cookieHeader: string | undefined,
+    @Param("quotationId") quotationId: string,
+  ): Promise<{ job: HalfPackageExportResponse["job"] | null }> {
+    const actor = await this.currentUser(cookieHeader);
+    const job = await this.quotationService.getLatestSelectionSheet(actor, quotationId);
+    const exported = job?.exportId ? await this.quotationService.getExport(actor, job.exportId) : null;
+    return { job: job ? exportJobResponse(job, exported) : null };
+  }
+
   private async currentUser(cookieHeader?: string) {
     return this.authService.getSessionUser(readSessionToken(cookieHeader));
   }
@@ -420,7 +457,12 @@ function adjustmentInput(body: unknown): UpdateHalfPackageAdjustmentRequest {
   ) {
     throw new BadRequestException("折扣与抹零信息不完整");
   }
+  const material = candidate.mainMaterialAdjustment as Record<string, unknown> | undefined;
+  if (material !== undefined && (!material || typeof material.discountRate !== "string" || typeof material.writeOff !== "string")) {
+    throw new BadRequestException("主材折扣与抹零信息不完整");
+  }
   return {
+    ...(material ? { mainMaterialAdjustment: { discountRate: material.discountRate as string, writeOff: material.writeOff as string } } : {}),
     action: candidate.action as UpdateHalfPackageAdjustmentRequest["action"],
     discountRate: candidate.discountRate,
     expectedRevision: candidate.expectedRevision,

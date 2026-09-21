@@ -71,7 +71,14 @@ export function mapFullImportItem(
 export function normalizeMaterialVariant(
   source: NormalizedMainMaterialItem, previous?: NormalizedMainMaterialItem,
 ): NormalizedMainMaterialItem {
-  const item = normalizeCabinetVariant(source, previous);
+  let item = normalizeCabinetVariant(source, previous);
+  if (item.materialId === "MAT-SHOWER-DC6F85FFDF14" && item.categoryCode === "SHOWER" && item.attributes.type?.includes("；")) {
+    const types = item.attributes.type.split("；").map((value) => value.trim());
+    if (JSON.stringify(types) !== JSON.stringify(["钻石型", "T型", "一固一开"])) {
+      throw new MainMaterialSelectionError(`${item.materialId}：淋浴房类型变化需先核对受控选项`);
+    }
+    item = { ...item, attributes: { ...item.attributes, showerTypes: JSON.stringify(types) } };
+  }
   if (item.brand !== "顾朗" || item.categoryCode !== "BATHROOM" || item.status === "INACTIVE") return item;
   if (item.colors.length !== 1 || !item.colors[0]) throw new MainMaterialSelectionError(`${item.materialId}：顾朗变体必须对应一个颜色`);
   return { ...item, attributes: { ...item.attributes, variantGroup: `顾朗:${item.model}`, variantColor: item.colors[0] } };

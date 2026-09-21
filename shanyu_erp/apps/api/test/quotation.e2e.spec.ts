@@ -441,6 +441,7 @@ describe("half-package quotation HTTP interface", () => {
         expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
           "封面",
           "预算说明书",
+          "项目报价汇总",
           "半包报价单",
           "主材报价单",
         ]);

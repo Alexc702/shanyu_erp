@@ -339,7 +339,18 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
     projectId: string,
     preserveInherited = false,
   ): Promise<MainMaterialQuotation | null> {
-    await this.database.transaction(async (database) => {
+    await this.database.transaction((database) =>
+      PgMainMaterialRepository.syncDraftDemands(database, projectId, preserveInherited),
+    );
+    return this.getQuotationByProject(projectId);
+  }
+
+  static async syncDraftDemands(
+    database: DatabaseExecutor,
+    projectId: string,
+    preserveInherited = false,
+    sourceLineIds: readonly string[] | null = null,
+  ): Promise<void> {
       const quotationResult = await database.query<{
         id: string;
         main_material_catalog_version_id: string | null;
@@ -381,17 +392,19 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
            JOIN half_package_main_material_demand_tags tag
              ON tag.standard_item_id = vi.standard_item_id
           WHERE qs.quotation_id = $1
+            AND ($2::uuid[] IS NULL OR l.id = ANY($2::uuid[]))
             AND l.selected
             AND l.calculated_quantity > 0
           ORDER BY qs.sort_order, l.sort_order`,
-        [quotation.id],
+        [quotation.id, sourceLineIds],
       );
       const desiredIds = desiredResult.rows.map((row) => row.line_id);
       const removed = await database.query(
         `DELETE FROM main_material_quote_lines
           WHERE quotation_id = $1 AND origin = 'AUTO_TILE'
+            AND ($3::uuid[] IS NULL OR source_half_package_line_id = ANY($3::uuid[]))
             AND NOT (source_half_package_line_id = ANY($2::uuid[]))`,
-        [quotation.id, desiredIds],
+        [quotation.id, desiredIds, sourceLineIds],
       );
       changed ||= Boolean(removed.rowCount);
       for (const demand of desiredResult.rows) {
@@ -445,8 +458,6 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
         }
       }
       if (changed) await recalculateQuotation(database, quotation.id, true);
-    });
-    return this.getQuotationByProject(projectId);
   }
 
   async refreshDraftCatalog(input: {
@@ -1213,31 +1224,28 @@ async function recalculateQuotation(
               coalesce(sum(cost_amount), 0)::numeric(16,4) AS expected_cost
          FROM main_material_quote_lines
         WHERE quotation_id = $1
+     ), priced AS (
+       SELECT totals.*, CASE WHEN q.main_material_adjustment IS NULL THEN
+           greatest(round((q.total + round(totals.direct_cost * 1.1000, 4)) * q.discount_rate - q.write_off, 4), 0)
+         ELSE greatest(round(q.total * q.discount_rate - q.write_off, 4), 0)
+           + greatest(round(round(totals.direct_cost * 1.1000, 4)
+             * (q.main_material_adjustment->>'discountRate')::numeric
+             - (q.main_material_adjustment->>'writeOff')::numeric, 4), 0)
+         END + coalesce(round(q.design_fee_unit_price * q.outer_frame_area, 2), 0) AS adjusted
+       FROM totals CROSS JOIN half_package_quotations q WHERE q.id = $1
      )
      UPDATE half_package_quotations q
         SET main_material_direct_cost = totals.direct_cost,
             main_material_management_fee = round(totals.direct_cost * 0.1000, 4),
             main_material_total = round(totals.direct_cost * 1.1000, 4),
             main_material_expected_cost = totals.expected_cost,
-            adjusted_total = greatest(round(
-              (q.total + round(totals.direct_cost * 1.1000, 4))
-              * q.discount_rate - q.write_off, 4), 0),
-            gross_profit = round(greatest(round(
-              (q.total + round(totals.direct_cost * 1.1000, 4))
-              * q.discount_rate - q.write_off, 4), 0)
-              - q.expected_cost - totals.expected_cost, 4),
-            gross_margin_rate = CASE WHEN greatest(round(
-              (q.total + round(totals.direct_cost * 1.1000, 4))
-              * q.discount_rate - q.write_off, 4), 0) = 0 THEN NULL
-              ELSE round((greatest(round(
-                (q.total + round(totals.direct_cost * 1.1000, 4))
-                * q.discount_rate - q.write_off, 4), 0)
-                - q.expected_cost - totals.expected_cost) /
-                greatest(round((q.total + round(totals.direct_cost * 1.1000, 4))
-                * q.discount_rate - q.write_off, 4), 0), 4) END,
+            adjusted_total = totals.adjusted,
+            gross_profit = round(totals.adjusted - q.expected_cost - totals.expected_cost, 4),
+            gross_margin_rate = CASE WHEN totals.adjusted = 0 THEN NULL
+              ELSE round((totals.adjusted - q.expected_cost - totals.expected_cost) / totals.adjusted, 4) END,
             revision = revision + CASE WHEN $2::boolean THEN 1 ELSE 0 END,
             updated_at = current_timestamp
-       FROM totals
+       FROM priced totals
       WHERE q.id = $1`,
     [quotationId, incrementRevision],
   );

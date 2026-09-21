@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { mapFullImportItem } from "../src/main-material/main-material-import-mapping";
+import { mapFullImportItem, normalizeMaterialVariant } from "../src/main-material/main-material-import-mapping";
 import type { NormalizedMainMaterialItem } from "../src/main-material/main-material.repository";
 
 const baseline = JSON.parse(readFileSync(resolve(process.cwd(), "assets/main-materials/v1/catalog.json"), "utf8")) as {
@@ -10,6 +10,16 @@ const baseline = JSON.parse(readFileSync(resolve(process.cwd(), "assets/main-mat
 const door = baseline.items.find((i) => i.materialId === "MAT-GLASS_DOOR-4CED024ABA98")!;
 
 describe("full import selection and record versions", () => {
+  it("0920 derives 34A types from the current source without changing legacy data", () => {
+    const previous = baseline.items.find((item) => item.materialId === "MAT-SHOWER-DC6F85FFDF14")!;
+    const source = { ...previous, attributes: { ...previous.attributes, type: "钻石型；T型；一固一开" } };
+    for (const result of [mapFullImportItem(source, previous), normalizeMaterialVariant(source, previous)]) {
+      expect(JSON.parse(result.attributes.showerTypes!)).toEqual(["钻石型", "T型", "一固一开"]);
+      expect(result.salePrice).toBe(previous.salePrice);
+      expect(result.colors).toEqual(previous.colors);
+    }
+    expect(previous.attributes.showerTypes).toBeUndefined();
+  });
   it("preserves glass/frame maps by material_id and advances a stale record version", () => {
     const raw = { ...door, recordVersion: 1, attributes: { imageReference: door.attributes.imageReference! } };
     const result = mapFullImportItem(raw, door);

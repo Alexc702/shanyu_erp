@@ -32,6 +32,8 @@ import {
   HalfPackageCalculator,
   type QuantityRule,
 } from "./half-package-calculator";
+import { calculateProjectPricing, hasExcessiveModuleWriteOff } from "./project-pricing";
+import { buildSelectionSheetRows } from "./selection-sheet";
 import {
   QUOTATION_REPOSITORY,
   type QuotationDraft,
@@ -89,6 +91,10 @@ export interface QuotationScopeView {
 }
 
 export interface QuotationView {
+  readonly mainMaterialAdjustment?: QuotationDraft["mainMaterialAdjustment"];
+  readonly designFeeUnitPrice?: string | null;
+  readonly designFeeAmount?: string | null;
+  readonly designFeeArea?: string;
   readonly adjustmentReason: string | null;
   readonly adjustmentStatus: QuotationDraft["adjustmentStatus"];
   readonly adjustedTotal: string;
@@ -567,6 +573,29 @@ export class QuotationService {
     return toView(created);
   }
 
+  async updateDesignFee(actor: SessionUser, projectId: string, unitPrice: string | null, expectedRevision: number): Promise<QuotationView> {
+    await this.authorizedProject(actor, projectId);
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0 ||
+      (unitPrice !== null && !/^\d{1,10}(?:\.\d{1,4})?$/.test(unitPrice))) {
+      throw new BadRequestException("设计费单价必须为非负数，最多四位小数");
+    }
+    const draft = await this.quotationRepository.findDraft(projectId);
+    if (!draft?.isCurrent) throw new ConflictException("仅当前草稿可编辑设计费");
+    let saved: QuotationDraft;
+    try {
+      saved = await this.quotationRepository.saveDraft(this.calculate({ ...draft,
+        designFeeUnitPrice: unitPrice, revision: expectedRevision + 1,
+      }), expectedRevision);
+    } catch (error) {
+      if (error instanceof QuotationRevisionConflictError) throw new ConflictException("报价已变化，请刷新后重试");
+      throw error;
+    }
+    await this.auditRepository.append({ action: "QUOTATION_DESIGN_FEE_UPDATED", actorUserId: actor.id,
+      beforeState: { unitPrice: draft.designFeeUnitPrice ?? null }, afterState: { unitPrice },
+      occurredAt: new Date(), result: "SUCCESS", targetId: saved.id, targetType: "HALF_PACKAGE_QUOTATION" });
+    return toView(saved);
+  }
+
   async updateAdjustment(
     actor: SessionUser,
     quotationId: string,
@@ -576,6 +605,7 @@ export class QuotationService {
       readonly action: "SUBMIT_FOR_APPROVAL" | "CONFIRM";
       readonly reason: string | null;
       readonly writeOff: string;
+      readonly mainMaterialAdjustment?: { readonly discountRate: string; readonly writeOff: string };
     },
   ): Promise<QuotationView> {
     const quotation = await this.authorizedVersion(actor, quotationId);
@@ -600,14 +630,18 @@ export class QuotationService {
       throw new BadRequestException("折扣、抹零和修订号格式不正确");
     }
     const normalizedReason = input.reason?.trim() || null;
+    if (input.mainMaterialAdjustment && (
+      !isWholePercentDiscountRate(input.mainMaterialAdjustment.discountRate) ||
+      !/^\d+(?:\.\d{1,4})?$/.test(input.mainMaterialAdjustment.writeOff)
+    )) throw new BadRequestException("主材折扣、抹零格式不正确");
     if (!normalizedReason) {
       throw new BadRequestException("提交折扣审批必须填写调整原因");
     }
-    const adjustedTotal = adjustedProjectTotal(
-      projectBaseTotal(quotation),
-      input.discountRate,
-      input.writeOff,
-    );
+    const mainMaterialAdjustment = input.mainMaterialAdjustment ?? quotation.mainMaterialAdjustment ?? null;
+    if (hasExcessiveModuleWriteOff({ ...quotation, ...input, mainMaterialAdjustment })) {
+      throw new BadRequestException("模块抹零不能超过该模块折后金额");
+    }
+    const adjustedTotal = calculateProjectPricing({ ...quotation, ...input, mainMaterialAdjustment }).adjustedTotal;
     const grossProfit = subtractDecimal4(
       subtractDecimal4(adjustedTotal, quotation.expectedCost),
       quotation.mainMaterialExpectedCost ?? "0.0000",
@@ -623,6 +657,7 @@ export class QuotationService {
             normalizedReason,
             {
               adjustedTotal,
+              mainMaterialAdjustment,
               discountRate: input.discountRate,
               expectedRevision: input.expectedRevision,
               grossMarginRate,
@@ -641,6 +676,7 @@ export class QuotationService {
             actor.id,
             normalizedReason,
             input.expectedRevision,
+            mainMaterialAdjustment,
           );
     } catch (error) {
       if (error instanceof QuotationRevisionConflictError) {
@@ -656,10 +692,12 @@ export class QuotationService {
       actorUserId: actor.id,
       afterState: {
         discountRate: saved.discountRate,
+        mainMaterialAdjustment: saved.mainMaterialAdjustment ?? null,
         writeOff: saved.writeOff,
       },
       beforeState: {
         discountRate: quotation.discountRate,
+        mainMaterialAdjustment: quotation.mainMaterialAdjustment ?? null,
         writeOff: quotation.writeOff,
       },
       occurredAt: new Date(),
@@ -776,6 +814,32 @@ export class QuotationService {
       quotationId,
       requestedByUserId: actor.id,
     });
+  }
+
+  async requestSelectionSheet(actor: SessionUser, quotationId: string, acceptPlaceholders: boolean): Promise<QuotationExportJob> {
+    const quotation = await this.authorizedExportableVersion(actor, quotationId, "PDF", "CLIENT");
+    if (!this.exportJobs || !this.mainMaterialRepository) throw new ConflictException("选材单导出队列尚未配置");
+    const previous = await this.exportJobs.findLatestSelection?.(quotationId);
+    if (previous?.status === "FAILED" && previous.selectionSnapshot) {
+      if (!acceptPlaceholders) throw new BadRequestException("请确认按原任务资料重试");
+      return this.exportJobs.enqueue({ id: randomUUID(), quotationId, format: "PDF", audience: "CLIENT",
+        documentKind: "SELECTION", requestedByUserId: actor.id, selectionSnapshot: previous.selectionSnapshot });
+    }
+    const mainMaterial = await this.mainMaterialRepository.getQuotationById(quotationId);
+    const rows = await buildSelectionSheetRows(mainMaterial, this.mainMaterialRepository);
+    if (!acceptPlaceholders) throw new BadRequestException("图片尚未完成对客审核，请确认使用图片待核验占位后再生成");
+    const project = await this.authorizedProject(actor, quotation.projectId);
+    return this.exportJobs.enqueue({ id: randomUUID(), quotationId, format: "PDF", audience: "CLIENT",
+      documentKind: "SELECTION", requestedByUserId: actor.id,
+      selectionSnapshot: { templateVersion: "0920-v1", project: quotation.projectAddress,
+        customer: project.customerName, designer: project.leadDesigner.displayName,
+        version: quotation.versionNumber, date: new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" }), rows },
+    });
+  }
+
+  async getLatestSelectionSheet(actor: SessionUser, quotationId: string): Promise<QuotationExportJob | null> {
+    await this.authorizedVersion(actor, quotationId);
+    return this.exportJobs?.findLatestSelection?.(quotationId) ?? null;
   }
 
   async getExportJob(
@@ -903,7 +967,6 @@ export class QuotationService {
     const addedScopes = missingSpaces.map((space, index) => {
       const sectionCodes = sectionCodesForSpace(
         space.type,
-        space.includesBalcony,
       );
       return buildScope(
         quotationSpaceName(space.displayName, space.type, space.includesBalcony),
@@ -966,7 +1029,7 @@ export class QuotationService {
 
     const repairedScopeIds: string[] = [];
     const scopes = draft.scopes.map((scope) => {
-      const repaired = repairAcceptanceScope(scope, template);
+      const repaired = repairAcceptanceScope(scope, template, draft.outerFrameArea);
       if (repaired !== scope) repairedScopeIds.push(scope.id);
       return repaired;
     });
@@ -1030,12 +1093,7 @@ export class QuotationService {
     const calculatedScopes = new Map(
       result.scopes.map((scope) => [scope.id, scope] as const),
     );
-    const projectTotal = addDecimal4(result.total, draft.mainMaterialTotal ?? "0.0000");
-    const adjustedTotal = adjustedProjectTotal(
-      projectTotal,
-      draft.discountRate,
-      draft.writeOff,
-    );
+    const adjustedTotal = calculateProjectPricing({ ...draft, total: result.total }).adjustedTotal;
     const projectExpectedCost = addDecimal4(
       result.expectedCost,
       draft.mainMaterialExpectedCost ?? "0.0000",
@@ -1118,7 +1176,6 @@ function buildDraft(
   for (const space of project.spaces) {
     const sectionCodes = sectionCodesForSpace(
       space.type,
-      space.includesBalcony,
     );
     scopes.push(
       buildScope(
@@ -1154,6 +1211,7 @@ function buildDraft(
         null,
         scopes.length,
         items,
+        project.outerFrameArea,
       ),
     );
   }
@@ -1211,6 +1269,7 @@ function buildScope(
   height: string | null,
   sortOrder: number,
   items: readonly QuotationTemplateItem[],
+  initialManualArea: string | null = null,
 ): QuotationDraftScope {
   const baseLines = items.flatMap((item) => acceptanceItemVariants(item.itemName).map((itemName) => ({
     amount: null,
@@ -1221,9 +1280,9 @@ function buildScope(
     grossProfit: null,
     id: randomUUID(),
     itemName,
-    manualQuantity: null,
+    manualQuantity: item.sectionCode === "ELECTRICAL" && itemName === "正泰空开更换" ? initialManualArea : null,
     quantityRule: { kind: "MANUAL" } as QuantityRule,
-    remarks: item.remarks,
+    remarks: acceptanceRemarks(itemName, item.remarks),
     saleUnitPrice: item.saleUnitPrice,
     sectionCode: item.sectionCode,
     sectionName: item.sectionName,
@@ -1237,7 +1296,7 @@ function buildScope(
     return {
       ...line,
       quantityRule,
-      selected: quantityRule.kind !== "MANUAL",
+      selected: quantityRule.kind !== "MANUAL" || line.manualQuantity !== null,
     };
   });
   const lines = linesWithRules.map((line) => {
@@ -1271,6 +1330,7 @@ function buildScope(
 function repairAcceptanceScope(
   scope: QuotationDraftScope,
   template: QuotationTemplate | null,
+  outerFrameArea: string,
 ): QuotationDraftScope {
   if (
     scope.spaceType === "BALCONY" &&
@@ -1293,6 +1353,13 @@ function repairAcceptanceScope(
   let changed = false;
   let lines = scope.lines.map((line) => {
     const itemName = acceptanceItemName(line.itemName);
+    const remarks = acceptanceRemarks(itemName, line.remarks);
+    if (remarks !== line.remarks) changed = true;
+    if (line.sectionCode === "ELECTRICAL" && itemName === "正泰空开更换" && line.quantityRule.kind === "PROJECT_OUTER_FRAME_AREA") {
+      changed = true;
+      return { ...line, remarks, quantityRule: { kind: "MANUAL" } as const,
+        manualQuantity: line.selected ? line.calculatedQuantity ?? outerFrameArea : null };
+    }
     if (itemName !== line.itemName) changed = true;
     if (
       acceptanceManualItemNames.has(itemName) &&
@@ -1312,9 +1379,18 @@ function repairAcceptanceScope(
         selected: false,
       };
     }
-    return itemName === line.itemName ? line : { ...line, itemName };
+    return itemName === line.itemName && remarks === line.remarks ? line : { ...line, itemName, remarks };
   });
   const linesById = new Map(lines.map((line) => [line.id, line] as const));
+  if (scope.spaceType === "LIVING_DINING") {
+    lines = lines.filter((line) => {
+      const unusedDuplicate = line.sectionCode === "BALCONY" && !line.selected &&
+        !line.manualQuantity && !line.calculatedQuantity &&
+        lines.some((original) => original.sectionCode === "LIVING_DINING" && original.itemName === line.itemName);
+      if (unusedDuplicate) changed = true;
+      return !unusedDuplicate;
+    });
+  }
   lines = lines.map((line) => {
     if (line.quantityRule.kind !== "LINE_REFERENCE") return line;
     const referenced = linesById.get(line.quantityRule.referencedLineId);
@@ -1466,13 +1542,10 @@ function referencedItemName(
 
 function sectionCodesForSpace(
   spaceType: SpaceType,
-  includesBalcony: boolean,
 ): HalfPackageSectionCode[] {
   switch (spaceType) {
     case "LIVING_DINING":
-      return includesBalcony
-        ? ["LIVING_DINING", "BALCONY"]
-        : ["LIVING_DINING"];
+      return ["LIVING_DINING"];
     case "BEDROOM":
     case "CLOSET":
       return ["BEDROOM"];
@@ -1537,6 +1610,10 @@ function normalizeManualQuantity(value: string | null): string | null {
 
 function toView(draft: QuotationDraft): QuotationView {
   return {
+    mainMaterialAdjustment: draft.mainMaterialAdjustment ?? null,
+    designFeeUnitPrice: draft.designFeeUnitPrice ?? null,
+    designFeeAmount: calculateProjectPricing(draft).designFeeAmount,
+    designFeeArea: draft.outerFrameArea,
     adjustmentReason: draft.adjustmentReason,
     adjustmentStatus: draft.adjustmentStatus,
     adjustedTotal: draft.adjustedTotal,
@@ -1692,6 +1769,15 @@ function submissionCheck(
 ): HalfPackageSubmissionCheck {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  for (const scope of draft.scopes) {
+    if (scope.spaceType !== "LIVING_DINING") continue;
+    for (const line of scope.lines) {
+      if (line.sectionCode === "BALCONY" && line.selected && scope.lines.some((original) =>
+        original.sectionCode === "LIVING_DINING" && original.itemName === line.itemName && original.selected)) {
+        blockers.push(`${scope.name} / ${line.itemName} 存在已填写的重复包管，请确认保留哪一项并清空另一项；系统不会自动合并数量`);
+      }
+    }
+  }
   const allLines = draft.scopes.flatMap((scope) =>
     scope.lines.map((line) => ({ line, scopeName: scope.name })),
   );
@@ -1772,6 +1858,10 @@ function compareQuotationVersions(
   for (const [field, itemName, before, after] of [
     ["DISCOUNT_RATE", "折扣", from.discountRate, to.discountRate],
     ["WRITE_OFF", "抹零/减免", from.writeOff, to.writeOff],
+    ["DISCOUNT_RATE", "主材折扣", from.mainMaterialAdjustment?.discountRate ?? null, to.mainMaterialAdjustment?.discountRate ?? null],
+    ["WRITE_OFF", "主材抹零/减免", from.mainMaterialAdjustment?.writeOff ?? null, to.mainMaterialAdjustment?.writeOff ?? null],
+    ["SALE_UNIT_PRICE", "设计费单价", from.designFeeUnitPrice ?? null, to.designFeeUnitPrice ?? null],
+    ["TOTAL", "设计费金额", calculateProjectPricing(from).designFeeAmount, calculateProjectPricing(to).designFeeAmount],
     ["TOTAL", "报价合计", from.adjustedTotal, to.adjustedTotal],
   ] as const) {
     if (before !== after) {
@@ -1889,8 +1979,13 @@ const electricalBuildingAreaItems = new Set([
   "排水工程（PVC）",
   "强电工程（1.5；2.5BV线；4.0Bvr线）",
   "弱电工程（6类网线，电视线）",
-  "正泰空开更换",
 ]);
+
+function acceptanceRemarks(itemName: string, remarks: string | null): string | null {
+  return itemName === "正泰空开更换" || itemName === "施耐德空开更换"
+    ? remarks?.replaceAll("单个电箱配置", "") ?? null
+    : remarks;
+}
 
 const spaceAreaItemNames = new Set([
   "成品保护",
@@ -1998,12 +2093,14 @@ function toProjectCostAnalysis(
 function projectCostScenario(
   quotation: QuotationDraft,
   mainMaterial: MainMaterialQuotation | null,
-  marginBasisIncome: string,
+  customerPayableTotal: string,
 ): ProjectCostAnalysisScenario {
+  const designFeeAmount = calculateProjectPricing(quotation).designFeeAmount;
+  const marginBasisIncome = subtractDecimal4(customerPayableTotal, designFeeAmount ?? "0.0000");
   const [halfPackageIncome, mainMaterialIncome] = allocatedModuleIncome(
     quotation,
     mainMaterial,
-    marginBasisIncome,
+    customerPayableTotal,
   );
   const halfPackageCost = quotation.expectedCost;
   const mainMaterialCost =
@@ -2023,7 +2120,8 @@ function projectCostScenario(
   const mainMaterialEnabled =
     mainMaterial?.lines.some((line) => line.saleAmount !== null) ?? false;
   return {
-    customerPayableTotal: marginBasisIncome,
+    customerPayableTotal,
+    designFeeAmount,
     expectedCost,
     grossMarginRate: decimalRate(grossProfit, marginBasisIncome),
     grossProfit,
@@ -2098,14 +2196,20 @@ function allocatedModuleIncome(
   );
   const baseUnits = halfPackageUnits + mainMaterialUnits;
   const totalUnits = decimal4Units(total);
+  if (quotation.mainMaterialAdjustment) {
+    const pricing = calculateProjectPricing({ ...quotation, mainMaterialTotal: mainMaterial?.total ?? quotation.mainMaterialTotal });
+    if (total === quotation.adjustedTotal) return [pricing.halfPackageAdjustedTotal, pricing.mainMaterialAdjustedTotal];
+    return [quotation.total, mainMaterial?.total ?? quotation.mainMaterialTotal ?? "0.0000"];
+  }
+  const designFee = decimal4Units(calculateProjectPricing(quotation).designFeeAmount ?? "0");
   if (baseUnits === 0n) return ["0.0000", "0.0000"];
   const allocatedHalfPackage = divideRounded(
-    totalUnits * halfPackageUnits,
+    (totalUnits - designFee) * halfPackageUnits,
     baseUnits,
   );
   return [
     fixed4(allocatedHalfPackage),
-    fixed4(totalUnits - allocatedHalfPackage),
+    fixed4(totalUnits - designFee - allocatedHalfPackage),
   ];
 }
 
@@ -2166,10 +2270,7 @@ function mainMaterialCategories(
 }
 
 function projectBaseTotal(quotation: QuotationDraft): string {
-  return addDecimal4(
-    quotation.total,
-    quotation.mainMaterialTotal ?? "0.0000",
-  );
+  return calculateProjectPricing(quotation).total;
 }
 
 function addDecimal4(left: string, right: string): string {
@@ -2178,18 +2279,6 @@ function addDecimal4(left: string, right: string): string {
 
 function subtractDecimal4(left: string, right: string): string {
   return fixed4(decimal4Units(left) - decimal4Units(right));
-}
-
-function adjustedProjectTotal(
-  total: string,
-  discountRate: string,
-  writeOff: string,
-): string {
-  const totalUnits = decimal4Units(total);
-  const rateUnits = decimal4Units(discountRate);
-  const discounted = divideRounded(totalUnits * rateUnits, 10_000n);
-  const adjusted = discounted - decimal4Units(writeOff);
-  return fixed4(adjusted > 0n ? adjusted : 0n);
 }
 
 function isWholePercentDiscountRate(value: string): boolean {

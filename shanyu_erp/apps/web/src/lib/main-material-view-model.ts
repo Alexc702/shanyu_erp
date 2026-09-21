@@ -11,6 +11,8 @@ export interface MainMaterialCandidateGroup {
 }
 
 const internalAttributeKeys = new Set([
+  "configurationDescription",
+  "showerTypes",
   "colorAssetMap",
   "glassColorAssetMap",
   "glassColors",
@@ -31,6 +33,14 @@ export function mainMaterialDisplayModel(
 
 export function formatMainMaterialUnit(unit: string): string {
   return ["m2", "m²", "㎡"].includes(unit.trim().toLowerCase()) ? "M²" : unit;
+}
+
+// Presentation only. Inputs and API requests retain their original precision.
+export function formatMainMaterialQuantity(value: string, unit: string): string {
+  const metric = ["m", "米", "m2", "m²", "㎡", "平米", "平方", "平方米"].includes(unit.trim().toLowerCase());
+  return new Intl.NumberFormat("zh-CN", { useGrouping: false,
+    minimumFractionDigits: metric ? 1 : 0, maximumFractionDigits: metric ? 1 : 0,
+  }).format(Number(value));
 }
 
 export function mainMaterialBaseQuantity(
@@ -129,6 +139,25 @@ export function mainMaterialGlassColors(
   } catch {
     return [];
   }
+}
+
+export function mainMaterialShowerTypes(item: MainMaterialItemView): readonly string[] {
+  if (item.categoryCode !== "SHOWER") return [];
+  try {
+    const types: unknown = JSON.parse(item.attributes.showerTypes ?? "[]");
+    return Array.isArray(types) ? types.filter((value): value is string => typeof value === "string" && Boolean(value)) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function decodeMainMaterialShowerSelection(value: string): { type: string; color: string } {
+  const match = /^类型：(.*)｜颜色：(.*)$/.exec(value);
+  return match ? { type: match[1]!, color: match[2]! } : { type: "", color: value };
+}
+
+export function encodeMainMaterialShowerSelection(type: string, color: string): string {
+  return type ? `类型：${type}｜颜色：${color}` : color;
 }
 
 export function mainMaterialGlassColorAsset(

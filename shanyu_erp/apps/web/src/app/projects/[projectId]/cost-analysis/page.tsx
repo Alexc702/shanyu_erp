@@ -153,6 +153,7 @@ function CurrentSummary({ analysis }: { readonly analysis: ProjectCostAnalysis }
     <>
       <MetricGrid scenario={analysis.current} />
       <ModuleTable analysis={analysis} scenario={analysis.current} />
+      <ModuleTable analysis={analysis} scenario={analysis.current} outside />
       <FormulaNote />
     </>
   );
@@ -187,6 +188,7 @@ function PendingComparison({ analysis }: { readonly analysis: ProjectCostAnalysi
       </section>
       <ImpactStrip current={analysis.current} pending={pending} />
       <ComparisonTable current={analysis.current} pending={pending} />
+      <ModuleTable analysis={analysis} scenario={analysis.current} outside />
       <FormulaNote />
     </>
   );
@@ -406,7 +408,7 @@ function MetricGrid({ scenario }: { readonly scenario: ProjectCostAnalysisScenar
   return (
     <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="项目成本指标">
       <MetricCard label="客户应付总价" note="含管理费，不另计半包税金" value={money(scenario.customerPayableTotal)} />
-      <MetricCard label="毛利口径收入" note="不含第三方代购" value={money(scenario.marginBasisIncome)} />
+      <MetricCard label="毛利口径收入" note="不含设计费及第三方代购" value={money(scenario.marginBasisIncome)} />
       <MetricCard label="预计成本" note="仅计入综合毛利的模块成本" value={money(scenario.expectedCost)} />
       <MetricCard label="预计毛利" note="毛利口径收入 − 预计成本" value={money(scenario.grossProfit)} />
       <MetricCard label="综合毛利率" note="预计毛利 ÷ 毛利口径收入" value={formatMarginRate(scenario.grossMarginRate)} />
@@ -422,11 +424,12 @@ function CompactMetric({ label, value }: { readonly label: string; readonly valu
   return <div className="grid gap-1"><span className="type-support text-muted-foreground">{label}</span><strong className="text-base">{value}</strong></div>;
 }
 
-function ModuleTable({ analysis, scenario }: { readonly analysis: ProjectCostAnalysis; readonly scenario: ProjectCostAnalysisScenario }) {
+function ModuleTable({ analysis, scenario, outside = false }: { readonly analysis: ProjectCostAnalysis; readonly scenario: ProjectCostAnalysisScenario; readonly outside?: boolean }) {
+  const modules = scenario.modules.filter(module => (module.code === "THIRD_PARTY") === outside);
   return (
     <Card className="overflow-hidden border-border py-0 shadow-none">
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"><div><h2 className="type-entity">报价模块</h2><p className="type-support m-0 text-muted-foreground">点击操作仅切换同一项目、同一报价版本下的成本明细</p></div><span className="type-support text-muted-foreground">4 个模块</span></div>
-      <div className="overflow-x-auto"><Table className="min-w-[1000px] table-fixed"><TableHeader><TableRow className="bg-muted hover:bg-muted"><TableHead>报价模块</TableHead><TableHead>完成状态</TableHead><TableHead>对客报价</TableHead><TableHead>预计成本</TableHead><TableHead>预计毛利</TableHead><TableHead>毛利率</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{scenario.modules.map((module) => <TableRow key={module.code}><TableCell><strong className="type-table-body block">{moduleName(module.code)}</strong><span className="type-support text-muted-foreground">{module.note}</span></TableCell><TableCell><Badge variant={module.status === "COMPLETED" ? "success" : module.status === "DRAFT" ? "warning" : "secondary"}>{moduleStatusLabel(module)}</Badge></TableCell><ModuleMoney value={module.customerPrice} /><ModuleMoney value={module.expectedCost} /><ModuleMoney emphasis value={module.grossProfit} /><TableCell className="font-semibold">{module.grossMarginRate === null ? "—" : formatMarginRate(module.grossMarginRate)}</TableCell><TableCell>{module.code === "HALF_PACKAGE" || module.code === "MAIN_MATERIAL" ? <Button asChild className="h-8 px-2.5" variant="ghost"><Link href={`${costAnalysisHref(analysis)}&module=${module.code === "HALF_PACKAGE" ? "half-package" : "main-material"}`}>{module.code === "HALF_PACKAGE" ? "查看半包成本" : "查看主材成本"}</Link></Button> : <span className="text-muted-foreground">—</span>}</TableCell></TableRow>)}</TableBody></Table></div>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"><div><h2 className="type-entity">{outside ? "成本毛利核算外" : "报价模块"}</h2><p className="type-support m-0 text-muted-foreground">{outside ? "设计费收入单列，仍计入客户应付总价；不参与顶部成本毛利指标" : "点击操作仅切换同一项目、同一报价版本下的成本明细"}</p></div><span className="type-support text-muted-foreground">{modules.length + (outside ? 1 : 0)} 个模块</span></div>
+      <div className="overflow-x-auto"><Table className="min-w-[1000px] table-fixed"><TableHeader><TableRow className="bg-muted hover:bg-muted"><TableHead>报价模块</TableHead><TableHead>{outside ? "核算口径" : "完成状态"}</TableHead><TableHead>对客报价</TableHead><TableHead>预计成本</TableHead><TableHead>预计毛利</TableHead><TableHead>毛利率</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{outside ? <TableRow><TableCell><strong className="type-table-body block">设计费</strong><span className="type-support text-muted-foreground">收入单列，不代表已收款</span></TableCell><TableCell><Badge variant="secondary">收入单列</Badge></TableCell><TableCell>{scenario.designFeeAmount == null ? "未设置／—" : money(scenario.designFeeAmount)}</TableCell><ModuleMoney value={null} /><ModuleMoney value={null} /><TableCell>—</TableCell><TableCell>—</TableCell></TableRow> : null}{modules.map((module) => <TableRow key={module.code}><TableCell><strong className="type-table-body block">{moduleName(module.code)}</strong><span className="type-support text-muted-foreground">{module.note}</span></TableCell><TableCell><Badge variant={module.status === "COMPLETED" ? "success" : module.status === "DRAFT" ? "warning" : "secondary"}>{moduleStatusLabel(module)}</Badge></TableCell><ModuleMoney value={module.customerPrice} /><ModuleMoney value={module.expectedCost} /><ModuleMoney emphasis value={module.grossProfit} /><TableCell className="font-semibold">{module.grossMarginRate === null ? "—" : formatMarginRate(module.grossMarginRate)}</TableCell><TableCell>{module.code === "HALF_PACKAGE" || module.code === "MAIN_MATERIAL" ? <Button asChild className="h-8 px-2.5" variant="ghost"><Link href={`${costAnalysisHref(analysis)}&module=${module.code === "HALF_PACKAGE" ? "half-package" : "main-material"}`}>{module.code === "HALF_PACKAGE" ? "查看半包成本" : "查看主材成本"}</Link></Button> : <span className="text-muted-foreground">—</span>}</TableCell></TableRow>)}</TableBody></Table></div>
     </Card>
   );
 }
@@ -436,7 +439,7 @@ function ModuleMoney({ emphasis = false, value }: { readonly emphasis?: boolean;
 }
 
 function FormulaNote() {
-  return <p className="type-support m-0 rounded-md bg-primary-soft px-3 py-3 font-medium text-primary">毛利口径收入 = 半包收入 + 主材收入 + 其他纳入毛利模块收入；第三方代购返点不参与综合毛利率。</p>;
+  return <p className="type-support m-0 rounded-md bg-primary-soft px-3 py-3 font-medium text-primary">毛利口径收入 = 半包收入 + 主材收入 + 其他纳入毛利模块收入；设计费收入单列，设计费及第三方代购不参与顶部成本毛利核算。</p>;
 }
 
 function costAnalysisHref(analysis: ProjectCostAnalysis): string {

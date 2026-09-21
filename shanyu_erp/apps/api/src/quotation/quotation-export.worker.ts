@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
+import { renderSelectionSheet } from "./selection-sheet";
 
 import {
   AUDIT_REPOSITORY,
@@ -72,14 +73,18 @@ export class QuotationExportWorker {
       const project = await this.quotations.findProject(quotation.projectId);
       if (!project) throw new Error("导出关联的项目不存在");
       const mainMaterial = await this.mainMaterials.getQuotationById(quotation.id);
-      const generated = await this.exporter.generate(
+      const generated = job.documentKind === "SELECTION" && job.selectionSnapshot
+        ? await renderSelectionSheet(job.selectionSnapshot)
+        : await this.exporter.generate(
         quotation,
         job.format,
         project.customerName,
         mainMaterial,
         job.audience,
       );
-      await validateGeneratedExport(
+      if (job.documentKind === "SELECTION") {
+        if (!job.selectionSnapshot || generated.payload.length === 0 || (await PDFDocument.load(generated.payload)).getPageCount() < 2) throw new Error("选材单文件校验失败");
+      } else await validateGeneratedExport(
         generated,
         job.format,
         buildQuotationExportSummary(quotation, mainMaterial).grandTotal,

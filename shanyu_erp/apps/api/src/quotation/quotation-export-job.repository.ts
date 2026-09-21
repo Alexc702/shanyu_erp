@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 
 import { DatabaseClient } from "../database/database.client";
+import type { SelectionSheetSnapshot } from "./selection-sheet";
 import type {
   QuotationExportFormat,
   StoredQuotationExport,
@@ -17,6 +18,8 @@ export type QuotationExportJobStatus =
   | "FAILED";
 
 export interface QuotationExportJob {
+  readonly documentKind?: "QUOTATION" | "SELECTION";
+  readonly selectionSnapshot?: SelectionSheetSnapshot | null;
   readonly attempts: number;
   readonly audience: "CLIENT" | "INTERNAL";
   readonly completedAt: Date | null;
@@ -32,6 +35,8 @@ export interface QuotationExportJob {
 }
 
 export interface NewQuotationExportJob {
+  readonly documentKind?: "QUOTATION" | "SELECTION";
+  readonly selectionSnapshot?: SelectionSheetSnapshot | null;
   readonly audience: "CLIENT" | "INTERNAL";
   readonly format: QuotationExportFormat;
   readonly id: string;
@@ -40,6 +45,7 @@ export interface NewQuotationExportJob {
 }
 
 export interface QuotationExportJobRepository {
+  findLatestSelection?(quotationId: string): Promise<QuotationExportJob | null>;
   claimNext(): Promise<QuotationExportJob | null>;
   complete(
     jobId: string,
@@ -51,6 +57,8 @@ export interface QuotationExportJobRepository {
 }
 
 interface ExportJobRow {
+  document_kind: "QUOTATION" | "SELECTION";
+  selection_snapshot: SelectionSheetSnapshot | null;
   attempts: number;
   audience: "CLIENT" | "INTERNAL";
   completed_at: Date | null;
@@ -65,7 +73,7 @@ interface ExportJobRow {
   status: QuotationExportJobStatus;
 }
 
-const exportJobSelect = `SELECT id, quotation_id, format, audience,
+const exportJobSelect = `SELECT document_kind, selection_snapshot, id, quotation_id, format, audience,
        requested_by_user_id, status, attempts, export_id, error_message,
        created_at, started_at, completed_at
   FROM quotation_export_jobs`;
@@ -79,12 +87,12 @@ export class PgQuotationExportJobRepository
     return this.database.transaction(async (database) => {
       const inserted = await database.query<ExportJobRow>(
         `INSERT INTO quotation_export_jobs
-           (id, quotation_id, format, audience, requested_by_user_id)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (quotation_id, format, audience)
+           (id, quotation_id, format, audience, requested_by_user_id, document_kind, selection_snapshot)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (quotation_id, format, audience, document_kind)
            WHERE status IN ('PENDING', 'RUNNING')
          DO NOTHING
-         RETURNING id, quotation_id, format, audience, requested_by_user_id,
+         RETURNING document_kind, selection_snapshot, id, quotation_id, format, audience, requested_by_user_id,
                    status, attempts, export_id, error_message,
                    created_at, started_at, completed_at`,
         [
@@ -93,17 +101,19 @@ export class PgQuotationExportJobRepository
           input.format,
           input.audience,
           input.requestedByUserId,
+          input.documentKind ?? "QUOTATION",
+          input.selectionSnapshot ?? null,
         ],
       );
       const created = inserted.rows[0];
       if (created) return toExportJob(created);
       const existing = await database.query<ExportJobRow>(
         `${exportJobSelect}
-          WHERE quotation_id = $1 AND format = $2 AND audience = $3
+          WHERE quotation_id = $1 AND format = $2 AND audience = $3 AND document_kind = $4
             AND status IN ('PENDING', 'RUNNING')
           ORDER BY created_at
           LIMIT 1`,
-        [input.quotationId, input.format, input.audience],
+        [input.quotationId, input.format, input.audience, input.documentKind ?? "QUOTATION"],
       );
       const row = existing.rows[0];
       if (!row) throw new Error("并发导出任务创建后无法读取");
@@ -116,6 +126,11 @@ export class PgQuotationExportJobRepository
       `${exportJobSelect} WHERE id = $1`,
       [jobId],
     );
+    return result.rows[0] ? toExportJob(result.rows[0]) : null;
+  }
+
+  async findLatestSelection(quotationId: string): Promise<QuotationExportJob | null> {
+    const result = await this.database.query<ExportJobRow>(`${exportJobSelect} WHERE quotation_id=$1 AND document_kind='SELECTION' ORDER BY created_at DESC, id DESC LIMIT 1`, [quotationId]);
     return result.rows[0] ? toExportJob(result.rows[0]) : null;
   }
 
@@ -151,7 +166,7 @@ export class PgQuotationExportJobRepository
                 attempts = attempts + 1, error_message = NULL
            FROM next_job
           WHERE job.id = next_job.id
-         RETURNING job.id, job.quotation_id, job.format, job.audience,
+         RETURNING job.document_kind, job.selection_snapshot, job.id, job.quotation_id, job.format, job.audience,
                    job.requested_by_user_id, job.status, job.attempts,
                    job.export_id, job.error_message, job.created_at,
                    job.started_at, job.completed_at`,
@@ -190,7 +205,7 @@ export class PgQuotationExportJobRepository
             SET status = 'SUCCEEDED', export_id = $2,
                 completed_at = current_timestamp, error_message = NULL
           WHERE id = $1 AND status = 'RUNNING'
-         RETURNING id, quotation_id, format, audience, requested_by_user_id,
+         RETURNING document_kind, selection_snapshot, id, quotation_id, format, audience, requested_by_user_id,
                    status, attempts, export_id, error_message,
                    created_at, started_at, completed_at`,
         [jobId, exported.id],
@@ -207,7 +222,7 @@ export class PgQuotationExportJobRepository
           SET status = 'FAILED', completed_at = current_timestamp,
               error_message = $2, export_id = NULL
         WHERE id = $1 AND status = 'RUNNING'
-       RETURNING id, quotation_id, format, audience, requested_by_user_id,
+       RETURNING document_kind, selection_snapshot, id, quotation_id, format, audience, requested_by_user_id,
                  status, attempts, export_id, error_message,
                  created_at, started_at, completed_at`,
       [jobId, message],
@@ -220,6 +235,8 @@ export class PgQuotationExportJobRepository
 
 function toExportJob(row: ExportJobRow): QuotationExportJob {
   return {
+    documentKind: row.document_kind,
+    selectionSnapshot: row.selection_snapshot,
     attempts: row.attempts,
     audience: row.audience,
     completedAt: row.completed_at,

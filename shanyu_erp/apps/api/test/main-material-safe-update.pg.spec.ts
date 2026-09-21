@@ -226,6 +226,87 @@ describe.skipIf(!enabled)("safe catalog update / isolated PostgreSQL", () => {
       await expect(other.query("LOCK TABLE main_material_catalog_versions IN ROW EXCLUSIVE MODE")).rejects.toMatchObject({ code: "55P03" });
     } finally { await other.query("ROLLBACK"); other.release(); }
   });
+  it.each(["remove", "quantity", "rollback"])("syncs explicit inherited tile edits atomically: %s", async (mode) => {
+    const q = await draft(), scopeId = randomUUID(), halfId = randomUUID();
+    const item = (await client.query(`SELECT vi.id FROM half_package_version_items vi
+      JOIN half_package_main_material_demand_tags tag ON tag.standard_item_id=vi.standard_item_id LIMIT 1`)).rows[0];
+    if (!item) throw new Error("Prepare the isolated half-package baseline first");
+    await client.query("INSERT INTO half_package_quotation_spaces (id,quotation_id,name,sort_order) VALUES ($1,$2,'客餐厅',0)", [scopeId,q.id]);
+    await client.query(`INSERT INTO half_package_quotation_lines
+      (id,quotation_space_id,version_item_id,section_code,section_name,item_name,unit,sort_order,
+       selected,quantity_rule_kind,manual_quantity,calculated_quantity,sale_unit_price,cost_unit_price,sale_amount,cost_amount,gross_profit,gross_margin_rate)
+      VALUES ($1,$2,$3,'WALL','测试','200*700mm小砖','M²',1,true,'MANUAL',33,33,100,50,3300,1650,1650,0.5)`, [halfId,scopeId,item.id]);
+    await client.query(`INSERT INTO main_material_quote_lines
+      (id,quotation_id,origin,source_half_package_line_id,category_code,scope_name,demand_name,demand_spec,base_quantity,loss_rate,quote_quantity,sort_order)
+      VALUES ($1,$2,'AUTO_TILE',$3,'TILE','客餐厅','200*700mm小砖','200*700',33,0.115,36.795,2)`, [randomUUID(),q.id,halfId]);
+    await client.query("UPDATE half_package_quotations SET status='QUOTED',submitted_at=current_timestamp,submitted_by_user_id=$2 WHERE id=$1", [q.id,actor]);
+    const repository = new PgQuotationRepository(database, new PgProjectsRepository(database), {} as CatalogRepository);
+    const source = (await repository.findById(q.id))!;
+    const next = await repository.continueEditing(source,actor);
+    const originalLines = await lines(q.id), inheritedLines = await lines(next.id);
+    const manual = inheritedLines.find(l => l.origin === "MANUAL");
+    const service = new QuotationService(new AccessPolicy(), repository, new PgAuditRepository(database), new HalfPackageCalculator());
+    const user = { id: actor, account: actor, displayName: "本地测试", role: "ADMIN" as const, phone: null };
+    await publish();
+    // Merely opening inherited drafts must remain read-only, even after catalog publication.
+    const before = await state();
+    await new PgMainMaterialRepository(database).initializeAndSyncDraft(q.projectId, true);
+    expect(await state()).toBe(before);
+    const lineId = next.scopes[0]!.lines[0]!.id;
+    if (mode === "rollback") {
+      await client.query(`CREATE FUNCTION pg_temp.reject_demand_delete() RETURNS trigger LANGUAGE plpgsql AS
+        'BEGIN RAISE EXCEPTION ''test sync failure''; END'`);
+      await client.query(`CREATE TRIGGER test_sync_failure BEFORE DELETE ON main_material_quote_lines
+        FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_demand_delete()`);
+      await expect(service.updateLine(user,q.projectId,lineId,{ expectedRevision: next.revision, selected: false, quantity: null })).rejects.toThrow("test sync failure");
+      expect(await state()).toBe(before);
+      return;
+    }
+    const saved = await service.updateLine(user,q.projectId,lineId,{
+      expectedRevision: next.revision, selected: mode === "quantity", quantity: mode === "quantity" ? "12" : null,
+    });
+    const current = await lines(next.id);
+    expect(current.find(l => l.origin === "MANUAL")).toEqual(manual);
+    if (mode === "remove") expect(current.filter(l => l.origin === "AUTO_TILE")).toHaveLength(0);
+    else expect(current.find(l => l.origin === "AUTO_TILE")).toMatchObject({ base_quantity: "12.0000", quote_quantity: "13.3800" });
+    expect(await row(next.id)).toMatchObject({ main_material_catalog_version_id: oldCatalog, discount_rate: "0.9500", write_off: "2.0000", revision: saved.revision });
+    expect(await repository.findById(q.id)).toEqual({ ...source, isCurrent: false });
+    expect(await lines(q.id)).toEqual(originalLines);
+    const after = await state();
+    await new PgMainMaterialRepository(database).initializeAndSyncDraft(q.projectId, true);
+    expect(await state()).toBe(after);
+    await expect(service.updateLine(user,q.projectId,lineId,{
+      expectedRevision: next.revision, selected: true, quantity: "10",
+    })).rejects.toThrow("报价已被其他操作更新");
+    expect(await state()).toBe(after);
+    if (mode === "remove") {
+      await service.updateLine(user,q.projectId,lineId,{ expectedRevision: saved.revision, selected: true, quantity: "5" });
+      expect((await lines(next.id)).find(l => l.origin === "AUTO_TILE")).toMatchObject({ base_quantity: "5.0000", quote_quantity: "5.5750" });
+      expect((await lines(next.id)).find(l => l.origin === "MANUAL")).toEqual(manual);
+      expect(await lines(q.id)).toEqual(originalLines);
+    }
+  });
+  it("0920 persists module adjustments and design fees across approval and continuation", async () => {
+    const q = await draft();
+    await client.query("UPDATE half_package_quotations SET design_fee_unit_price=50 WHERE id=$1", [q.id]);
+    await client.query("UPDATE half_package_quotations SET status='QUOTED',submitted_at=current_timestamp,submitted_by_user_id=$2 WHERE id=$1", [q.id,actor]);
+    const repository = new PgQuotationRepository(database, new PgProjectsRepository(database), {} as CatalogRepository);
+    const source = (await repository.findById(q.id))!;
+    const adjustment = { discountRate: "0.9800", writeOff: "1.0000" };
+    const pending = await repository.saveAdjustment(q.id, "0.95", "2", "7025.0000", "5625", "0.8007", actor, "验收", source.revision, adjustment);
+    expect(pending.mainMaterialAdjustment).toEqual(adjustment);
+    expect(pending.designFeeUnitPrice).toBe("50.0000");
+    const approved = await repository.decide(q.id, actor, "APPROVED", null);
+    expect(approved.mainMaterialAdjustment).toEqual(adjustment);
+    expect(approved.designFeeUnitPrice).toBe("50.0000");
+    const returned = await repository.decide(approved.id, actor, "RETURNED", "验收返修");
+    const next = await repository.continueEditing(returned, actor);
+    expect(next.mainMaterialAdjustment).toEqual(adjustment);
+    expect(next.designFeeUnitPrice).toBe("50.0000");
+    expect(next.adjustedTotal).toBe(returned.adjustedTotal);
+    expect((await repository.findById(approved.id))?.mainMaterialAdjustment).toEqual(adjustment);
+  });
+
   it("service creation and reopening do not recalculate or repair inherited content", async () => {
     const q = await draft();
     await client.query("UPDATE half_package_quotations SET status='QUOTED',submitted_at=current_timestamp,submitted_by_user_id=$2 WHERE id=$1", [q.id,actor]);

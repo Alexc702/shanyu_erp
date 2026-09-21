@@ -120,6 +120,15 @@ export async function updateQuotationAdjustment(
   return ((await response.json()) as HalfPackageQuotationResponse).quotation;
 }
 
+export async function updateDesignFee(projectId: string, unitPrice: string | null, expectedRevision: number, fetcher: Fetcher = fetch): Promise<HalfPackageQuotation> {
+  const response = await fetcher(`${apiUrl}/projects/${projectId}/half-package-quotation/design-fee`, {
+    body: JSON.stringify({ unitPrice, expectedRevision }), credentials: "include",
+    headers: { "content-type": "application/json" }, method: "PATCH",
+  });
+  if (!response.ok) throw await responseError(response, "保存设计费失败");
+  return ((await response.json()) as HalfPackageQuotationResponse).quotation;
+}
+
 export async function updateQuotationMarginBenchmark(
   projectId: string,
   quotationId: string,
@@ -168,6 +177,20 @@ export async function getQuotationExportJob(
   });
   if (!response.ok) throw await responseError(response, "查询导出进度失败");
   return ((await response.json()) as HalfPackageExportResponse).job;
+}
+
+export async function createSelectionSheetExport(quotationId: string, acceptPlaceholders: boolean, fetcher: Fetcher = fetch) {
+  const response = await fetcher(`${apiUrl}/approvals/half-package/${quotationId}/selection-sheet`, {
+    method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ acceptPlaceholders }),
+  });
+  if (!response.ok) throw await responseError(response, "生成选材单失败");
+  return ((await response.json()) as HalfPackageExportResponse).job;
+}
+
+export async function latestSelectionSheetExport(quotationId: string, fetcher: Fetcher = fetch) {
+  const response = await fetcher(`${apiUrl}/approvals/half-package/${quotationId}/selection-sheet`, { credentials: "include" });
+  if (!response.ok) throw await responseError(response, "恢复选材单任务失败");
+  return ((await response.json()) as { job: HalfPackageExportResponse["job"] | null }).job;
 }
 
 export async function fetchQuotationExportFile(

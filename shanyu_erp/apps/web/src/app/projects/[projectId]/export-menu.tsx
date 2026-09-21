@@ -22,6 +22,7 @@ import {
   waitForQuotationExport,
 } from "@/lib/quotation-client";
 import { cn } from "@/lib/utils";
+import { SelectionSheetPanel } from "./selection-sheet-panel";
 
 interface ExportMenuProps {
   readonly compact?: boolean;
@@ -40,6 +41,7 @@ export function ExportMenu({
 }: ExportMenuProps) {
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState<HalfPackageExportFormat>("PDF");
+  const [documentKind, setDocumentKind] = useState<"QUOTATION" | "SELECTION">("QUOTATION");
   const [working, setWorking] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,13 +79,18 @@ export function ExportMenu({
           {compact ? "导出" : "打印/导出"}
         </Button>
       </DialogTrigger>
-      <DialogContent className="w-[calc(100%-2rem)] max-w-[560px] gap-[18px] rounded-xl p-6">
+      <DialogContent className={cn("w-[calc(100%-2rem)] max-h-[95vh] overflow-y-auto gap-[18px] rounded-xl p-6", documentKind === "SELECTION" ? "max-w-[1000px]" : "max-w-[560px]")}>
         <DialogHeader className="gap-1.5">
-          <DialogTitle className="text-xl font-semibold">导出项目报价单</DialogTitle>
+          <DialogTitle className="text-xl font-semibold">{documentKind === "QUOTATION" ? "导出项目报价单" : "导出项目选材单"}</DialogTitle>
           <DialogDescription className="type-table-body">
-            Excel 与 PDF 共用标准打印模板。
+            {documentKind === "QUOTATION" ? "Excel 与 PDF 共用标准打印模板。" : "选材确认单仅支持 PDF；预览与下载为同一文件。"}
           </DialogDescription>
         </DialogHeader>
+        <div className="flex gap-2" role="radiogroup" aria-label="导出内容">
+          <Button role="radio" aria-checked={documentKind === "QUOTATION"} variant={documentKind === "QUOTATION" ? "default" : "outline"} onClick={() => setDocumentKind("QUOTATION")}>项目报价单</Button>
+          <Button role="radio" aria-checked={documentKind === "SELECTION"} variant={documentKind === "SELECTION" ? "default" : "outline"} onClick={() => setDocumentKind("SELECTION")}>项目选材单</Button>
+        </div>
+        {documentKind === "SELECTION" ? <SelectionSheetPanel quotationId={quotationId} /> : <>
 
         <div
           className="type-table-body flex items-start gap-2 rounded-lg bg-warning-soft px-3.5 py-3 text-warning"
@@ -166,6 +173,7 @@ export function ExportMenu({
             {working ? "正在导出…" : "开始导出"}
           </Button>
         </DialogFooter>
+        </>}
       </DialogContent>
     </Dialog>
   );
