@@ -57,7 +57,7 @@ elif 'ps' in args: print(args[-1])
 elif 'run' in args:
     if 'scripts/run-migrations.mjs' in args: fail('migration')
     elif 'scripts/deployment-data-baseline.mjs' in args:
-        if args[-1]=='snapshot': print('{}')
+        if 'snapshot' in args: print('{}')
         else: sys.stdin.read(); fail('baseline'); print('{"verified":true}')
     elif 'scripts/reconcile-main-material-drafts.mjs' in args:
         phase='apply' if '--apply' in args else 'preview'; fail(phase)
@@ -144,6 +144,32 @@ if [ "${FAKE_COS_OK:-0}" = 1 ]; then printf 'synthetic COS readback marker' >"$p
         previous = (self.live / ".release.previous.env").read_bytes()
         self.assertEqual(self.run_upgrade().returncode, 0)
         self.assertEqual(previous, (self.live / ".release.previous.env").read_bytes())
+
+    def test_035_opt_in_reaches_all_baseline_checks(self):
+        self.value['imageCorrection'] = '035_shower_34a_image'
+        self.manifest.write_text(json.dumps(self.value))
+        result = self.run_upgrade()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = (self.root / 'commands').read_text()
+        self.assertEqual(commands.count('--image-correction=035'), 3)
+
+    def test_unknown_image_correction_is_rejected(self):
+        self.value['imageCorrection'] = 'ignore-all-images'
+        self.manifest.write_text(json.dumps(self.value))
+        self.assertNotEqual(self.run_upgrade().returncode, 0)
+        self.assertFalse((self.live / '.upgrade-maintenance').exists())
+
+    def test_035_verification_failure_keeps_maintenance(self):
+        self.value['imageCorrection'] = '035_shower_34a_image'
+        self.manifest.write_text(json.dumps(self.value))
+        result = self.run_upgrade('baseline')
+        self.assertNotEqual(result.returncode, 0)
+        report = Path((self.live / '.upgrade-maintenance').read_text().strip())
+        self.assertIn('phase=migration-baseline', (report / 'status').read_text())
+        commands = (self.root / 'commands').read_text()
+        self.assertNotIn('--apply', commands)
+        self.assertNotIn('up -d', commands)
+        self.assertIn('stop -t 60', commands)
 
     def test_failure_stops_and_preserves_evidence_no_database_restore(self):
         for fault in ("backup", "migration", "baseline", "preview", "invalid-preview", "archive", "apply", "post-backup", "health"):

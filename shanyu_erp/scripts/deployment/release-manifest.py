@@ -30,6 +30,10 @@ def validate(value):
                match(value["catalog"]["sha256"], r"[0-9a-f]{64}")]
     for field in ("postgresVolume", "exportsVolume"):
         output.append(match(value[field], r"[a-zA-Z0-9][a-zA-Z0-9_.-]*"))
+    correction = value.get("imageCorrection", "none")
+    if correction not in ("none", "035_shower_34a_image"):
+        raise ValueError("Unknown image correction authorization")
+    output.append(correction)
     return output
 
 

@@ -16,6 +16,8 @@ machine_id="${values[4]}"; previous="${values[5]}"
 api="${values[6]}"; api_id="${values[7]}"; web="${values[8]}"; web_id="${values[9]}"
 catalog="${values[10]}"; catalog_hash="${values[11]}"
 postgres_volume="${values[12]}"; exports_volume="${values[13]}"
+baseline_flag=""
+if [ "${values[14]}" = 035_shower_34a_image ]; then baseline_flag=--image-correction=035; fi
 [ "$2" = "$environment:$release" ] || { echo 'Confirmation mismatch' >&2; exit 2; }
 [ "$(cat /etc/machine-id)" = "$machine_id" ] || { echo 'Wrong server identity' >&2; exit 1; }
 require_deployment_files
@@ -110,7 +112,7 @@ backup before
 # Candidate's read-only inspector runs before migration without starting the API.
 api_run() { RELEASE_ENV_FILE="$report/release.next.env" compose run --rm -T --no-deps --pull never api node "$@"; }
 phase=baseline
-api_run scripts/deployment-data-baseline.mjs snapshot >"$report/before.json" 2>"$report/baseline.log"
+api_run scripts/deployment-data-baseline.mjs snapshot ${baseline_flag:+"$baseline_flag"} >"$report/before.json" 2>"$report/baseline.log"
 phase=select-release
 if [ "$current" != "$release" ]; then cp "$RELEASE_ENV_FILE" "$DEPLOY_ROOT/.release.previous.env"; fi
 cp "$report/release.next.env" "$RELEASE_ENV_FILE.pending"
@@ -124,7 +126,7 @@ phase=migration
 api_run scripts/run-migrations.mjs up >"$report/migration.log" 2>&1
 phase=migration-baseline
 python3 "$SCRIPT_DIR/upgrade-evidence.py" input "$report/before.json" | \
-  api_run scripts/deployment-data-baseline.mjs verify >"$report/after-migration.json" 2>"$report/after-migration.log"
+  api_run scripts/deployment-data-baseline.mjs verify ${baseline_flag:+"$baseline_flag"} >"$report/after-migration.json" 2>"$report/after-migration.log"
 phase=preview
 api_run scripts/reconcile-main-material-drafts.mjs --dry-run "--environment=$environment" \
   "--target=$catalog" "--catalog-hash=$catalog_hash" "--release=$release" >"$report/preview.pending" 2>"$report/preview.log"
@@ -137,7 +139,7 @@ python3 "$SCRIPT_DIR/upgrade-evidence.py" plan "$report/apply.pending" "$catalog
 mv "$report/apply.pending" "$report/apply.json"
 phase=post-baseline
 python3 "$SCRIPT_DIR/upgrade-evidence.py" input "$report/before.json" "$report/apply.json" | \
-  api_run scripts/deployment-data-baseline.mjs verify >"$report/after.json" 2>"$report/after.log"
+  api_run scripts/deployment-data-baseline.mjs verify ${baseline_flag:+"$baseline_flag"} >"$report/after.json" 2>"$report/after.log"
 phase=post-backup
 backup after
 [ "$env_fingerprint" = "$(sha256sum "$ENV_FILE") $(stat -c '%a:%u:%g' "$ENV_FILE")" ]
