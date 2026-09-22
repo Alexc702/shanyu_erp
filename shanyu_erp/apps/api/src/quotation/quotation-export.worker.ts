@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
 import { renderSelectionSheet } from "./selection-sheet";
+import { readSelectionSheetImage } from "./selection-sheet-images";
 
 import {
   AUDIT_REPOSITORY,
@@ -74,7 +75,7 @@ export class QuotationExportWorker {
       if (!project) throw new Error("导出关联的项目不存在");
       const mainMaterial = await this.mainMaterials.getQuotationById(quotation.id);
       const generated = job.documentKind === "SELECTION" && job.selectionSnapshot
-        ? await renderSelectionSheet(job.selectionSnapshot)
+        ? await renderSelectionSheet(job.selectionSnapshot, id => readSelectionSheetImage(this.mainMaterials, id))
         : await this.exporter.generate(
         quotation,
         job.format,

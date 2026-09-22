@@ -179,9 +179,9 @@ export async function getQuotationExportJob(
   return ((await response.json()) as HalfPackageExportResponse).job;
 }
 
-export async function createSelectionSheetExport(quotationId: string, acceptPlaceholders: boolean, fetcher: Fetcher = fetch) {
+export async function createSelectionSheetExport(quotationId: string, fetcher: Fetcher = fetch) {
   const response = await fetcher(`${apiUrl}/approvals/half-package/${quotationId}/selection-sheet`, {
-    method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ acceptPlaceholders }),
+    method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({}),
   });
   if (!response.ok) throw await responseError(response, "生成选材单失败");
   return ((await response.json()) as HalfPackageExportResponse).job;

@@ -305,11 +305,9 @@ export class QuotationApprovalController {
   async createSelectionSheet(
     @Headers("cookie") cookieHeader: string | undefined,
     @Param("quotationId") quotationId: string,
-    @Body() body: unknown,
   ): Promise<HalfPackageExportResponse> {
     const actor = await this.currentUser(cookieHeader);
-    const accepted = (body as { acceptPlaceholders?: unknown } | null)?.acceptPlaceholders === true;
-    const job = await this.quotationService.requestSelectionSheet(actor, quotationId, accepted);
+    const job = await this.quotationService.requestSelectionSheet(actor, quotationId);
     return { job: exportJobResponse(job, null) };
   }
 

@@ -4,9 +4,10 @@ import { createHash } from "node:crypto";
 import type { MainMaterialQuotation, MainMaterialRepository } from "../main-material/main-material.repository";
 import { isMainMaterialColorSelectionValid } from "../main-material/main-material-selection";
 import { readPdfFont, readPdfStaticAsset, type GeneratedQuotationExport } from "./quotation-exporter";
+import { selectionSheetImages, type SelectionSheetImage } from "./selection-sheet-images";
 
 export interface SelectionSheetSnapshot {
-  readonly templateVersion: "0920-v1";
+  readonly templateVersion: "0920-v1" | "0922-v2";
   readonly project: string;
   readonly customer: string;
   readonly designer: string;
@@ -22,6 +23,7 @@ interface SelectionSheetRow {
   readonly spec: string;
   readonly description: string;
   readonly locations: readonly string[];
+  readonly images?: readonly SelectionSheetImage[];
 }
 
 /** Explicit customer fields only: never serialize item records, prices or remarks. */
@@ -49,6 +51,7 @@ export async function buildSelectionSheetRows(quotation: MainMaterialQuotation |
         ...technicalFields(item.categoryCode).flatMap(([key, label]) => item.attributes[key] ? [`${label}：${safeText(item.attributes[key]!)}`] : []),
       ].filter(Boolean).join("\n"),
       locations: [location || "使用位置未注明"],
+      images: selectionSheetImages(item, line.selectedColor!),
     };
     const key = createHash("sha256").update(JSON.stringify([item.id, item.recordVersion, line.spec, line.selectedColor, item.attributes, line.assetIds])).digest("hex");
     const previous = rows.get(key);
@@ -63,8 +66,16 @@ function safeText(value: string): string {
   return Array.from(value.replace(/(?:https?:\/\/|www\.)\S+/gi, "").replace(/1[3-9]\d{9}/g, "").replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, ""), character => character.charCodeAt(0) < 32 ? " " : character).join("").trim();
 }
 
-export async function renderSelectionSheet(snapshot: SelectionSheetSnapshot): Promise<GeneratedQuotationExport> {
-  if (snapshot.templateVersion !== "0920-v1") throw new Error("不支持的选材单快照模板版本");
+export async function renderSelectionSheet(snapshot: SelectionSheetSnapshot, readImage: (id: string) => Promise<Buffer>): Promise<GeneratedQuotationExport> {
+  if (snapshot.templateVersion !== "0922-v2") throw new Error("旧选材单任务不含图片快照，请重新生成选材单");
+  const images = new Map<string, Buffer>();
+  for (const row of snapshot.rows) {
+    if (!row.images?.length) throw new Error(`${row.name} · ${row.color}：缺少图片关联`);
+    for (const image of row.images) if (!images.has(image.assetId)) {
+      try { images.set(image.assetId, await readImage(image.assetId)); }
+      catch { throw new Error(`${row.name} · ${image.label}：图片缺失或校验失败，请核对主材库`); }
+    }
+  }
   const document = new PDFDocument({ autoFirstPage: false, bufferPages: true, size: "A4", margin: 36,
     info: { Title: "项目选材单", Creator: "山屿 ERP", Producer: "山屿 ERP" } });
   const chunks: Buffer[] = [];
@@ -100,40 +111,58 @@ export async function renderSelectionSheet(snapshot: SelectionSheetSnapshot): Pr
   document.fontSize(14).text("选材确认", 36, confirmationY, { width: 523 });
   document.fontSize(13).text("客户签字：________________________", 36, confirmationY + 108, { width: 523 });
   document.text("日期：________年______月______日", 36, confirmationY + 152, { width: 523 });
-  const widths = [80, 78, 65, 94, 90, 116];
+  const widths = [87, 84, 58, 72, 83, 139];
   const labels = ["主材名称", "图示", "品牌", "颜色", "规格", "材料说明"];
-  let y = 0, category = "";
+  let y = 0, category = "", rowIndex = 0;
   function newPage(name: string) {
-    document.addPage(); document.fontSize(16).fillColor("#18181b").text(name, 36, 42, { width: 523 });
-    document.image(logo, 489, 28, { fit: [70, 44] });
-    y = 80; drawCells(labels, 32, true); y += 32;
+    document.addPage();
+    document.rect(0, 0, document.page.width, document.page.height).fill("#eeeeee");
+    document.rect(36, 44, 5, 49).fill("#555555");
+    document.fontSize(28).fillColor("#444444").text("选材单", 46, 39, { lineBreak: false });
+    document.fontSize(15).fillColor("#888888").text("CUSTOM DESIGN", 46, 75, { lineBreak: false });
+    document.image(logo, 426, 36, { fit: [133, 65] });
+    document.moveTo(36, 129).lineTo(559, 129).strokeColor("#888888").lineWidth(0.6).stroke();
+    document.fontSize(17).fillColor("#555555").text(name, 36, 143, { width: 523 });
+    y = 185; drawCells(labels, 44, true); y += 44;
   }
   function drawCells(values: readonly string[], height: number, heading = false) {
     let x = 36;
     values.forEach((value, index) => {
       const width = widths[index]!;
-      if (heading) document.rect(x, y, width, height).fill("#f4f4f5");
+      document.rect(x, y, width, height).fill(heading ? "#626262" : rowIndex % 2 ? "#e6e6e6" : "#eeeeee");
       document.rect(x, y, width, height).lineWidth(0.4).strokeColor("#d4d4d8").stroke();
-      document.fillColor("#18181b").fontSize(10);
+      document.fillColor(heading ? "#ffffff" : "#444444").fontSize(10);
       value.split("\n").forEach((line, lineIndex) => document.text(line, x + 6, y + 8 + lineIndex * 17, { lineBreak: false }));
       x += width;
     });
   }
   for (const row of snapshot.rows) {
-    if (category !== row.category) { category = row.category; newPage(category); }
-    const values = [row.name, "产品图待补充", row.brand || "未提供", row.color, row.spec || "未提供", [row.description || "暂无补充说明。", `使用位置：${row.locations.join("、")}`].join("\n")];
+    if (category !== row.category) { category = row.category; rowIndex = 0; newPage(category); }
+    const product = row.images!.filter(image => image.role === "product");
+    const swatches = row.images!.filter(image => image.role === "color");
+    const values = [row.name, "", row.brand || "未提供", swatches.length ? "" : row.color, row.spec || "未提供", [row.description || "", `使用位置：${row.locations.join("、")}`].filter(Boolean).join("\n")];
     document.fontSize(10);
     const lines = values.map((value, index) => wrap(document, value, widths[index]! - 12));
     const count = Math.max(...lines.map(value => value.length));
     let offset = 0;
     while (offset < count) {
-      if (y + 46 > 755) newPage(`${category}（续）`);
-      const take = Math.max(1, Math.min(count - offset, Math.floor((755 - y - 16) / 17)));
-      const height = Math.max(64, take * 17 + 16);
-      if (y + height > 755) { newPage(`${category}（续）`); continue; }
+      if (y + 130 > 750) newPage(`${category}（续）`);
+      const take = Math.max(1, Math.min(count - offset, Math.floor((750 - y - 16) / 17)));
+      const height = Math.max(swatches.length > 1 ? 200 : 130, take * 17 + 16);
+      if (y + height > 750) { newPage(`${category}（续）`); continue; }
       drawCells(lines.map(value => value.slice(offset, offset + take).join("\n")), height);
+      if (product[0]) document.image(images.get(product[0].assetId)!, 129, y + 10, { fit: [72, Math.min(118, height - 20)], align: "center", valign: "center" });
+      let swatchY = y + 8;
+      for (const swatch of swatches) {
+        document.image(images.get(swatch.assetId)!, 270, swatchY, { fit: [60, 62], align: "center", valign: "center" });
+        document.fillColor("#444444").fontSize(8);
+        const caption = wrap(document, swatch.label, 60);
+        caption.forEach((line, index) => document.text(line, 270, swatchY + 66 + index * 10, { lineBreak: false }));
+        swatchY += 70 + caption.length * 10;
+      }
       y += height; offset += take;
     }
+    rowIndex++;
   }
   const pages = document.bufferedPageRange().count;
   for (let page = 0; page < pages; page++) {
@@ -146,6 +175,7 @@ export async function renderSelectionSheet(snapshot: SelectionSheetSnapshot): Pr
     }
     document.fontSize(10).fillColor("#71717a").text("本手册对应所示报价版本的已选材料；图片与实物可能存在色差，规格及选型以该版本确认内容为准。", 36, 758, { width: 523 });
     document.fontSize(8).text("版权注册：山屿设计 SHANYU DESIGN STUDIO", 36, 800, { width: 350, lineBreak: false });
+    if (page > confirmationPage) document.moveTo(36, 788).lineTo(559, 788).strokeColor("#888888").lineWidth(0.6).stroke();
     document.text(`V${snapshot.version} · 第 ${page + 1} / ${pages} 页`, 400, 800, { width: 159, align: "right", lineBreak: false });
   }
   document.end();

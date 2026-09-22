@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   continueEditingQuotation,
   createQuotationExport,
+  createSelectionSheetExport,
   discountRateToWholePercent,
   fetchQuotationExportFile,
   waitForQuotationExport,
@@ -17,6 +18,11 @@ import {
 } from "./quotation-client";
 
 describe("quotation client", () => {
+  it("creates a selection PDF without a placeholder acknowledgement", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ job: { id: "selection", status: "PENDING" } }), { status: 202 }));
+    expect((await createSelectionSheetExport("version-id", fetcher)).id).toBe("selection");
+    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/version-id/selection-sheet"), expect.objectContaining({ method: "POST", credentials: "include", body: "{}" }));
+  });
   it("formats server four-decimal amounts to two decimals", () => {
     expect(formatQuotationMoney("19.1348")).toBe("19.13");
     expect(formatQuotationMoney("19.1350")).toBe("19.14");

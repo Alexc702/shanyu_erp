@@ -816,22 +816,20 @@ export class QuotationService {
     });
   }
 
-  async requestSelectionSheet(actor: SessionUser, quotationId: string, acceptPlaceholders: boolean): Promise<QuotationExportJob> {
+  async requestSelectionSheet(actor: SessionUser, quotationId: string): Promise<QuotationExportJob> {
     const quotation = await this.authorizedExportableVersion(actor, quotationId, "PDF", "CLIENT");
     if (!this.exportJobs || !this.mainMaterialRepository) throw new ConflictException("选材单导出队列尚未配置");
     const previous = await this.exportJobs.findLatestSelection?.(quotationId);
-    if (previous?.status === "FAILED" && previous.selectionSnapshot) {
-      if (!acceptPlaceholders) throw new BadRequestException("请确认按原任务资料重试");
+    if (previous?.status === "FAILED" && previous.selectionSnapshot?.templateVersion === "0922-v2") {
       return this.exportJobs.enqueue({ id: randomUUID(), quotationId, format: "PDF", audience: "CLIENT",
         documentKind: "SELECTION", requestedByUserId: actor.id, selectionSnapshot: previous.selectionSnapshot });
     }
     const mainMaterial = await this.mainMaterialRepository.getQuotationById(quotationId);
     const rows = await buildSelectionSheetRows(mainMaterial, this.mainMaterialRepository);
-    if (!acceptPlaceholders) throw new BadRequestException("图片尚未完成对客审核，请确认使用图片待核验占位后再生成");
     const project = await this.authorizedProject(actor, quotation.projectId);
     return this.exportJobs.enqueue({ id: randomUUID(), quotationId, format: "PDF", audience: "CLIENT",
       documentKind: "SELECTION", requestedByUserId: actor.id,
-      selectionSnapshot: { templateVersion: "0920-v1", project: quotation.projectAddress,
+      selectionSnapshot: { templateVersion: "0922-v2", project: quotation.projectAddress,
         customer: project.customerName, designer: project.leadDesigner.displayName,
         version: quotation.versionNumber, date: new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" }), rows },
     });
