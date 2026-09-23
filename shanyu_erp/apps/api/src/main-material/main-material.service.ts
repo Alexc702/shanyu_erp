@@ -45,7 +45,7 @@ import {
 import { parseMainMaterialWorkbook } from "./main-material-workbook";
 import { MainMaterialWorkbookReadError } from "./main-material-xlsx-reader";
 import { validateFullImport } from "./main-material-import-mapping";
-import { isMainMaterialColorSelectionValid } from "./main-material-selection";
+import { isMainMaterialColorSelectionValid, isMainMaterialTileSpecCompatible } from "./main-material-selection";
 
 const categoryOrder: readonly MainMaterialCategoryCode[] = [
   "TILE", "SEAM", "FLOOR", "GLASS_DOOR", "CEILING",
@@ -635,7 +635,7 @@ function refreshBlocker(
   if (!item.salePrice || !item.costPrice) return "新版本中价格资料不完整";
   if (item.categoryCode !== line.categoryCode) return "新版本中的商品分类已变化";
   if (line.origin === "AUTO_TILE" && (
-    normalizeSpec(item.spec) !== normalizeSpec(line.demandSpec) ||
+    !isMainMaterialTileSpecCompatible(line.demandName, line.demandSpec, item) ||
     !["m2", "m²", "㎡"].includes(item.unit.trim().toLowerCase())
   )) return "新版本中的规格或单位与当前瓷砖需求不兼容";
   if (!isMainMaterialColorSelectionValid(item, line.selectedColor)) {

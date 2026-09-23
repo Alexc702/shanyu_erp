@@ -11,6 +11,12 @@ const line = { ...item, id: "line", item_version_id: "old", origin: "MANUAL", se
   sale_unit_price: "1000.0000", cost_unit_price: "800.0000" };
 
 describe("zero-impact catalog update", () => {
+  it("keeps both legacy and typed 34A colours valid when the catalog is unchanged", () => {
+    const shower = { ...item, material_id: "MAT-SHOWER-DC6F85FFDF14", colors: ["枪灰拉丝"] };
+    for (const selected_color of ["枪灰拉丝", "类型：T型｜颜色：枪灰拉丝"]) {
+      expect(selectionImpact({ ...line, material_id: shower.material_id, selected_color }, shower, shower)).toEqual([]);
+    }
+  });
   it("ignores version/provenance identifiers but not business fields", () => {
     expect(selectionImpact(line, item, { ...item, id: "new", catalog_version_id: "v2", record_version: 99 })).toEqual([]);
   });

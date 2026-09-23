@@ -191,6 +191,19 @@ describe.skipIf(!enabled)("safe catalog update / isolated PostgreSQL", () => {
     const audit = (await client.query("SELECT metadata FROM audit_events WHERE action='MAIN_MATERIAL_SAFE_UPDATE_ANALYZED' AND target_id=$1", [published.id])).rows[0];
     expect(audit.metadata.entries.find((e: { quotationId: string }) => e.quotationId === q.id).outcome).toBe("UPDATED");
   });
+  it("targeted DELTA publication preserves untouched product metadata", async () => {
+    await client.query("UPDATE main_material_catalog_versions SET status='VALIDATED' WHERE id=$1", [oldCatalog]);
+    await client.query("UPDATE main_material_item_versions SET missing_fields='品牌、产品图' WHERE id=$1", [oldItem]);
+    await client.query("UPDATE main_material_catalog_versions SET status='PUBLISHED' WHERE id=$1", [oldCatalog]);
+    const repository = new PgMainMaterialRepository(database);
+    const before = (await repository.getPublishedCatalog())!;
+    const batch = await repository.createImportBatch({ id: randomUUID(), createdByUserId: actor,
+      fileName: "local-delta.xlsx", fileHash: "b".repeat(64), mode: "DELTA", payload: [],
+      validation: { blockerCount: 0 }, status: "VALIDATED" });
+    const published = await repository.publishImportBatch(batch.id, actor);
+    expect(published.items[0]).toEqual({ ...before.items[0], id: expect.any(String), catalogVersionId: published.id });
+    expect((await repository.getCatalogById(oldCatalog))!.items).toEqual(before.items);
+  });
   it("copies duplicate half-package item IDs using exact source-line identity", async () => {
     const q = await draft(false), scopeId = randomUUID(), halfIds = [randomUUID(), randomUUID()];
     const item = (await client.query("SELECT * FROM half_package_version_items ORDER BY id LIMIT 1")).rows[0];

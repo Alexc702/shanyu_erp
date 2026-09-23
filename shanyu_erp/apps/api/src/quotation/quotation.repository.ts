@@ -92,6 +92,8 @@ export interface QuotationDraftScope {
 }
 
 export interface QuotationDraft {
+  readonly designFeeConfirmedArea?: string | null;
+  readonly designFeeRevision?: number;
   readonly mainMaterialAdjustment?: ModuleAdjustment | null;
   readonly designFeeUnitPrice?: string | null;
   readonly adjustmentReason: string | null;
@@ -139,6 +141,7 @@ export interface QuotationDraft {
 export type NewQuotationDraft = QuotationDraft;
 
 export interface QuotationRepository {
+  confirmDesignFee(input: QuotationDraft, expectedRevision: number, actorUserId: string): Promise<QuotationDraft>;
   findProject(projectId: string): Promise<ProjectDetail | null>;
   findDraft(projectId: string): Promise<QuotationDraft | null>;
   findLatest(projectId: string): Promise<QuotationDraft | null>;

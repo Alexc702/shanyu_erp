@@ -44,7 +44,10 @@ import {
   formatMainMaterialScopeName,
   formatMainMaterialUnit,
   formatMainMaterialQuantity,
+  mainMaterialTileSpecCompatible,
   groupMainMaterialCandidates,
+  isLange34A,
+  mainMaterialSelectionDescription,
   mainMaterialBaseQuantity,
   mainMaterialCandidateKey,
   mainMaterialColorAsset,
@@ -128,7 +131,7 @@ export function MainMaterialsEditor({
   const selectedCategoryCount = categoryOrder.filter((code) => quotation.lines.some((line) => line.categoryCode === code && line.item)).length;
   const compatibleCandidates = useMemo(() => selectionCatalog.items.filter((item) => {
     if (item.status !== "ACTIVE" || item.categoryCode !== picker?.category) return false;
-    return picker?.line?.origin !== "AUTO_TILE" || normalizeSpec(item.spec) === normalizeSpec(picker.line.demandSpec);
+    return picker?.line?.origin !== "AUTO_TILE" || mainMaterialTileSpecCompatible(picker.line.demandName, picker.line.demandSpec, item);
   }), [picker, selectionCatalog.items]);
   const compatibleGroups = useMemo(
     () => [...groupMainMaterialCandidates(compatibleCandidates)].sort((left, right) =>
@@ -481,7 +484,7 @@ export function MainMaterialsEditor({
                       {category === "TILE" ? <TableCell className="px-1">{demandEditing.lossRate ? <div className="flex items-center gap-1"><Input aria-label={`${formatMainMaterialScopeName(line.scopeName)}${line.demandName}损耗率`} className="w-16" inputMode="decimal" max="100" min="0" onChange={(event) => setDemandDrafts((current) => ({ ...current, [line.id]: { ...draft, lossPercent: event.target.value } }))} value={draft.lossPercent} /><span>%</span></div> : `${formatPercent(Number(line.lossRate) * 100)}%`}</TableCell> : null}
                       <TableCell className="px-1 font-semibold">{formatMainMaterialQuantity(line.quantity, line.item?.unit ?? "M²")}</TableCell>
                       <TableCell className="whitespace-normal break-words px-1">{formatMainMaterialUnit(line.item?.unit ?? (line.origin === "AUTO_TILE" ? "M²" : "—"))}</TableCell>
-                      <TableCell className="whitespace-normal break-words">{line.item ? <><strong className="block whitespace-normal break-words">{line.item.brand || "—"}</strong><span className="type-support block whitespace-normal break-words text-muted-foreground">{mainMaterialDisplayModel(line.item)}{line.selectedColor ? ` · ${line.selectedColor}` : ""}</span></> : <Badge variant="warning">待选择</Badge>}</TableCell>
+                      <TableCell className="whitespace-normal break-words">{line.item ? <><strong className="block whitespace-normal break-words">{line.item.brand || "—"}</strong><span className="type-support block whitespace-normal break-words text-muted-foreground">{mainMaterialSelectionDescription(line.item, line.selectedColor, selectionCatalog.items.find((item) => item.materialId === line.item?.materialId))}</span></> : <Badge variant="warning">待选择</Badge>}</TableCell>
                       <TableCell className="px-2">{line.item ? money(line.item.saleUnitPrice) : "—"}</TableCell>
                       <TableCell className="px-2 font-semibold">{line.amount ? money(line.amount) : "—"}</TableCell>
                       <TableCell className="sticky right-0 z-20 w-[112px] border-l border-border bg-background px-1"><div className="grid justify-items-end gap-1 whitespace-nowrap">{demandChanged ? <Button className="h-8 px-1" disabled={working} onClick={() => saveDemand(line)} size="sm">保存数量</Button> : null}<div className="flex flex-nowrap items-center justify-end gap-1"><Button className="h-8 px-1" disabled={!editable || working} onClick={() => openPicker(line, category)} size="sm" variant="outline">{line.item ? "更换" : "选择型号"}</Button>{line.origin === "MANUAL" && editable ? <Button aria-label="删除主材行" className="size-8" disabled={working} onClick={() => removeLine(line)} size="icon" variant="ghost"><Trash2 /></Button> : null}</div></div></TableCell>
@@ -560,7 +563,7 @@ function ItemDetail({ canViewCosts, item, color, frameColor, glassColor, quantit
   const showerSelection = decodeMainMaterialShowerSelection(color);
   const mappedGlassColorAsset = mainMaterialGlassColorAsset(item, glassColor);
   const productAsset = mainMaterialProductAsset(item);
-  const image = item.categoryCode === "GLASS_DOOR"
+  const image = isLange34A(item) ? productAsset : item.categoryCode === "GLASS_DOOR"
     ? mappedGlassColorAsset ?? productAsset
     : mappedColorAsset ?? item.assets.find((asset) => asset.id === selectedAssetId) ?? item.assets[0];
   const hasIndexedColorAssets = Boolean(
@@ -582,7 +585,7 @@ function ItemDetail({ canViewCosts, item, color, frameColor, glassColor, quantit
     {item.attributes.configurationDescription ? <p className="type-body m-0 whitespace-normal break-words">{item.attributes.configurationDescription}</p> : null}
     <div className="grid grid-cols-2 gap-2 text-sm"><Detail label="品名" value={item.itemName} /><Detail label="规格" value={item.spec} /><Detail label="单位" value={formatMainMaterialUnit(item.unit)} /><Detail label="销售价" value={item.salePrice ? money(item.salePrice) : "待补"} />{canViewCosts && item.costPrice ? <Detail label="成本价" value={money(item.costPrice)} /> : null}{visibleMainMaterialAttributes(item.attributes).slice(0, 6).map(([key, value]) => <Detail key={key} label={attributeLabel(key)} value={value} />)}</div>
     {showerTypes.length ? <div className="grid gap-3">
-      <label className="grid gap-1.5 text-sm font-medium">类型<NativeSelect className="h-10 font-normal" value={showerSelection.type} onChange={(event) => setColor(encodeMainMaterialShowerSelection(event.target.value, showerSelection.color))}><option value="">请选择类型</option>{showerTypes.map((type) => <option key={type} value={type}>{type}</option>)}</NativeSelect></label>
+      {isLange34A(item) ? <fieldset className="grid gap-1.5"><legend className="mb-1.5 text-sm font-medium">移门类型 *</legend><div className="flex flex-wrap gap-2">{showerTypes.map((type) => <label className={cn("flex cursor-pointer items-center gap-1.5 rounded-md border px-3 py-2 text-sm", showerSelection.type === type ? "border-primary bg-primary-soft text-primary" : "border-border bg-background")} key={type}><input checked={showerSelection.type === type} className="size-3.5 accent-primary" name="lange-34a-type" onChange={() => setColor(encodeMainMaterialShowerSelection(type, showerSelection.color))} required type="radio" value={type} />{type}</label>)}</div>{!showerSelection.type ? <span className="text-xs text-muted-foreground">请选择移门类型</span> : null}</fieldset> : <label className="grid gap-1.5 text-sm font-medium">类型<NativeSelect className="h-10 font-normal" value={showerSelection.type} onChange={(event) => setColor(encodeMainMaterialShowerSelection(event.target.value, showerSelection.color))}><option value="">请选择类型</option>{showerTypes.map((type) => <option key={type} value={type}>{type}</option>)}</NativeSelect></label>}
       <IndexedColorPicker assetFor={(candidate) => mainMaterialColorAsset(item, candidate)} label="颜色" options={item.colors} value={showerSelection.color} onChange={(value) => setColor(encodeMainMaterialShowerSelection(showerSelection.type, value))} />
     </div> : null}
     {!showerTypes.length ? <>
@@ -603,7 +606,6 @@ function Detail({ label, value }: { readonly label: string; readonly value: stri
 function Summary({ emphasis = false, label, value }: { readonly emphasis?: boolean; readonly label: string; readonly value: string }) { return <div className="flex items-center justify-between gap-2"><span className="type-table-body text-muted-foreground">{label}</span><strong className={emphasis ? "text-xl text-primary" : "text-base"}>{money(value)}</strong></div>; }
 function money(value: string) { return `¥${Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function formatPercent(value: number) { return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4))); }
-function normalizeSpec(value: string) { return value.toLowerCase().replaceAll("×", "*").replaceAll("x", "*").replaceAll("mm", "").replaceAll(" ", ""); }
 function sortedUnique(values: readonly string[]) { return [...new Set(values.filter(Boolean))].sort((left, right) => left.localeCompare(right, "zh-CN")); }
 function floorBrandRank(value: string) { return ({ "北极鹿": 0, "乔艺": 1, "辅材": 2 } as Record<string, number>)[value] ?? 3; }
 function attributeLabel(value: string) { return ({ type: "类型", woodSpecies: "木种", substrate: "基材", thickness: "厚度", grade: "等级", lockType: "锁扣", packaging: "包装", panelSize: "面板尺寸", lightingPower: "照明功率" } as Record<string, string>)[value] ?? value; }

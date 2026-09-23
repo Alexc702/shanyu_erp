@@ -23,7 +23,7 @@ import {
   type NewMainMaterialImportBatch,
   type NormalizedMainMaterialItem,
 } from "./main-material.repository";
-import { isMainMaterialColorSelectionValid } from "./main-material-selection";
+import { isMainMaterialColorSelectionValid, isMainMaterialTileSpecCompatible } from "./main-material-selection";
 import { reconcileSafeDrafts } from "./main-material-safe-update";
 import { mapFullImportItem, normalizeMaterialVariant, validateFullImport } from "./main-material-import-mapping";
 
@@ -1046,7 +1046,9 @@ async function insertItem(
   catalogVersionId: string,
   sourceItem: NormalizedMainMaterialItem,
 ): Promise<void> {
-  const item = normalizeSelectableState(sourceItem);
+  // FULL and changed DELTA rows are already normalized; untouched DELTA rows
+  // must retain their published metadata exactly.
+  const item = sourceItem;
   validatePublishedItem(item);
   await database.query(
     `INSERT INTO main_material_item_versions
@@ -1180,7 +1182,7 @@ function assertCompatible(
     throw new MainMaterialSelectionError("所选商品与需求分类不匹配");
   }
   if (line.origin === "AUTO_TILE") {
-    if (normalizeSpec(line.demand_spec) !== normalizeSpec(item.spec) || !isSquareMeter(item.unit)) {
+    if (!isMainMaterialTileSpecCompatible(line.demand_name, line.demand_spec, item) || !isSquareMeter(item.unit)) {
       throw new MainMaterialSelectionError("瓷砖规格或单位与半包需求不匹配");
     }
   }
@@ -1188,13 +1190,9 @@ function assertCompatible(
 }
 
 function assertColor(item: MainMaterialItem, color: string | null): void {
-  if (!isMainMaterialColorSelectionValid(item, color)) {
+  if (!isMainMaterialColorSelectionValid(item, color, true)) {
     throw new MainMaterialSelectionError("请选择该商品提供的有效颜色");
   }
-}
-
-function normalizeSpec(value: string): string {
-  return value.toLowerCase().replaceAll("×", "*").replaceAll("x", "*").replaceAll("mm", "").replaceAll(" ", "");
 }
 
 function isSquareMeter(value: string): boolean {

@@ -13,6 +13,7 @@ import {
   formatMainMaterialScopeName,
   formatMainMaterialUnit,
   formatMainMaterialQuantity,
+  mainMaterialTileSpecCompatible,
   groupMainMaterialCandidates,
   mainMaterialBaseQuantity,
   mainMaterialColorAsset,
@@ -22,10 +23,58 @@ import {
   mainMaterialGlassColorAsset,
   mainMaterialGlassColors,
   mainMaterialProductAsset,
+  mainMaterialShowerTypes,
+  mainMaterialSelectionDescription,
   visibleMainMaterialAttributes,
 } from "./main-material-view-model";
 
 describe("main material view model", () => {
+  it.each(["移门 21AT", "开门 36A"])("shows %s with its catalog shower type and saved colour without changing data", (model) => {
+    const shower: MainMaterialItemView = { ...item("shower", "枪灰拉丝", ""), categoryCode: "SHOWER", brand: "朗格", model,
+      spec: "T型淋浴房\n内外开系列\n全套悬挂转轴淋浴房", attributes: {} };
+    const before = structuredClone(shower);
+    expect(mainMaterialSelectionDescription(shower, "枪灰拉丝", shower)).toBe(`${model} · T型淋浴房 · 枪灰拉丝`);
+    expect(mainMaterialSelectionDescription(shower, null, shower)).toBe(`${model} · T型淋浴房`);
+    expect(mainMaterialSelectionDescription(shower, "类型：钻石型｜颜色：亮银", shower)).toBe(`${model} · 钻石型 · 亮银`);
+    expect(mainMaterialSelectionDescription(shower, "枪灰拉丝", { ...shower, materialId: "other" })).toBe(`${model} · 枪灰拉丝`);
+    expect(mainMaterialSelectionDescription(shower, "枪灰拉丝", { ...shower, spec: "全套高定移门淋浴房" })).toBe(`${model} · 枪灰拉丝`);
+    expect(mainMaterialSelectionDescription(shower, "枪灰拉丝", { ...shower, spec: "朗格46A移门\n一固一移系列\n全套高定移门淋浴房" })).toBe(`${model} · 一固一移 · 枪灰拉丝`);
+    expect(shower).toEqual(before);
+  });
+  it.each(["免漆", "烤漆"])("shows %s cabinet configuration in the selected model description from the bound catalog", (finish) => {
+    const cabinet: MainMaterialItemView = { ...item("cabinet", "熊猫白", "cabinet"), brand: "铂屿定制", categoryCode: "BATHROOM",
+      itemName: `${finish}浴室柜（主卫）`, model: `${finish}浴室柜（主卫）`,
+      attributes: { configurationDescription: `定制镜柜、${finish}柜体、科勒陶瓷盆（按米收费）、不含龙头` } };
+    const original = structuredClone(cabinet);
+    expect(mainMaterialSelectionDescription(cabinet, "熊猫白", cabinet)).toBe(`${cabinet.model} · 熊猫白 · ${cabinet.attributes.configurationDescription}`);
+    expect(mainMaterialSelectionDescription(cabinet, "熊猫白")).toBe(`${cabinet.model} · 熊猫白`);
+    expect(mainMaterialSelectionDescription(cabinet, "熊猫白", { ...cabinet, materialId: "other" })).toBe(`${cabinet.model} · 熊猫白`);
+    expect(mainMaterialSelectionDescription({ ...cabinet, brand: "其他品牌" }, "熊猫白", cabinet)).toBe(`${cabinet.model} · 熊猫白`);
+    expect(cabinet).toEqual(original);
+  });
+  it("offers current and legacy castle tiles only for the multi-size castle demand", () => {
+    const spec = "200*200/200*400/400*400/400*600";
+    for (const itemName of ["古堡砖", "瓷砖"]) {
+      expect(mainMaterialTileSpecCompatible("多规格古堡砖（水泥砂浆粘贴）", "多规格", { itemName, spec })).toBe(true);
+    }
+    expect(mainMaterialTileSpecCompatible("多规格古堡砖（水泥砂浆粘贴）", "多规格", { itemName: "其他砖", spec: "多规格" })).toBe(false);
+    expect(mainMaterialTileSpecCompatible("多规格古堡砖（水泥砂浆粘贴）", "多规格", { itemName: "瓷砖", spec: "800*800" })).toBe(false);
+    expect(mainMaterialTileSpecCompatible("800mm地砖", "800×800mm", { itemName: "瓷砖", spec: "800*800" })).toBe(true);
+    expect(mainMaterialTileSpecCompatible("800mm地砖", "800*800", { itemName: "古堡砖", spec })).toBe(false);
+  });
+  it("shows fixed types and saved model/type/colour only for Lange 34A, including old catalogs", () => {
+    const shower: MainMaterialItemView = { ...item("34a", "", ""),
+      materialId: "MAT-SHOWER-DC6F85FFDF14", brand: "朗格", categoryCode: "SHOWER", model: "开门 34A" };
+    expect(mainMaterialShowerTypes(shower)).toEqual(["钻石型", "T型", "一固一开"]);
+    expect(mainMaterialSelectionDescription(shower, "类型：钻石型｜颜色：枪灰拉丝")).toBe("开门 34A · 钻石型 · 枪灰拉丝");
+    expect(mainMaterialSelectionDescription(shower, "类型：T型｜颜色：亮银")).toBe("开门 34A · T型 · 亮银");
+    expect(mainMaterialSelectionDescription(shower, "亮银")).toBe("开门 34A · 亮银");
+    expect(mainMaterialSelectionDescription(shower, null)).toBe("开门 34A");
+    for (const other of [{ ...shower, materialId: "other" }, { ...shower, brand: "other" }]) {
+      expect(mainMaterialShowerTypes(other)).toEqual([]);
+      expect(mainMaterialSelectionDescription(other, "亮银")).toBe("开门 34A · 亮银");
+    }
+  });
   it("0920 round-trips shower type and colour, including incomplete picker states", () => {
     for (const [type, color] of [["T型", "亮银"], ["一固一开", ""], ["", "黑色"]]) {
       expect(decodeMainMaterialShowerSelection(encodeMainMaterialShowerSelection(type!, color!))).toEqual({ type, color });

@@ -65,7 +65,7 @@ export function QuotationEditor({
   const [message, setMessage] = useState("已从服务端恢复草稿");
   const [error, setError] = useState<string | null>(null);
   const quotationRef = useRef(initialQuotation);
-  const saveQueueRef = useRef(Promise.resolve());
+  const saveQueueRef = useRef(Promise.resolve(true));
   const pendingSaveCountRef = useRef(0);
   const editable = quotation.status === "DRAFT";
   const compactReadOnly =
@@ -116,9 +116,11 @@ export function QuotationEditor({
         });
         setError(null);
         setMessage(`已保存 · 修订 ${saved.revision}`);
+        return true;
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "保存失败，请重试");
         setMessage("保存失败");
+        return false;
       } finally {
         pendingSaveCountRef.current -= 1;
         if (pendingSaveCountRef.current === 0) {
@@ -157,7 +159,12 @@ export function QuotationEditor({
           </div>
           {editable ? (
             <Button
-              onClick={() => setMessage(`草稿已保存 · 修订 ${quotation.revision}`)}
+              disabled={savingLineId !== null}
+              onClick={async () => {
+                if (await saveQueueRef.current) {
+                  setMessage(`草稿已保存 · 修订 ${quotationRef.current.revision}`);
+                }
+              }}
               size="sm"
               type="button"
               variant="outline"
@@ -521,7 +528,7 @@ function scopeParameters(
   if (sectionName.includes("水电工程")) {
     return [
       ...common,
-      { label: "自动项", value: "第1–6、9项" },
+      { label: "自动项", value: "第1–6项" },
       { label: "其余数量", value: `${leadDesignerName} 手填` },
     ];
   }

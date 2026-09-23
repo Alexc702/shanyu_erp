@@ -35,6 +35,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatQuotationMoney, submitQuotation } from "@/lib/quotation-client";
+import { DesignFee } from "../../design-fee";
 import {
   formatDisplayNumber,
   formatQuotationUnit,
@@ -53,6 +54,7 @@ export function SubmitQuotationPanel({
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [feePending, setFeePending] = useState(false);
   const spaces = orderQuotationScopes(quotation.scopes).filter(
     (scope) => scope.spaceType !== null,
   );
@@ -60,7 +62,7 @@ export function SubmitQuotationPanel({
     (count, scope) => count + scope.lines.filter(hasQuantity).length,
     0,
   );
-  const canSubmit = check.blockerCount === 0;
+  const canSubmit = check.blockerCount === 0 && !feePending;
 
   async function submit() {
     setSubmitting(true);
@@ -86,6 +88,8 @@ export function SubmitQuotationPanel({
           {quotation.projectAddress} · V{quotation.versionNumber} 草稿
         </Badge>
       </header>
+
+      <DesignFee key={`${quotation.id}:${quotation.revision}`} quotation={quotation} onPendingChange={setFeePending} />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label="报价空间" value={String(spaces.length)} />
@@ -133,7 +137,7 @@ export function SubmitQuotationPanel({
             />
           ) : (
             <BlockedCheckCard
-              blockers={check.blockers}
+              blockers={feePending ? [...check.blockers, "设计费已编辑，请先确认设计费"] : check.blockers}
               projectId={quotation.projectId}
               pricedItemCount={pricedItemCount}
               spaceCount={spaces.length}
@@ -147,7 +151,7 @@ export function SubmitQuotationPanel({
               total={quotation.total}
             />
           ) : (
-            <BlockedSubmitCard blockerCount={check.blockerCount} total={quotation.total} />
+            <BlockedSubmitCard blockerCount={check.blockerCount + (feePending ? 1 : 0)} total={quotation.total} />
           )}
         </aside>
       </div>

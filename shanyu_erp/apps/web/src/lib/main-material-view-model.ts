@@ -4,6 +4,19 @@ import type {
   MainMaterialQuotationLineView,
 } from "@shanyu/contracts";
 
+export function mainMaterialTileSpecCompatible(
+  demandName: string,
+  demandSpec: string,
+  item: Pick<MainMaterialItemView, "itemName" | "spec">,
+): boolean {
+  const normalize = (value: string) => value.toLowerCase().replaceAll("×", "*").replaceAll("x", "*").replaceAll("mm", "").replaceAll(" ", "");
+  if (demandName.startsWith("多规格古堡砖") && normalize(demandSpec) === "多规格") {
+    return item.itemName === "古堡砖" || (item.itemName === "瓷砖" &&
+      normalize(item.spec) === "200*200/200*400/400*400/400*600");
+  }
+  return normalize(demandSpec) === normalize(item.spec);
+}
+
 export interface MainMaterialCandidateGroup {
   readonly key: string;
   readonly primary: MainMaterialItemView;
@@ -141,8 +154,35 @@ export function mainMaterialGlassColors(
   }
 }
 
+export function isLange34A(item: { readonly materialId: string; readonly brand: string }): boolean {
+  return item.materialId === "MAT-SHOWER-DC6F85FFDF14" && item.brand === "朗格";
+}
+
+export function mainMaterialSelectionDescription(
+  item: Parameters<typeof mainMaterialDisplayModel>[0] & { readonly brand: string },
+  selectedColor: string | null,
+  catalogItem?: MainMaterialItemView,
+): string {
+  const model = mainMaterialDisplayModel(item);
+  if (item.brand === "铂屿定制" && /^(免漆|烤漆)浴室柜（(主卫|公卫)）$/.test(item.itemName)
+      && catalogItem?.materialId === item.materialId && catalogItem.categoryCode === "BATHROOM") {
+    return [model, selectedColor, catalogItem.attributes.configurationDescription].filter(Boolean).join(" · ");
+  }
+  if (!isLange34A(item) && catalogItem?.materialId === item.materialId && catalogItem.categoryCode === "SHOWER") {
+    const selection = decodeMainMaterialShowerSelection(selectedColor ?? "");
+    const type = selection.type || catalogItem.attributes.type?.trim()
+      || catalogItem.spec.split(/[\r\n]+/).map((part) => part.trim())
+        .find((part) => /型淋浴房$/.test(part) || /^一固一[移开]系列$/.test(part))?.replace(/系列$/, "");
+    return [model, type, selection.color].filter(Boolean).join(" · ");
+  }
+  if (!isLange34A(item)) return `${model}${selectedColor ? ` · ${selectedColor}` : ""}`;
+  const selection = decodeMainMaterialShowerSelection(selectedColor ?? "");
+  return [model, selection.type, selection.color].filter(Boolean).join(" · ");
+}
+
 export function mainMaterialShowerTypes(item: MainMaterialItemView): readonly string[] {
   if (item.categoryCode !== "SHOWER") return [];
+  if (isLange34A(item)) return ["钻石型", "T型", "一固一开"];
   try {
     const types: unknown = JSON.parse(item.attributes.showerTypes ?? "[]");
     return Array.isArray(types) ? types.filter((value): value is string => typeof value === "string" && Boolean(value)) : [];

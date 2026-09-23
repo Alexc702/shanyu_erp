@@ -44,6 +44,7 @@ export function selectionImpact(line: Row, previous: Row | undefined, next: Row 
   }
   if (next.data_status !== "ACTIVE") differences.push({ field: "unavailable", before: "ACTIVE", after: next.data_status });
   if (!isMainMaterialColorSelectionValid({
+    materialId: String(next.material_id), brand: String(next.brand),
     categoryCode: String(next.category_code), colors: next.colors as string[],
     attributes: next.attributes as Record<string, string>,
   }, line.selected_color as string | null)) {

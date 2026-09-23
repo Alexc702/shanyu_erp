@@ -91,6 +91,7 @@ export interface QuotationScopeView {
 }
 
 export interface QuotationView {
+  readonly designFeeConfirmed?: boolean;
   readonly mainMaterialAdjustment?: QuotationDraft["mainMaterialAdjustment"];
   readonly designFeeUnitPrice?: string | null;
   readonly designFeeAmount?: string | null;
@@ -144,8 +145,8 @@ export class QuotationService {
     const project = await this.authorizedProject(actor, projectId);
     const existing = await this.quotationRepository.findDraft(projectId);
     if (existing) {
-      // Opening an inherited draft must not repair or expand its saved snapshot.
-      if (existing.parentVersionId) return toView(existing);
+      // Inherited drafts receive electrical corrections and unused duplicate-pipe cleanup only; never expand or reprice them.
+      if (existing.parentVersionId) return toView(await this.repairAcceptanceDraft(actor, existing));
       const repaired = await this.repairAcceptanceDraft(actor, existing);
       return toView(
         await this.addMissingProjectScopes(actor, project, repaired),
@@ -573,19 +574,21 @@ export class QuotationService {
     return toView(created);
   }
 
-  async updateDesignFee(actor: SessionUser, projectId: string, unitPrice: string | null, expectedRevision: number): Promise<QuotationView> {
+  async updateDesignFee(actor: SessionUser, projectId: string, unitPrice: string | null, expectedRevision: number, quotationId?: string): Promise<QuotationView> {
     await this.authorizedProject(actor, projectId);
     if (!Number.isInteger(expectedRevision) || expectedRevision < 0 ||
-      (unitPrice !== null && !/^\d{1,10}(?:\.\d{1,4})?$/.test(unitPrice))) {
+      unitPrice === null || !/^\d{1,10}(?:\.\d{1,4})?$/.test(unitPrice)) {
       throw new BadRequestException("设计费单价必须为非负数，最多四位小数");
     }
-    const draft = await this.quotationRepository.findDraft(projectId);
-    if (!draft?.isCurrent) throw new ConflictException("仅当前草稿可编辑设计费");
+    const draft = await this.quotationRepository.findLatest(projectId);
+    if (!draft?.isCurrent || draft.revision !== expectedRevision || (quotationId !== undefined && draft.id !== quotationId)) throw new ConflictException("报价已变化，请刷新后重试");
     let saved: QuotationDraft;
     try {
-      saved = await this.quotationRepository.saveDraft(this.calculate({ ...draft,
-        designFeeUnitPrice: unitPrice, revision: expectedRevision + 1,
-      }), expectedRevision);
+      const pricing = calculateProjectPricing({ ...draft, designFeeUnitPrice: unitPrice });
+      saved = await this.quotationRepository.confirmDesignFee({ ...draft,
+        designFeeUnitPrice: unitPrice, designFeeConfirmedArea: draft.outerFrameArea,
+        adjustedTotal: pricing.adjustedTotal, revision: expectedRevision + 1,
+      }, expectedRevision, actor.id);
     } catch (error) {
       if (error instanceof QuotationRevisionConflictError) throw new ConflictException("报价已变化，请刷新后重试");
       throw error;
@@ -1010,7 +1013,7 @@ export class QuotationService {
     actor: SessionUser,
     draft: QuotationDraft,
   ): Promise<QuotationDraft> {
-    const needsBalconyTemplate = draft.scopes.some(
+    const needsBalconyTemplate = !draft.parentVersionId && draft.scopes.some(
       (scope) =>
         scope.spaceType === "BALCONY" &&
         scope.lines.some((line) => line.sectionCode !== "LIVING_DINING"),
@@ -1027,19 +1030,22 @@ export class QuotationService {
 
     const repairedScopeIds: string[] = [];
     const scopes = draft.scopes.map((scope) => {
-      const repaired = repairAcceptanceScope(scope, template, draft.outerFrameArea);
+      const repaired = draft.parentVersionId
+        ? removeUnusedDuplicatePipes(repairElectricalScope(scope))
+        : repairAcceptanceScope(scope, template, draft.outerFrameArea);
       if (repaired !== scope) repairedScopeIds.push(scope.id);
       return repaired;
     });
     if (repairedScopeIds.length === 0) {
-      return this.calculate(draft);
+      return draft.parentVersionId ? draft : this.calculate(draft);
     }
 
-    const calculated = this.calculate({
+    const updated = {
       ...draft,
       revision: draft.revision + 1,
       scopes,
-    });
+    };
+    const calculated = draft.parentVersionId ? updated : this.calculate(updated);
     let saved: QuotationDraft;
     try {
       saved = await this.quotationRepository.repairDraft(
@@ -1053,7 +1059,7 @@ export class QuotationService {
       }
       throw error;
     }
-    await this.mainMaterialRepository.initializeAndSyncDraft(draft.projectId);
+    if (!draft.parentVersionId) await this.mainMaterialRepository.initializeAndSyncDraft(draft.projectId);
     const synchronized =
       (await this.quotationRepository.findDraft(draft.projectId)) ?? saved;
     await this.auditRepository.append({
@@ -1323,6 +1329,32 @@ function buildScope(
     spaceType,
     subtotal: "0.0000",
   };
+}
+
+function removeUnusedDuplicatePipes(scope: QuotationDraftScope): QuotationDraftScope {
+  if (scope.spaceType !== "LIVING_DINING") return scope;
+  const lines = scope.lines.filter((line) => !(line.sectionCode === "BALCONY" &&
+    /^包管道（[123]根）$/.test(line.itemName) && !line.selected &&
+    [line.manualQuantity, line.calculatedQuantity, line.amount, line.costAmount].every((value) => Number(value ?? 0) === 0) &&
+    scope.lines.some((original) => original.sectionCode === "LIVING_DINING" && original.itemName === line.itemName)));
+  return lines.length === scope.lines.length ? scope : { ...scope, lines };
+}
+
+function repairElectricalScope(scope: QuotationDraftScope): QuotationDraftScope {
+  let changed = false;
+  const lines = scope.lines.map((line) => {
+    if (line.sectionCode !== "ELECTRICAL" || !["正泰空开更换", "施耐德空开更换"].includes(line.itemName)) return line;
+    const remarks = acceptanceRemarks(line.itemName, line.remarks);
+    if (line.itemName === "正泰空开更换" && line.quantityRule.kind === "PROJECT_OUTER_FRAME_AREA") {
+      changed = true;
+      return { ...line, remarks, quantityRule: { kind: "MANUAL" } as const,
+        manualQuantity: line.selected ? line.calculatedQuantity : null };
+    }
+    if (remarks === line.remarks) return line;
+    changed = true;
+    return { ...line, remarks };
+  });
+  return changed ? { ...scope, lines } : scope;
 }
 
 function repairAcceptanceScope(
@@ -1608,6 +1640,8 @@ function normalizeManualQuantity(value: string | null): string | null {
 
 function toView(draft: QuotationDraft): QuotationView {
   return {
+    designFeeConfirmed: draft.designFeeUnitPrice != null && draft.designFeeConfirmedArea != null &&
+      Number(draft.designFeeConfirmedArea) === Number(draft.outerFrameArea),
     mainMaterialAdjustment: draft.mainMaterialAdjustment ?? null,
     designFeeUnitPrice: draft.designFeeUnitPrice ?? null,
     designFeeAmount: calculateProjectPricing(draft).designFeeAmount,
@@ -1767,6 +1801,10 @@ function submissionCheck(
 ): HalfPackageSubmissionCheck {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  if (draft.designFeeUnitPrice == null || draft.designFeeConfirmedArea == null ||
+    Number(draft.designFeeConfirmedArea) !== Number(draft.outerFrameArea)) {
+    blockers.push("请先确认设计费（可明确填 0）；外框面积变化后需重新确认");
+  }
   for (const scope of draft.scopes) {
     if (scope.spaceType !== "LIVING_DINING") continue;
     for (const line of scope.lines) {
@@ -1981,7 +2019,7 @@ const electricalBuildingAreaItems = new Set([
 
 function acceptanceRemarks(itemName: string, remarks: string | null): string | null {
   return itemName === "正泰空开更换" || itemName === "施耐德空开更换"
-    ? remarks?.replaceAll("单个电箱配置", "") ?? null
+    ? remarks?.replace(/[，,]?\s*单个电箱配置/g, "") ?? null
     : remarks;
 }
 

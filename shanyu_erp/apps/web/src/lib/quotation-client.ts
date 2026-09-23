@@ -120,9 +120,9 @@ export async function updateQuotationAdjustment(
   return ((await response.json()) as HalfPackageQuotationResponse).quotation;
 }
 
-export async function updateDesignFee(projectId: string, unitPrice: string | null, expectedRevision: number, fetcher: Fetcher = fetch): Promise<HalfPackageQuotation> {
+export async function updateDesignFee(projectId: string, unitPrice: string, expectedRevision: number, quotationId: string, fetcher: Fetcher = fetch): Promise<HalfPackageQuotation> {
   const response = await fetcher(`${apiUrl}/projects/${projectId}/half-package-quotation/design-fee`, {
-    body: JSON.stringify({ unitPrice, expectedRevision }), credentials: "include",
+    body: JSON.stringify({ unitPrice, expectedRevision, quotationId }), credentials: "include",
     headers: { "content-type": "application/json" }, method: "PATCH",
   });
   if (!response.ok) throw await responseError(response, "保存设计费失败");

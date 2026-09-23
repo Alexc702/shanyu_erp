@@ -279,10 +279,15 @@ describe("half-package quotation HTTP interface", () => {
       })
       .expect(200);
 
+    const confirmedFee = await request(app.getHttpServer())
+      .patch(`/projects/${project.id}/half-package-quotation/design-fee`)
+      .set("Cookie", leadCookie)
+      .send({ unitPrice: "0", quotationId: saved.body.quotation.id, expectedRevision: saved.body.quotation.revision })
+      .expect(200);
     const quoted = await request(app.getHttpServer())
       .post(`/projects/${project.id}/half-package-quotation/submit`)
       .set("Cookie", leadCookie)
-      .send({ expectedRevision: saved.body.quotation.revision })
+      .send({ expectedRevision: confirmedFee.body.quotation.revision })
       .expect(201)
       .expect(({ body }) => {
         expect(body.quotation.status).toBe("QUOTED");
@@ -934,10 +939,15 @@ describe("half-package quotation PostgreSQL concurrency", () => {
 
         const first = quotations[0];
         if (!first) throw new Error("并发请求未返回报价");
+        const confirmedFee = await request(realApp.getHttpServer())
+          .patch(`/projects/${projectId}/half-package-quotation/design-fee`)
+          .set("Cookie", cookie)
+          .send({ unitPrice: "0", quotationId: first.id, expectedRevision: materialQuotation.revision })
+          .expect(200);
         const quoted = await request(realApp.getHttpServer())
           .post(`/projects/${projectId}/half-package-quotation/submit`)
           .set("Cookie", cookie)
-          .send({ expectedRevision: materialQuotation.revision })
+          .send({ expectedRevision: confirmedFee.body.quotation.revision })
           .expect(201)
           .expect(({ body }) => {
             expect(body.quotation).toMatchObject({
@@ -1053,6 +1063,10 @@ describe("half-package quotation PostgreSQL concurrency", () => {
 });
 
 class StaticQuotationRepository implements QuotationRepository {
+  async confirmDesignFee(input: QuotationDraft): Promise<QuotationDraft> {
+    this.draft = structuredClone(input);
+    return structuredClone(input);
+  }
   private draft: QuotationDraft | null = null;
   private exports: QuotationExport[] = [];
 

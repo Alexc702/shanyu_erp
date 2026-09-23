@@ -223,6 +223,7 @@ export interface HalfPackageQuotationScope {
 export interface HalfPackageQuotation {
   readonly mainMaterialAdjustment?: { readonly discountRate: string; readonly writeOff: string } | null;
   readonly designFeeUnitPrice?: string | null;
+  readonly designFeeConfirmed?: boolean;
   readonly designFeeAmount?: string | null;
   readonly designFeeArea?: string;
   readonly adjustmentReason: string | null;

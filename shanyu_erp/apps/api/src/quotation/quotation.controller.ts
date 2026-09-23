@@ -157,10 +157,10 @@ export class QuotationController {
     @Body() body: unknown,
   ): Promise<HalfPackageQuotationResponse> {
     const input = body as Record<string, unknown> | null;
-    if (!input || (input.unitPrice !== null && typeof input.unitPrice !== "string") || typeof input.expectedRevision !== "number") {
+    if (!input || typeof input.quotationId !== "string" || typeof input.unitPrice !== "string" || typeof input.expectedRevision !== "number") {
       throw new BadRequestException("设计费信息不完整");
     }
-    return { quotation: await this.quotationService.updateDesignFee(await this.currentUser(cookieHeader), projectId, input.unitPrice as string | null, input.expectedRevision) };
+    return { quotation: await this.quotationService.updateDesignFee(await this.currentUser(cookieHeader), projectId, input.unitPrice, input.expectedRevision, input.quotationId) };
   }
 
   @Patch("versions/:quotationId/margin-benchmark")

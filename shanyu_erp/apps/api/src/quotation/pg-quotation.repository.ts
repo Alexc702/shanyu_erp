@@ -63,6 +63,8 @@ interface TemplateItemRow {
 }
 
 interface QuotationRow {
+  design_fee_confirmed_area: string | null;
+  design_fee_revision: number;
   main_material_adjustment: QuotationDraft["mainMaterialAdjustment"];
   design_fee_unit_price: string | null;
   adjustment_reason: string | null;
@@ -170,6 +172,41 @@ export class PgQuotationRepository implements QuotationRepository {
 
   findProject(projectId: string): Promise<ProjectDetail | null> {
     return this.projectsRepository.findById(projectId);
+  }
+
+  async confirmDesignFee(input: QuotationDraft, expectedRevision: number, actorUserId: string): Promise<QuotationDraft> {
+    const id = await this.database.transaction(async (database) => {
+      const locked = await database.query<QuotationRow>(`${quotationSelect}
+        WHERE q.id = $1 AND q.is_current AND q.revision = $2 FOR UPDATE OF q`, [input.id, expectedRevision]);
+      const row = locked.rows[0];
+      if (!row) throw new QuotationRevisionConflictError();
+      const source = await this.hydrateDraft(database, row);
+      if (source.status === "DRAFT") {
+        await database.query(`UPDATE half_package_quotations
+          SET design_fee_unit_price = $2, design_fee_confirmed_area = outer_frame_area,
+              adjusted_total = $3, revision = revision + 1, updated_at = current_timestamp
+          WHERE id = $1`, [source.id, input.designFeeUnitPrice, input.adjustedTotal]);
+        return source.id;
+      }
+      // A fee-only revision has its own immutable identity, but keeps the public V number.
+      const cloned = { ...cloneAsVersion(source, actorUserId, source.versionNumber, true),
+        designFeeUnitPrice: input.designFeeUnitPrice,
+        designFeeConfirmedArea: source.outerFrameArea,
+        designFeeRevision: (source.designFeeRevision ?? 0) + 1,
+        adjustedTotal: input.adjustedTotal, revision: expectedRevision + 1 };
+      await database.query(`UPDATE half_package_quotations SET is_current = false, updated_at = current_timestamp WHERE id = $1`, [source.id]);
+      await insertDraft(database, cloned);
+      await cloneMainMaterialQuoteLines(database, source, cloned);
+      await database.query(`UPDATE half_package_quotations SET status = $3,
+        submitted_at = current_timestamp, submitted_by_user_id = $2,
+        decided_at = $4, decided_by_user_id = $5, decision_action = $6, decision_reason = $7
+        WHERE id = $1`, [cloned.id, actorUserId, source.status === "APPROVED" ? "APPROVED" : "QUOTED",
+        source.decidedAt, source.decidedByUserId, source.decisionAction, source.decisionReason]);
+      return cloned.id;
+    });
+    const saved = await this.findById(id);
+    if (!saved) throw new Error("确认设计费后无法读取报价");
+    return saved;
   }
 
   async findPublishedTemplate(): Promise<QuotationTemplate | null> {
@@ -311,7 +348,7 @@ export class PgQuotationRepository implements QuotationRepository {
     const result = await this.database.query<QuotationRow>(
       `${quotationSelect}
         WHERE q.project_id = $1
-        ORDER BY q.version_number DESC`,
+        ORDER BY q.version_number DESC, q.design_fee_revision DESC`,
       [projectId],
     );
     return Promise.all(
@@ -604,6 +641,30 @@ export class PgQuotationRepository implements QuotationRepository {
           [scope.id],
         );
         const existingLineIds = new Set(existingLines.rows.map((line) => line.id));
+        if (input.parentVersionId && scope.spaceType === "LIVING_DINING") {
+          for (const id of existingLineIds) {
+            if (scope.lines.some((line) => line.id === id)) continue;
+            const removed = await database.query(
+              `DELETE FROM half_package_quotation_lines duplicate
+                WHERE duplicate.id = $1 AND duplicate.quotation_space_id = $2
+                  AND duplicate.section_code = 'BALCONY' AND NOT duplicate.selected
+                  AND duplicate.item_name IN ('包管道（1根）', '包管道（2根）', '包管道（3根）')
+                  AND coalesce(duplicate.manual_quantity, 0) = 0
+                  AND coalesce(duplicate.calculated_quantity, 0) = 0
+                  AND coalesce(duplicate.sale_amount, 0) = 0
+                  AND coalesce(duplicate.cost_amount, 0) = 0
+                  AND EXISTS (SELECT 1 FROM half_package_quotation_lines original
+                    WHERE original.quotation_space_id = duplicate.quotation_space_id
+                      AND original.section_code = 'LIVING_DINING'
+                      AND original.item_name = duplicate.item_name)
+                  AND NOT EXISTS (SELECT 1 FROM main_material_quote_lines material
+                    WHERE material.source_half_package_line_id = duplicate.id)`,
+              [id, scope.id],
+            );
+            if (removed.rowCount !== 1) throw new Error("仅允许清理未使用的重复包管道行");
+            existingLineIds.delete(id);
+          }
+        }
         const canPreserveExistingLines = [...existingLineIds].every((id) =>
           scope.lines.some((line) => line.id === id),
         );
@@ -1017,6 +1078,8 @@ export class PgQuotationRepository implements QuotationRepository {
       adjustedTotal: row.adjusted_total,
       mainMaterialAdjustment: row.main_material_adjustment,
       designFeeUnitPrice: row.design_fee_unit_price,
+      designFeeConfirmedArea: row.design_fee_confirmed_area,
+      designFeeRevision: row.design_fee_revision,
       costTemplateVersionId: row.cost_template_version_id,
       costTemplateVersionNumber: row.cost_template_version_number,
       createdByUserId: row.created_by_user_id,
@@ -1089,10 +1152,11 @@ async function insertDraft(
         adjustment_reason, margin_benchmark_rate,
         main_material_catalog_version_id, main_material_direct_cost,
         main_material_management_fee, main_material_total,
-        main_material_expected_cost, main_material_adjustment, design_fee_unit_price)
+        main_material_expected_cost, main_material_adjustment, design_fee_unit_price,
+        design_fee_confirmed_area, design_fee_revision)
      VALUES ($1, $2, $3, 'DRAFT', $4, $5, $6, $7, $8, $9, $10, $11,
              $12, $13, $14, $15, $16, $17, $18, $19, $20, true, $21, $22,
-             $23, $24, $25, $26, $27, $28, $29, $30, $31)`,
+             $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)`,
     [
       input.id,
       input.projectId,
@@ -1125,6 +1189,8 @@ async function insertDraft(
       input.mainMaterialExpectedCost ?? "0.0000",
       input.mainMaterialAdjustment ?? null,
       input.designFeeUnitPrice ?? null,
+      input.designFeeConfirmedArea ?? null,
+      input.designFeeRevision ?? 0,
     ],
   );
   for (const scope of input.scopes) {
@@ -1288,6 +1354,7 @@ function cloneAsVersion(
   }
   return {
     ...source,
+    designFeeRevision: 0,
     adjustedTotal: preserveAdjustment ? source.adjustedTotal : source.total,
     adjustmentReason: preserveAdjustment ? source.adjustmentReason : null,
     adjustmentStatus: preserveAdjustment
@@ -1396,6 +1463,7 @@ const quotationSelect = `SELECT q.id, q.project_id, q.project_address,
                                  q.main_material_total,
                                  q.main_material_expected_cost,
                                  q.main_material_adjustment, q.design_fee_unit_price,
+                                 q.design_fee_confirmed_area, q.design_fee_revision,
                                  q.margin_benchmark_rate,
                                  q.gross_profit, q.gross_margin_rate,
                                  q.management_fee, q.total, q.adjusted_total,

@@ -130,6 +130,19 @@ describe("MainMaterialService", () => {
     expect(result).toMatchObject({ revision: 2, catalogVersion: { versionNumber: 2 } });
   });
 
+  it("keeps a selected castle tile compatible during catalog update preview", async () => {
+    const repository = createRepository();
+    const castle = { ...item, itemName: "古堡砖", spec: "200*200/200*400/400*400/400*600" };
+    repository.getQuotationByProject.mockResolvedValue({ ...quotation, lines: [{ ...quotation.lines[0],
+      demandName: "多规格古堡砖（水泥砂浆粘贴）", demandSpec: "多规格", itemName: castle.itemName, spec: castle.spec,
+    }] });
+    repository.getPublishedCatalog.mockResolvedValue({ ...catalog, id: "new", versionNumber: 2,
+      items: [{ ...castle, id: "new-item", catalogVersionId: "new" }],
+    });
+    const checked = await createService(repository).checkCatalogUpdate(owner, project.id);
+    expect(checked.differences).toEqual([]);
+  });
+
   it("normalizes and saves editable main-material demand quantities", async () => {
     const repository = createRepository();
     repository.updateDemandLine.mockResolvedValue({

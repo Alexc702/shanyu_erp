@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
@@ -59,18 +60,44 @@ describe("QuotationService", () => {
     );
   });
 
-  it("0920 stores a draft design fee, distinguishes zero and unset, and rejects quoted edits", async () => {
+  async function submitWithConfirmedFee(revision: number) {
+    const confirmed = await service.updateDesignFee(lead, project.id, "0", revision);
+    return service.submit(lead, project.id, confirmed.revision);
+  }
+
+  it("confirms a nonempty design fee including zero, then creates a fee-only quoted revision", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const saved = await service.updateDesignFee(lead, project.id, "50", draft.revision);
     expect(saved.designFeeAmount).toBe("6500.0000");
     expect(saved.projectTotal).toBe("18140.4200");
     const zero = await service.updateDesignFee(lead, project.id, "0", saved.revision);
     expect(zero.designFeeAmount).toBe("0.0000");
-    const unset = await service.updateDesignFee(lead, project.id, null, zero.revision);
-    expect(unset.designFeeAmount).toBeNull();
-    await expect(service.updateDesignFee(lead, project.id, "-1", unset.revision)).rejects.toBeInstanceOf(BadRequestException);
-    await service.submit(lead, project.id, unset.revision);
-    await expect(service.updateDesignFee(lead, project.id, "20", unset.revision)).rejects.toBeInstanceOf(ConflictException);
+    expect(zero.designFeeConfirmed).toBe(true);
+    await expect(service.updateDesignFee(lead, project.id, null, zero.revision)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.updateDesignFee(lead, project.id, "-1", zero.revision)).rejects.toBeInstanceOf(BadRequestException);
+    const quoted = await service.submit(lead, project.id, zero.revision);
+    const changed = await service.updateDesignFee(lead, project.id, "20", quoted.revision, quoted.id);
+    expect(changed).toMatchObject({ versionNumber: quoted.versionNumber, status: "QUOTED", designFeeAmount: "2600.0000" });
+    expect(changed.id).not.toBe(quoted.id);
+    expect(changed.halfPackageTotal).toBe(quoted.halfPackageTotal);
+    await expect(service.updateDesignFee(lead, project.id, "30", quoted.revision, quoted.id)).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("blocks first generation for unset or unconfirmed area, including an explicit unconfirmed zero", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    expect((await service.checkSubmission(lead, project.id)).blockers.join()).toContain("确认设计费");
+    const zero = await service.updateDesignFee(lead, project.id, "0", draft.revision);
+    expect((await service.checkSubmission(lead, project.id)).blockers.join()).not.toContain("确认设计费");
+    repository.draft = { ...repository.draft!, outerFrameArea: "140.0000" };
+    await expect(service.submit(lead, project.id, zero.revision)).rejects.toThrow("确认设计费");
+  });
+
+  it("does not grant design fee editing to unrelated leads or other roles", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    for (const actor of [unrelatedLead, woodwork, { ...woodwork, role: "FINANCE" as const }]) {
+      await expect(service.updateDesignFee(actor, project.id, "10", draft.revision, draft.id)).rejects.toThrow();
+    }
+    expect(repository.draft?.designFeeUnitPrice).toBeUndefined();
   });
 
   it("0920 submits independent module discounts and leaves design fees undiscounted", async () => {
@@ -166,6 +193,59 @@ describe("QuotationService", () => {
     view = await service.updateLine(lead, project.id, line.id, { expectedRevision: view.revision, quantity: null, selected: false });
     const reopened = await service.getOrCreateDraft(lead, project.id);
     expect(reopened.scopes.flatMap((scope) => scope.lines).find((row) => row.id === line.id)).toMatchObject({ quantity: null, selected: false, amount: null });
+  });
+
+  it("repairs only electrical fields in inherited drafts without recalculating their snapshots", async () => {
+    repository.template = { ...template, items: [...template.items,
+      item("chint", "ELECTRICAL", "正泰空开更换", "M2", "8.0000", "5.0000", "正泰（含总开、空开，单个电箱配置）按外框面积计算"),
+      item("schneider", "ELECTRICAL", "施耐德空开更换", "M2", "22.0000", "15.0000", "施耐德（含总开、空开，单个电箱配置）按外框面积计算"),
+    ] };
+    await service.getOrCreateDraft(lead, project.id);
+    repository.draft = { ...repository.draft!, parentVersionId: "historical-parent",
+      scopes: repository.draft!.scopes.map((scope) => ({ ...scope, lines: scope.lines.map((line) =>
+        line.itemName === "正泰空开更换" ? { ...line, quantityRule: { kind: "PROJECT_OUTER_FRAME_AREA" } as const, manualQuantity: null,
+          remarks: "正泰（含总开、空开，单个电箱配置）按外框面积计算" }
+        : line.itemName === "施耐德空开更换" ? { ...line, remarks: "施耐德（含总开、空开，单个电箱配置）按外框面积计算" } : line) })),
+    };
+    const before = structuredClone(repository.draft);
+    let view = await service.getOrCreateDraft(lead, project.id);
+    const changed = repository.draft!;
+    expect(changed.total).toBe(before.total);
+    expect(changed.adjustedTotal).toBe(before.adjustedTotal);
+    for (const scope of before.scopes) for (const line of scope.lines) {
+      const next = changed.scopes.flatMap((entry) => entry.lines).find((entry) => entry.id === line.id)!;
+      if (line.itemName === "正泰空开更换") expect(next).toEqual({ ...line,
+        quantityRule: { kind: "MANUAL" }, manualQuantity: line.calculatedQuantity,
+        remarks: "正泰（含总开、空开）按外框面积计算" });
+      else if (line.itemName === "施耐德空开更换") expect(next).toEqual({ ...line,
+        remarks: "施耐德（含总开、空开）按外框面积计算" });
+      else expect(next).toEqual(line);
+    }
+    const revision = view.revision;
+    expect((await service.getOrCreateDraft(lead, project.id)).revision).toBe(revision);
+    const line = view.scopes.flatMap((scope) => scope.lines).find((entry) => entry.itemName === "正泰空开更换")!;
+    view = await service.updateLine(lead, project.id, line.id, { expectedRevision: revision, selected: true, quantity: "12" });
+    expect(view.scopes.flatMap((scope) => scope.lines).find((entry) => entry.id === line.id)?.quantity).toBe("12.0000");
+    expect(before.scopes.flatMap((scope) => scope.lines).find((entry) => entry.id === line.id)?.quantityRule.kind).toBe("PROJECT_OUTER_FRAME_AREA");
+  });
+
+  it("removes only unused duplicate balcony pipes from an inherited draft", async () => {
+    repository.template = { ...template, items: [...template.items,
+      item("living-pipe", "LIVING_DINING", "包管道（1根）", "项", "280.0000"),
+    ] };
+    await service.getOrCreateDraft(lead, project.id);
+    repository.draft = { ...repository.draft!, parentVersionId: "parent",
+      scopes: repository.draft!.scopes.map((scope) => {
+        const original = scope.lines.find((line) => line.itemName === "包管道（1根）");
+        return original ? { ...scope, lines: [...scope.lines, { ...original, id: "unused-pipe", sectionCode: "BALCONY",
+          selected: false, manualQuantity: "0.0000", calculatedQuantity: null, amount: null, costAmount: null }] } : scope;
+      }),
+    };
+    const before = structuredClone(repository.draft);
+    const view = await service.getOrCreateDraft(lead, project.id);
+    expect(repository.draft!.scopes).toEqual(before.scopes.map(scope => ({ ...scope, lines: scope.lines.filter(line => line.id !== "unused-pipe") })));
+    expect(repository.draft!.total).toBe(before.total);
+    expect((await service.getOrCreateDraft(lead, project.id)).revision).toBe(view.revision);
   });
 
   it.each([false, true])("0920 preserves entered duplicate pipe quantities and blocks submission (derived=%s)", async (derived) => {
@@ -668,7 +748,7 @@ describe("QuotationService", () => {
   it.each([null, "0", "50"])("excludes design fee %s from cost metrics without changing customer payable", async (unitPrice) => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const before = await service.getProjectCostAnalysis(owner, project.id);
-    await service.updateDesignFee(lead, project.id, unitPrice, draft.revision);
+    if (unitPrice !== null) await service.updateDesignFee(lead, project.id, unitPrice, draft.revision);
     const analysis = await service.getProjectCostAnalysis(owner, project.id);
     expect(analysis.current.designFeeAmount).toBe(unitPrice === null ? null : unitPrice === "0" ? "0.0000" : "6500.0000");
     expect(analysis.current.customerPayableTotal).toBe(unitPrice === "50" ? "18140.4200" : "11640.4200");
@@ -679,7 +759,7 @@ describe("QuotationService", () => {
 
   it("keeps the current basis and pending adjustment as separate cost scenarios", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const quoted = await service.submit(lead, project.id, draft.revision);
+    const quoted = await submitWithConfirmedFee(draft.revision);
     await service.updateAdjustment(lead, quoted.id, {
       action: "SUBMIT_FOR_APPROVAL",
       discountRate: "0.9500",
@@ -791,7 +871,8 @@ describe("QuotationService", () => {
   });
 
   it("checks and confirms a complete draft as an immutable quoted snapshot", async () => {
-    const draft = await service.getOrCreateDraft(lead, project.id);
+    const opened = await service.getOrCreateDraft(lead, project.id);
+    const draft = await service.updateDesignFee(lead, project.id, "0", opened.revision);
     const check = await service.checkSubmission(lead, project.id);
 
     expect(check).toMatchObject({
@@ -799,7 +880,7 @@ describe("QuotationService", () => {
       itemCount: 11,
       sectionCount: 8,
     });
-    const submitted = await service.submit(lead, project.id, draft.revision);
+    const submitted = await submitWithConfirmedFee(draft.revision);
     expect(submitted).toMatchObject({
       status: "QUOTED",
       versionNumber: 1,
@@ -858,7 +939,7 @@ describe("QuotationService", () => {
 
   it("lists pending approvals with the current business margin snapshot", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const quoted = await service.submit(lead, project.id, draft.revision);
+    const quoted = await submitWithConfirmedFee(draft.revision);
     await expect(service.listPendingApprovals(owner)).resolves.toEqual([]);
     await service.updateAdjustment(lead, quoted.id, {
       action: "SUBMIT_FOR_APPROVAL",
@@ -881,7 +962,7 @@ describe("QuotationService", () => {
 
   it("rejects discount rates that are not whole percentages", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const quoted = await service.submit(lead, project.id, draft.revision);
+    const quoted = await submitWithConfirmedFee(draft.revision);
 
     await expect(
       service.updateAdjustment(lead, quoted.id, {
@@ -896,7 +977,7 @@ describe("QuotationService", () => {
 
   it("submits a lead adjustment for approval and lets the owner confirm directly", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const quoted = await service.submit(lead, project.id, draft.revision);
+    const quoted = await submitWithConfirmedFee(draft.revision);
     const quotedSnapshot = structuredClone(repository.draft);
 
     const leadAdjusted = await service.updateAdjustment(lead, quoted.id, {
@@ -910,7 +991,7 @@ describe("QuotationService", () => {
       adjustedTotal: "10958.3990",
       adjustmentStatus: "PENDING_APPROVAL",
       discountRate: "0.9500",
-      revision: 1,
+      revision: quoted.revision + 1,
       writeOff: "100.0000",
     });
     expect(audits.at(-1)).toMatchObject({
@@ -956,7 +1037,7 @@ describe("QuotationService", () => {
 
   it("exports an undiscounted quote, blocks pending export, and approves the adjustment", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const submitted = await service.submit(lead, project.id, draft.revision);
+    const submitted = await submitWithConfirmedFee(draft.revision);
     await expect(
       service.decide(lead, submitted.id, "APPROVED", null),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -977,7 +1058,7 @@ describe("QuotationService", () => {
       .toEqual([
         { amount: 10582.2, label: "直接费", number: "（1）" },
         { amount: 1058.22, label: "管理费", number: "（2）" },
-        { amount: 11640.42, label: "总造价", number: "（3）" },
+        { amount: 11640.42, label: "总造价", number: "（4）" },
       ]);
     const quotedHalfPackage = quotedWorkbook.getWorksheet("半包报价单");
     const quotedManagementRow = quotationSummaryRowNumber(
@@ -985,7 +1066,7 @@ describe("QuotationService", () => {
       "管理费",
     );
     const quotedTotalRow = quotationSummaryRowNumber(quotedHalfPackage, "总造价");
-    expect(quotedTotalRow).toBe(quotedManagementRow + 1);
+    expect(quotedTotalRow).toBe(quotedManagementRow + 2); // Explicit zero design fee occupies its own row.
     expect(JSON.stringify(quotedHalfPackage?.getSheetValues())).not.toContain("税金");
     const initialExport = await service.createExport(lead, submitted.id, "PDF");
     expect(initialExport).toMatchObject({ format: "PDF" });
@@ -1115,7 +1196,7 @@ describe("QuotationService", () => {
     expect(quotationSummaryRows(worksheet)).toEqual([
       { amount: 10582.2, label: "直接费", number: "（1）" },
       { amount: 1058.22, label: "管理费", number: "（2）" },
-      { amount: 11640.42, label: "总造价", number: "（3）" },
+      { amount: 11640.42, label: "总造价", number: "（4）" },
     ]);
     expect(JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues()))).not.toContain("成本");
     expect(workbookFormulaCells(workbook)).toEqual([]);
@@ -1130,8 +1211,8 @@ describe("QuotationService", () => {
       expected: [
         { amount: 10582.2, label: "直接费", number: "（1）" },
         { amount: 1058.22, label: "管理费", number: "（2）" },
-        { amount: -582.02, label: "折扣和抹零", number: "（3）" },
-        { amount: 11058.4, label: "总造价", number: "（4）" },
+        { amount: -582.02, label: "折扣和抹零", number: "（4）" },
+        { amount: 11058.4, label: "总造价", number: "（5）" },
       ],
       adjustmentRemark: "获批折扣率 95.00%，抹零 0.00 元。",
       name: "已批准折扣",
@@ -1142,8 +1223,8 @@ describe("QuotationService", () => {
       expected: [
         { amount: 10582.2, label: "直接费", number: "（1）" },
         { amount: 1058.22, label: "管理费", number: "（2）" },
-        { amount: -100, label: "折扣和抹零", number: "（3）" },
-        { amount: 11540.42, label: "总造价", number: "（4）" },
+        { amount: -100, label: "折扣和抹零", number: "（4）" },
+        { amount: 11540.42, label: "总造价", number: "（5）" },
       ],
       adjustmentRemark: "获批折扣率 100.00%，抹零 100.00 元。",
       name: "已批准抹零",
@@ -1154,8 +1235,8 @@ describe("QuotationService", () => {
       expected: [
         { amount: 10582.2, label: "直接费", number: "（1）" },
         { amount: 1058.22, label: "管理费", number: "（2）" },
-        { amount: -682.02, label: "折扣和抹零", number: "（3）" },
-        { amount: 10958.4, label: "总造价", number: "（4）" },
+        { amount: -682.02, label: "折扣和抹零", number: "（4）" },
+        { amount: 10958.4, label: "总造价", number: "（5）" },
       ],
       adjustmentRemark: "获批折扣率 95.00%，抹零 100.00 元。",
       name: "已批准折扣和抹零",
@@ -1168,7 +1249,7 @@ describe("QuotationService", () => {
     writeOff,
   }) => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const quoted = await service.submit(lead, project.id, draft.revision);
+    const quoted = await submitWithConfirmedFee(draft.revision);
     const pending = await service.updateAdjustment(lead, quoted.id, {
       action: "SUBMIT_FOR_APPROVAL",
       discountRate,
@@ -1217,7 +1298,7 @@ describe("QuotationService", () => {
 
   it("requires a return reason and keeps pricing adjustments in the next editable version", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const submitted = await service.submit(lead, project.id, draft.revision);
+    const submitted = await submitWithConfirmedFee(draft.revision);
     const pending = await service.updateAdjustment(lead, submitted.id, {
       action: "SUBMIT_FOR_APPROVAL",
       discountRate: "0.9500",
@@ -1268,7 +1349,7 @@ describe("QuotationService", () => {
 
   it("keeps an approved version read-only until the owner returns it", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const quoted = await service.submit(lead, project.id, draft.revision);
+    const quoted = await submitWithConfirmedFee(draft.revision);
     const pending = await service.updateAdjustment(lead, quoted.id, {
       action: "SUBMIT_FOR_APPROVAL",
       discountRate: "1.0000",
@@ -1295,7 +1376,7 @@ describe("QuotationService", () => {
 
   it("does not offer special approval as a new approval action", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const submitted = await service.submit(lead, project.id, draft.revision);
+    const submitted = await submitWithConfirmedFee(draft.revision);
     const pending = await service.updateAdjustment(lead, submitted.id, {
       action: "SUBMIT_FOR_APPROVAL",
       discountRate: "1.0000",
@@ -1316,7 +1397,7 @@ describe("QuotationService", () => {
 
   it("requires an adjustment reason before submitting discount approval", async () => {
     const draft = await service.getOrCreateDraft(lead, project.id);
-    const quoted = await service.submit(lead, project.id, draft.revision);
+    const quoted = await submitWithConfirmedFee(draft.revision);
 
     await expect(
       service.updateAdjustment(lead, quoted.id, {
@@ -1353,6 +1434,13 @@ describe("QuotationService", () => {
 });
 
 class InMemoryQuotationRepository implements QuotationRepository {
+  async confirmDesignFee(input: QuotationDraft, expectedRevision: number): Promise<QuotationDraft> {
+    if (this.draft?.revision !== expectedRevision) throw new QuotationRevisionConflictError();
+    this.draft = structuredClone(input.status === "DRAFT" ? input : { ...input,
+      id: randomUUID(), parentVersionId: input.id, status: input.status === "APPROVED" ? "APPROVED" : "QUOTED",
+      designFeeRevision: (input.designFeeRevision ?? 0) + 1 });
+    return structuredClone(this.draft);
+  }
   conflictNextSave = false;
   createdCount = 0;
   draft: QuotationDraft | null = null;
