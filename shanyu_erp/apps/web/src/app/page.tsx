@@ -16,6 +16,7 @@ import {
 } from "@/lib/api-client";
 import { getWorkbench } from "@/lib/workbench";
 import { hasOwnerPermissions } from "@/lib/permissions";
+import { ProjectPermissionRefresh } from "@/components/project-permission-refresh";
 
 interface HomeProps {
   readonly searchParams: Promise<
@@ -46,7 +47,7 @@ export default async function Home({ searchParams }: HomeProps) {
   const projects = canAccessProjects ? await fetchProjects(cookieHeader) : null;
   const isOwner = hasOwnerPermissions(session.user.role);
   const isLead = session.user.role === "LEAD_DESIGNER";
-  const projectList = projects ?? [];
+  const projectList = (projects ?? []).filter(project => !isLead || project.leadDesigner.id === session.user.id);
   const leadProjects = isLead
     ? projectList.map(toLeadProjectItem)
     : [];
@@ -67,7 +68,7 @@ export default async function Home({ searchParams }: HomeProps) {
         ["半包预计毛利率", aggregateMargin, "当前报价汇总"],
       ]
     : isLead ? [
-        ["我的项目", String(projects?.length ?? 0), "本人负责"],
+        ["我的项目", String(projectList.length), "本人负责"],
         ["草稿", String(projectList.filter((item) => item.quotationStatus === null || item.quotationStatus === "DRAFT").length), "半包报价持续保存"],
         ["已报价", String(projectList.filter((item) => item.quotationStatus === "QUOTED").length), "可导出并待最终审批"],
         ["已退回", String(projectList.filter((item) => item.quotationStatus === "RETURNED").length), "根据审批意见修订"],
@@ -82,6 +83,7 @@ export default async function Home({ searchParams }: HomeProps) {
   if (isLead) {
     return (
       <AppShell active="dashboard" user={session.user}>
+        <ProjectPermissionRefresh />
         <LeadWorkbench
           displayName={session.user.displayName}
           params={params}
@@ -94,6 +96,7 @@ export default async function Home({ searchParams }: HomeProps) {
 
   return (
     <AppShell active="dashboard" user={session.user}>
+      <ProjectPermissionRefresh />
       <main className="page-content">
         <section className="welcome-row">
           <div>

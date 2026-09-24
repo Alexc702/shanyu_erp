@@ -82,6 +82,8 @@ export interface SpaceInput {
 }
 
 export interface ProjectSummary {
+  readonly accessRevision?: number;
+  readonly readonlyDesigner?: { readonly id: string; readonly displayName: string } | null;
   readonly createdAt: string;
   readonly customerName: string;
   readonly id: string;
@@ -93,6 +95,13 @@ export interface ProjectSummary {
   readonly quotationStatus: HalfPackageQuotationStatus | null;
   readonly quotationVersion: number | null;
   readonly updatedAt: string;
+}
+
+export interface TransferProjectLeadRequest {
+  readonly expectedAccessRevision: number;
+  readonly leadDesignerId: string;
+  readonly retainReadonly: boolean;
+  readonly reason?: string;
 }
 
 export interface ProjectDetail extends ProjectSummary {

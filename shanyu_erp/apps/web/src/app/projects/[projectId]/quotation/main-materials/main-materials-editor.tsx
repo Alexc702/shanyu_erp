@@ -1,4 +1,5 @@
 "use client";
+import { useProjectReadonly } from "../../project-access";
 
 import type {
   MainMaterialCategoryCode,
@@ -116,7 +117,8 @@ export function MainMaterialsEditor({
   }>>>({});
   const [updateCheck, setUpdateCheck] = useState<MainMaterialCatalogUpdateCheckView | null>(null);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
-  const editable = quotation.status === "DRAFT";
+  const readOnly = useProjectReadonly();
+  const editable = quotation.status === "DRAFT" && !readOnly;
   const visibleLines = quotation.lines.filter((line) => line.categoryCode === category);
   const filteredVisibleLines = category === "TILE"
     ? visibleLines.filter((line) => {
@@ -402,7 +404,7 @@ export function MainMaterialsEditor({
           </button>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="type-page-title">主材选型</h1>
-            <Badge variant={editable ? "warning" : "success"}>{editable ? "草稿" : "已锁定"}</Badge>
+            <Badge variant={editable ? "warning" : "success"}>{readOnly ? "只读查看" : editable ? "草稿" : "已锁定"}</Badge>
           </div>
           <p className="type-body m-0 text-muted-foreground">{projectAddress} · 主材库 V{quotation.catalogVersion.versionNumber}</p>
         </div>
@@ -487,7 +489,7 @@ export function MainMaterialsEditor({
                       <TableCell className="whitespace-normal break-words">{line.item ? <><strong className="block whitespace-normal break-words">{line.item.brand || "—"}</strong><span className="type-support block whitespace-normal break-words text-muted-foreground">{mainMaterialSelectionDescription(line.item, line.selectedColor, selectionCatalog.items.find((item) => item.materialId === line.item?.materialId))}</span></> : <Badge variant="warning">待选择</Badge>}</TableCell>
                       <TableCell className="px-2">{line.item ? money(line.item.saleUnitPrice) : "—"}</TableCell>
                       <TableCell className="px-2 font-semibold">{line.amount ? money(line.amount) : "—"}</TableCell>
-                      <TableCell className="sticky right-0 z-20 w-[112px] border-l border-border bg-background px-1"><div className="grid justify-items-end gap-1 whitespace-nowrap">{demandChanged ? <Button className="h-8 px-1" disabled={working} onClick={() => saveDemand(line)} size="sm">保存数量</Button> : null}<div className="flex flex-nowrap items-center justify-end gap-1"><Button className="h-8 px-1" disabled={!editable || working} onClick={() => openPicker(line, category)} size="sm" variant="outline">{line.item ? "更换" : "选择型号"}</Button>{line.origin === "MANUAL" && editable ? <Button aria-label="删除主材行" className="size-8" disabled={working} onClick={() => removeLine(line)} size="icon" variant="ghost"><Trash2 /></Button> : null}</div></div></TableCell>
+                      <TableCell className="sticky right-0 z-20 w-[112px] border-l border-border bg-background px-1">{readOnly ? null : <div className="grid justify-items-end gap-1 whitespace-nowrap">{demandChanged ? <Button className="h-8 px-1" disabled={working} onClick={() => saveDemand(line)} size="sm">保存数量</Button> : null}<div className="flex flex-nowrap items-center justify-end gap-1"><Button className="h-8 px-1" disabled={!editable || working} onClick={() => openPicker(line, category)} size="sm" variant="outline">{line.item ? "更换" : "选择型号"}</Button>{line.origin === "MANUAL" && editable ? <Button aria-label="删除主材行" className="size-8" disabled={working} onClick={() => removeLine(line)} size="icon" variant="ghost"><Trash2 /></Button> : null}</div></div>}</TableCell>
                     </TableRow>
                     </Fragment>
                   );

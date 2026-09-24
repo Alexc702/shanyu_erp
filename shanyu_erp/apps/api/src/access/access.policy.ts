@@ -58,6 +58,15 @@ export class AccessPolicy {
     }
   }
 
+  isProjectReadonly(user: SessionUser, project: { leadDesigner: { id: string }; readonlyDesigner?: { id: string } | null }): boolean {
+    return user.role === "LEAD_DESIGNER" && user.id !== project.leadDesigner.id && user.id === project.readonlyDesigner?.id;
+  }
+
+  assertCanReadProject(user: SessionUser, project: { leadDesigner: { id: string }; readonlyDesigner?: { id: string } | null }): void {
+    if (this.isProjectReadonly(user, project)) return;
+    this.assertCanAccessProject(user, project.leadDesigner.id);
+  }
+
   assertCanAccessProject(user: SessionUser, leadDesignerId: string): void {
     if (
       user.role === "ADMIN" ||

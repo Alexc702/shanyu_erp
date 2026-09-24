@@ -1,4 +1,5 @@
 import { Injectable, OnModuleDestroy } from "@nestjs/common";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   Pool,
   type PoolClient,
@@ -15,6 +16,7 @@ export interface DatabaseExecutor {
 
 @Injectable()
 export class DatabaseClient implements OnModuleDestroy {
+  private readonly projectRequest = new AsyncLocalStorage<DatabaseExecutor>();
   private readonly pool = new Pool({
     database: requiredEnvironmentVariable("POSTGRES_DB"),
     host: process.env.POSTGRES_HOST ?? "127.0.0.1",
@@ -27,12 +29,15 @@ export class DatabaseClient implements OnModuleDestroy {
     text: string,
     values: readonly unknown[] = [],
   ): Promise<QueryResult<Row>> {
-    return this.pool.query<Row>(text, [...values]);
+    return this.projectRequest.getStore()?.query<Row>(text, values)
+      ?? this.pool.query<Row>(text, [...values]);
   }
 
   async transaction<Result>(
     work: (database: DatabaseExecutor) => Promise<Result>,
   ): Promise<Result> {
+    const request = this.projectRequest.getStore();
+    if (request) return work(request);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -45,6 +50,15 @@ export class DatabaseClient implements OnModuleDestroy {
     } finally {
       client.release();
     }
+  }
+
+  // Project HTTP requests serialize authorization and business writes with transfer.
+  // Existing repository transactions join this boundary; no second connection/lock.
+  async projectTransaction<Result>(projectId: string, work: () => Promise<Result>): Promise<Result> {
+    return this.transaction(async (database) => {
+      await database.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 924))", [projectId]);
+      return this.projectRequest.run(database, work);
+    });
   }
 
   async onModuleDestroy(): Promise<void> {

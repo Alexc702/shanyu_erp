@@ -9,6 +9,7 @@ import { fetchProjects, fetchSession } from "@/lib/api-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { ProjectList } from "./project-list";
+import { ProjectPermissionRefresh } from "@/components/project-permission-refresh";
 
 export default async function ProjectsPage() {
   const cookieHeader = (await cookies()).toString();
@@ -24,6 +25,7 @@ export default async function ProjectsPage() {
 
   return (
     <AppShell active="projects" user={session.user}>
+      <ProjectPermissionRefresh />
       <main className="page-content">
         <section className="page-title-row">
           <div>

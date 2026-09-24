@@ -142,7 +142,12 @@ export class QuotationService {
     actor: SessionUser,
     projectId: string,
   ): Promise<QuotationView> {
-    const project = await this.authorizedProject(actor, projectId);
+    const project = await this.authorizedProject(actor, projectId, true);
+    if (this.accessPolicy.isProjectReadonly(actor, project)) {
+      const current = await this.quotationRepository.findLatest(projectId);
+      if (!current) throw new NotFoundException("暂无已保存的报价");
+      return toView(current);
+    }
     const existing = await this.quotationRepository.findDraft(projectId);
     if (existing) {
       // Inherited drafts receive electrical corrections and unused duplicate-pipe cleanup only; never expand or reprice them.
@@ -401,7 +406,7 @@ export class QuotationService {
     actor: SessionUser,
     quotationId: string,
   ): Promise<QuotationView> {
-    return toView(await this.authorizedVersion(actor, quotationId));
+    return toView(await this.authorizedVersion(actor, quotationId, true));
   }
 
   async getVersionCostMargin(
@@ -526,7 +531,7 @@ export class QuotationService {
   }
 
   async listVersions(actor: SessionUser, projectId: string) {
-    await this.authorizedProject(actor, projectId);
+    await this.authorizedProject(actor, projectId, true);
     const versions = await this.quotationRepository.listByProject(projectId);
     return versions.map((version) => ({
       decisionAction: version.decisionAction,
@@ -721,8 +726,8 @@ export class QuotationService {
     fromVersion: number;
     toVersion: number;
   }> {
-    const from = await this.authorizedVersion(actor, fromId);
-    const to = await this.authorizedVersion(actor, toId);
+    const from = await this.authorizedVersion(actor, fromId, true);
+    const to = await this.authorizedVersion(actor, toId, true);
     if (from.projectId !== to.projectId) {
       throw new BadRequestException("只能对比同一项目的报价版本");
     }
@@ -902,12 +907,14 @@ export class QuotationService {
   private async authorizedProject(
     actor: SessionUser,
     projectId: string,
+    readOnly = false,
   ): Promise<ProjectDetail> {
     const project = await this.quotationRepository.findProject(projectId);
     if (!project) {
       throw new NotFoundException("项目不存在");
     }
-    this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
+    if (readOnly) this.accessPolicy.assertCanReadProject(actor, project);
+    else this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
     return project;
   }
 
@@ -931,12 +938,13 @@ export class QuotationService {
   private async authorizedVersion(
     actor: SessionUser,
     quotationId: string,
+    readOnly = false,
   ): Promise<QuotationDraft> {
     const quotation = await this.quotationRepository.findById(quotationId);
     if (!quotation) {
       throw new NotFoundException("半包报价版本不存在");
     }
-    await this.authorizedProject(actor, quotation.projectId);
+    await this.authorizedProject(actor, quotation.projectId, readOnly);
     return quotation;
   }
 

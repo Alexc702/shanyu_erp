@@ -99,7 +99,7 @@ export class ProjectsService {
     if (!project) {
       throw new NotFoundException("项目不存在");
     }
-    this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
+    this.accessPolicy.assertCanReadProject(actor, project);
     return project;
   }
 
@@ -109,6 +109,7 @@ export class ProjectsService {
     input: AddSpaceRequest,
   ): Promise<ProjectSpace> {
     const project = await this.get(actor, projectId);
+    this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
     await this.assertSpaceAdjustable(projectId);
     const normalized = normalizeSpace(input);
     if (
@@ -161,6 +162,7 @@ export class ProjectsService {
     input: UpdateSpaceRequest,
   ): Promise<ProjectSpace> {
     const project = await this.get(actor, projectId);
+    this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
     await this.assertSpaceAdjustable(projectId);
     const current = project.spaces.find((space) => space.id === spaceId);
     if (!current) {
@@ -205,6 +207,7 @@ export class ProjectsService {
     spaceId: string,
   ): Promise<void> {
     const project = await this.get(actor, projectId);
+    this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
     if (!project.spaces.some((space) => space.id === spaceId)) {
       throw new NotFoundException("空间不存在");
     }
@@ -236,6 +239,7 @@ export class ProjectsService {
     input: ReorderSpacesRequest,
   ): Promise<ProjectSpace[]> {
     const project = await this.get(actor, projectId);
+    this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
     if (
       !input ||
       !Array.isArray(input.spaceIds) ||

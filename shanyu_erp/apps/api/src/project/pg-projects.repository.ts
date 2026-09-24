@@ -23,6 +23,9 @@ import {
 } from "./projects.repository";
 
 interface ProjectRow {
+  access_revision: number;
+  readonly_designer_id: string | null;
+  readonly_display_name: string | null;
   created_at: Date;
   customer_name: string;
   id: string;
@@ -135,7 +138,7 @@ export class PgProjectsRepository implements ProjectsRepository {
   async list(leadDesignerId: string | null): Promise<ProjectSummary[]> {
     const result = await this.database.query<ProjectRow>(
       `${projectSelect}
-        WHERE ($1::uuid IS NULL OR p.lead_designer_id = $1)
+        WHERE ($1::uuid IS NULL OR p.lead_designer_id = $1 OR p.readonly_designer_id = $1)
         ORDER BY p.created_at DESC, p.id`,
       [leadDesignerId],
     );
@@ -711,6 +714,7 @@ async function reorderQuotationScopes(
 }
 
 const projectSelect = `SELECT p.id, p.project_address, p.customer_name,
+                               p.access_revision, p.readonly_designer_id, viewer.display_name AS readonly_display_name,
                                p.outer_frame_area, p.lead_designer_id,
                                p.created_at, p.updated_at,
                                current_quote.id AS quotation_id,
@@ -722,6 +726,7 @@ const projectSelect = `SELECT p.id, p.project_address, p.customer_name,
                                u.phone AS lead_phone, u.role AS lead_role
                           FROM projects p
                           JOIN users u ON u.id = p.lead_designer_id
+                     LEFT JOIN users viewer ON viewer.id = p.readonly_designer_id
                      LEFT JOIN LATERAL (
                                SELECT q.id, q.version_number, q.status,
                                       q.adjusted_total
@@ -732,6 +737,8 @@ const projectSelect = `SELECT p.id, p.project_address, p.customer_name,
 
 function toProjectSummary(row: ProjectRow): ProjectSummary {
   return {
+    accessRevision: row.access_revision,
+    readonlyDesigner: row.readonly_designer_id ? { id: row.readonly_designer_id, displayName: row.readonly_display_name! } : null,
     createdAt: row.created_at.toISOString(),
     customerName: row.customer_name,
     id: row.id,

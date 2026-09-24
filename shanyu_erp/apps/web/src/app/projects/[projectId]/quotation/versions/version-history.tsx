@@ -1,4 +1,5 @@
 "use client";
+import { useProjectReadonly } from "../../project-access";
 
 import type {
   AuditEventView,
@@ -404,6 +405,7 @@ function CurrentVersionCard({
   readonly user: SessionUser;
   readonly version: HalfPackageQuotationVersionSummary;
 }) {
+  const readOnly = useProjectReadonly();
   return (
     <Card className="border-border py-0 shadow-none">
       <CardContent className="grid gap-3 p-4">
@@ -431,7 +433,7 @@ function CurrentVersionCard({
             查看只读快照
           </Link>
         </Button>
-        {version.status === "DRAFT" && user.role === "LEAD_DESIGNER" ? (
+        {!readOnly && version.status === "DRAFT" && user.role === "LEAD_DESIGNER" ? (
           <Button asChild className="w-full">
             <Link href={`/projects/${projectId}/quotation`}>继续编辑当前草稿</Link>
           </Button>

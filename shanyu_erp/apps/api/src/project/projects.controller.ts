@@ -23,13 +23,26 @@ import type {
 import { AuthService } from "../access/auth.service";
 import { readSessionToken } from "../access/session-cookie";
 import { ProjectsService } from "./projects.service";
+import { ProjectTransferService } from "./project-transfer.service";
+import type { TransferProjectLeadRequest } from "@shanyu/contracts";
 
 @Controller("projects")
 export class ProjectsController {
   constructor(
     private readonly authService: AuthService,
     private readonly projectsService: ProjectsService,
+    private readonly transfers: ProjectTransferService,
   ) {}
+
+  @Post(":projectId/lead-transfer")
+  async transfer(@Headers("cookie") cookie: string | undefined, @Param("projectId") projectId: string, @Body() body: TransferProjectLeadRequest) {
+    return { project: await this.transfers.change(await this.currentUser(cookie), projectId, body) };
+  }
+
+  @Post(":projectId/revoke-readonly")
+  async revokeReadonly(@Headers("cookie") cookie: string | undefined, @Param("projectId") projectId: string, @Body() body: { expectedAccessRevision: number }) {
+    return { project: await this.transfers.change(await this.currentUser(cookie), projectId, body, true) };
+  }
 
   @Get()
   async list(

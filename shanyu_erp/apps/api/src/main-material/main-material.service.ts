@@ -105,8 +105,8 @@ export class MainMaterialService {
     actor: SessionUser,
     projectId: string,
   ): Promise<MainMaterialQuotationView> {
-    await this.authorizedProject(actor, projectId);
-    const quotation = await this.repository.initializeAndSyncDraft(projectId, true)
+    const project = await this.authorizedProject(actor, projectId, true);
+    const quotation = (this.accessPolicy.isProjectReadonly(actor, project) ? null : await this.repository.initializeAndSyncDraft(projectId, true))
       ?? await this.repository.getQuotationByProject(projectId);
     if (!quotation) {
       throw new ConflictException("请先保存半包报价，再开始主材选型");
@@ -118,8 +118,8 @@ export class MainMaterialService {
     actor: SessionUser,
     projectId: string,
   ): Promise<PublishedMainMaterialCatalogView> {
-    await this.authorizedProject(actor, projectId);
-    const quotation = await this.repository.initializeAndSyncDraft(projectId, true)
+    const project = await this.authorizedProject(actor, projectId, true);
+    const quotation = (this.accessPolicy.isProjectReadonly(actor, project) ? null : await this.repository.initializeAndSyncDraft(projectId, true))
       ?? await this.repository.getQuotationByProject(projectId);
     if (!quotation) {
       throw new ConflictException("请先保存半包报价，再开始主材选型");
@@ -138,7 +138,7 @@ export class MainMaterialService {
   ): Promise<MainMaterialQuotationView | null> {
     const quotation = await this.repository.getQuotationById(quotationId);
     if (!quotation) return null;
-    await this.authorizedProject(actor, quotation.projectId);
+    await this.authorizedProject(actor, quotation.projectId, true);
     return toQuotationView(quotation, canViewCosts(actor));
   }
 
@@ -542,10 +542,11 @@ export class MainMaterialService {
     throw new NotFoundException("图片不存在");
   }
 
-  private async authorizedProject(actor: SessionUser, projectId: string) {
+  private async authorizedProject(actor: SessionUser, projectId: string, readOnly = false) {
     const project = await this.projectsRepository.findById(projectId);
     if (!project) throw new NotFoundException("项目不存在");
-    this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
+    if (readOnly) this.accessPolicy.assertCanReadProject(actor, project);
+    else this.accessPolicy.assertCanAccessProject(actor, project.leadDesigner.id);
     return project;
   }
 }

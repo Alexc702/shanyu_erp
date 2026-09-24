@@ -1,4 +1,5 @@
 "use client";
+import { useProjectReadonly } from "../project-access";
 
 import type {
   HalfPackageQuotation,
@@ -67,7 +68,8 @@ export function QuotationEditor({
   const quotationRef = useRef(initialQuotation);
   const saveQueueRef = useRef(Promise.resolve(true));
   const pendingSaveCountRef = useRef(0);
-  const editable = quotation.status === "DRAFT";
+  const readOnly = useProjectReadonly();
+  const editable = quotation.status === "DRAFT" && !readOnly;
   const compactReadOnly =
     !editable &&
     (quotation.adjustmentStatus === "PENDING_APPROVAL" ||
@@ -155,7 +157,7 @@ export function QuotationEditor({
         </div>
         <div className="quotation-actions">
           <div className="quotation-save-state" aria-live="polite">
-            <span className={error ? "save-dot error" : "save-dot"} />{message}
+            <span className={error ? "save-dot error" : "save-dot"} />{readOnly ? "只读查看" : message}
           </div>
           {editable ? (
             <Button

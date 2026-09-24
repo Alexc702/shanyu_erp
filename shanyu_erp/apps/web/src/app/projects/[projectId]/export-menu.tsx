@@ -23,6 +23,7 @@ import {
 } from "@/lib/quotation-client";
 import { cn } from "@/lib/utils";
 import { SelectionSheetPanel } from "./selection-sheet-panel";
+import { useProjectReadonly } from "./project-access";
 
 interface ExportMenuProps {
   readonly compact?: boolean;
@@ -39,6 +40,7 @@ export function ExportMenu({
   fullWidth = false,
   quotationId,
 }: ExportMenuProps) {
+  const readOnly = useProjectReadonly();
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState<HalfPackageExportFormat>("PDF");
   const [documentKind, setDocumentKind] = useState<"QUOTATION" | "SELECTION">("QUOTATION");
@@ -66,6 +68,7 @@ export function ExportMenu({
     }
   }
 
+  if (readOnly) return null;
   return (
     <Dialog onOpenChange={(nextOpen) => !working && setOpen(nextOpen)} open={open}>
       <DialogTrigger asChild>

@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
-import { fetchHalfPackageQuotation, fetchMainMaterialQuotation, fetchSession, fetchSubmissionCheck } from "@/lib/api-client";
+import { fetchHalfPackageQuotation, fetchMainMaterialQuotation, fetchSession, fetchSubmissionCheck, fetchProject } from "@/lib/api-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { SubmitQuotationPanel } from "./submit-quotation-panel";
@@ -17,6 +17,9 @@ export default async function SubmitQuotationPage({ params }: SubmitPageProps) {
   if (!session) redirect("/login");
   if (!hasOwnerPermissions(session.user.role) && session.user.role !== "LEAD_DESIGNER") notFound();
   const { projectId } = await params;
+  const project = await fetchProject(cookieHeader, projectId);
+  if (!project) notFound();
+  if (session.user.role === "LEAD_DESIGNER" && project.leadDesigner.id !== session.user.id) redirect(`/projects/${projectId}`);
   const check = await fetchSubmissionCheck(cookieHeader, projectId);
   const [quotation, mainMaterial] = await Promise.all([
     fetchHalfPackageQuotation(cookieHeader, projectId),

@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { APP_INTERCEPTOR } from "@nestjs/core";
+import { ProjectAccessInterceptor } from "./project/project-access.interceptor";
 import { ConfigModule } from "@nestjs/config";
 import { resolve } from "node:path";
 
@@ -11,6 +13,7 @@ import { ProjectModule } from "./project/project.module";
 import { QuotationModule } from "./quotation/quotation.module";
 
 @Module({
+  providers: [{ provide: APP_INTERCEPTOR, useClass: ProjectAccessInterceptor }],
   controllers: [HealthController],
   imports: [
     ConfigModule.forRoot({

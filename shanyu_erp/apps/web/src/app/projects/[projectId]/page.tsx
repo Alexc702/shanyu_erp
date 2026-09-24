@@ -19,12 +19,14 @@ import {
   fetchQuotationVersion,
   fetchQuotationVersions,
   fetchSession,
+  fetchUsers,
 } from "@/lib/api-client";
 import { hasOwnerPermissions } from "@/lib/permissions";
 
 import { ExportMenu } from "./export-menu";
 import { DesignFee } from "./design-fee";
 import { SpaceManager } from "./space-manager";
+import { TransferLead } from "./transfer-lead";
 import {
   ContinueEditingButton,
   QuotationAdjustment,
@@ -57,6 +59,8 @@ export default async function ProjectPage({
   const quotationId = firstValue(query.quotationId);
   const project = await fetchProject(cookieHeader, projectId);
   if (!project) notFound();
+  const readOnly = session.user.role === "LEAD_DESIGNER" && project.leadDesigner.id !== session.user.id;
+  const designers = hasOwnerPermissions(session.user.role) ? await fetchUsers(cookieHeader) : null;
   const [quotation, versions, catalog] = await Promise.all([
     quotationId
       ? fetchQuotationVersion(cookieHeader, quotationId)
@@ -95,10 +99,10 @@ export default async function ProjectPage({
   const adjustmentPending =
     quotation.adjustmentStatus === "PENDING_APPROVAL";
   const returnReason = returnedRevisionReason(quotation, versions);
-  const exportVisible =
+  const exportVisible = !readOnly && (
     (quotation.status === "QUOTED" && !adjustmentPending) ||
     (quotation.status === "APPROVED" &&
-      quotation.adjustmentStatus === "CONFIRMED");
+      quotation.adjustmentStatus === "CONFIRMED"));
 
   return (
     <AppShell active="projects" user={session.user}>
@@ -119,7 +123,8 @@ export default async function ProjectPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {quotation.status === "DRAFT" ? (
+            {ownerAccess ? <TransferLead project={project} designers={designers ?? []} /> : null}
+            {!readOnly && quotation.status === "DRAFT" ? (
               <SpaceManager
                 projectId={project.id}
                 quotation={quotation}
@@ -146,7 +151,7 @@ export default async function ProjectPage({
                 quotationId={quotation.id}
               />
             ) : null}
-            {quotation.status === "DRAFT" ? (
+            {readOnly ? <Badge variant="secondary">只读查看</Badge> : quotation.status === "DRAFT" ? (
               <Button asChild>
                 <Link href={`/projects/${project.id}/quotation/submit`}>
                   <Send />
@@ -167,7 +172,7 @@ export default async function ProjectPage({
                 </Link>
               </Button>
             ) : null}
-            {quotation.status === "QUOTED" ? (
+            {!readOnly && quotation.status === "QUOTED" ? (
               <Button
                 disabled={adjustmentPending}
                 form="quotation-adjustment-form"
@@ -183,7 +188,8 @@ export default async function ProjectPage({
           </div>
         </section>
 
-        {returnReason ? (
+        {readOnly ? <p role="status" className="rounded-lg border border-border bg-muted p-4 type-body text-muted-foreground">只读查看：可查看项目最新进展，不可修改、确认、打印或导出。</p> : null}
+        {!readOnly && returnReason ? (
           <Card className="border-destructive/30 bg-destructive/5 py-0 shadow-none">
             <CardContent className="grid gap-1 p-4">
               <strong className="type-entity text-destructive">老板打回原因</strong>
@@ -256,8 +262,8 @@ export default async function ProjectPage({
                       quotationId={quotation.id}
                     />
                   </strong>
-                  {quotation.status === "RETURNED" ||
-                  (quotation.status === "QUOTED" && !adjustmentPending) ? (
+                  {!readOnly && (quotation.status === "RETURNED" ||
+                  (quotation.status === "QUOTED" && !adjustmentPending)) ? (
                     <ContinueEditingButton
                       display="link"
                       projectId={project.id}
@@ -273,7 +279,7 @@ export default async function ProjectPage({
                           : `/projects/${project.id}/quotation`
                       }
                     >
-                      {adjustmentPending || approved
+                      {readOnly || adjustmentPending || approved
                         ? "查看半包报价"
                         : "继续编辑半包"} →
                     </Link>
@@ -293,7 +299,7 @@ export default async function ProjectPage({
                 </div>
               </CardContent>
             </Card>
-            {quotation.status === "QUOTED" ? <QuotationAdjustment key={`${quotation.id}:${quotation.revision}`} initialQuotation={quotation} mode={adjustmentPending ? "PENDING" : ownerAccess ? "OWNER_CONFIRM" : "DESIGNER_SUBMIT"} projectId={project.id} /> : null}
+            {!readOnly && quotation.status === "QUOTED" ? <QuotationAdjustment key={`${quotation.id}:${quotation.revision}`} initialQuotation={quotation} mode={adjustmentPending ? "PENDING" : ownerAccess ? "OWNER_CONFIRM" : "DESIGNER_SUBMIT"} projectId={project.id} /> : null}
             <div id="design-fee"><DesignFee key={`${quotation.id}:${quotation.revision}`} quotation={quotation} /></div>
           </div>
 
