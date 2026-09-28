@@ -29,8 +29,8 @@ export default async function CatalogImportPage({ searchParams }: { readonly sea
         <section className="page-title-row">
           <div>
             <p className="eyebrow">{mainMaterial ? "V2 · 主材 SKU" : "V1 · 半包标准工程项"}</p>
-            <h1>主材库导入与发布</h1>
-            <p>{mainMaterial ? "支持全量与 Delta 校验，确认差异后发布新的不可变版本。" : "先完成 8 个分区、178 项、价格完整性与公式保留对算，再确认发布。"}</p>
+            <h1>{mainMaterial ? "导入主材" : "主材库导入与发布"}</h1>
+            <p>{mainMaterial ? "直接读取客户 Excel 文件，自动校验查重，仅处理必要资料和异常；查看差异后确认发布。" : "先完成 8 个分区、178 项、价格完整性与公式保留对算，再确认发布。"}</p>
           </div>
           <Link className="text-link" href={mainMaterial ? "/catalog?type=main" : "/catalog"}>返回主材库</Link>
         </section>

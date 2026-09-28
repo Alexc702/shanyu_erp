@@ -738,3 +738,4 @@ export interface ProjectCostAnalysis {
 export interface ProjectCostAnalysisResponse {
   readonly analysis: ProjectCostAnalysis;
 }
+export type { DirectMaterialInformation, DirectMaterialRowView, DirectMaterialBatchView, DirectMaterialProcessingStage } from "./main-material-direct-import.js";

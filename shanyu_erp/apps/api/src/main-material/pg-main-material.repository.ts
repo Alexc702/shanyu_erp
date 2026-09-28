@@ -23,6 +23,9 @@ import {
   type NewMainMaterialImportBatch,
   type NormalizedMainMaterialItem,
 } from "./main-material.repository";
+import type { DirectPublication } from "./main-material-direct.service";
+import { cacheDirectAsset, hash } from "./main-material-direct-file";
+import { readFile } from "node:fs/promises";
 import { isMainMaterialColorSelectionValid, isMainMaterialTileSpecCompatible } from "./main-material-selection";
 import { reconcileSafeDrafts } from "./main-material-safe-update";
 import { mapFullImportItem, normalizeMaterialVariant, validateFullImport } from "./main-material-import-mapping";
@@ -169,6 +172,11 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
       [assetId],
     );
     const row = result.rows[0];
+    if(row?.storage_path===`main-materials/imported/${assetId}.png`){
+      const blob=await this.database.query<{payload:Buffer}>("SELECT payload FROM direct_material_import_blobs WHERE content_hash=$1",[assetId]);
+      if(!blob.rows[0])throw new MainMaterialSelectionError("已发布导入图片归档缺失");
+      await cacheDirectAsset(assetId,blob.rows[0].payload);
+    }
     return row
       ? {
           contentType: row.content_type,
@@ -217,6 +225,7 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
   async publishImportBatch(
     batchId: string,
     actorUserId: string,
+    directConfirmation?: string,
   ): Promise<MainMaterialCatalog> {
     const versionId = await this.database.transaction(async (database) => {
       await database.query("LOCK TABLE main_material_catalog_versions IN SHARE ROW EXCLUSIVE MODE");
@@ -226,6 +235,14 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
       );
       const batch = batchResult.rows[0];
       if (!batch) throw new MainMaterialSelectionError("主材导入批次不存在");
+      const direct = batch.validation_report.directImport as DirectPublication | undefined;
+      if (direct) {
+        const actor = await database.query<{ role: string; status: string }>("SELECT role,status FROM users WHERE id=$1 FOR SHARE", [actorUserId]);
+        if (!actor.rows[0] || !["ADMIN", "OWNER"].includes(actor.rows[0].role) || actor.rows[0].status !== "ACTIVE") throw new MainMaterialSelectionError("当前账号无主材发布权限");
+        if (!directConfirmation || directConfirmation !== direct.previewHash) throw new MainMaterialSelectionError("直接文件导入必须复核当前预览并最终确认发布");
+        const guarded = await database.query<{ preview_hash: string }>("SELECT preview_hash FROM direct_material_imports WHERE id=$1 FOR UPDATE", [batchId]);
+        if (guarded.rows[0]?.preview_hash !== directConfirmation) throw new MainMaterialRevisionConflictError("资料预览已变化，请重新确认");
+      }
       if (batch.status === "PUBLISHED" && batch.published_version_id) {
         return batch.published_version_id;
       }
@@ -237,14 +254,35 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
         `${catalogSelect} WHERE status = 'PUBLISHED' FOR UPDATE`,
       );
       const current = currentResult.rows[0];
-      if (!current) throw new MainMaterialSelectionError("当前没有已发布主材库");
-      const currentItems = await this.listItems(database, current.id);
-      const normalized = batch.mode === "FULL"
+      if (!current && !direct) throw new MainMaterialSelectionError("当前没有已发布主材库");
+      const currentItems = current ? await this.listItems(database, current.id) : [];
+      let normalized = batch.mode === "FULL"
         ? validateFullImport(batch.normalized_payload as NormalizedMainMaterialItem[], currentItems)
         : applyDelta(
             currentItems,
             batch.normalized_payload as MainMaterialDelta[],
           );
+      if (direct) {
+        if ((current?.id ?? null) !== direct.baseCatalogId) throw new MainMaterialRevisionConflictError("基准主材库已变化，请重新预览");
+        if (hash(await readFile(direct.sourceArchive.path)) !== direct.sourceArchive.hash) throw new MainMaterialSelectionError("归档来源文件已变化");
+        if (!direct.changes.length) throw new MainMaterialSelectionError("本次没有实际变化");
+        const items = new Map(currentItems.map(i => [i.materialId, toNormalizedItem(i)]));
+        for (const change of direct.changes) {
+          const old = currentItems.find(i => i.materialId === change.item.materialId);
+          if ((old?.recordVersion ?? 0) !== change.expectedRecordVersion || change.item.recordVersion !== change.expectedRecordVersion + 1) throw new MainMaterialRevisionConflictError("记录版本已变化");
+          validatePublishedItem(change.item);
+          const mapped = mapFullImportItem(change.item, old);
+          items.set(change.item.materialId, { ...mapped, recordVersion: change.item.recordVersion });
+        }
+        normalized = [...items.values()];
+        for (const asset of direct.assets) {
+          const payload = await readFile(asset.cachedPath);
+          if (hash(payload) !== asset.id || payload.length !== asset.size) throw new MainMaterialSelectionError("图片内容已变化或不可读取");
+          if (hash(await readFile(asset.originalPath)) !== asset.originalHash) throw new MainMaterialSelectionError("归档原图已变化");
+          await database.query(`INSERT INTO main_material_assets(id,content_type,file_name,storage_path,size_bytes)
+            VALUES($1,'image/png',$2,$3,$4) ON CONFLICT(id) DO NOTHING`, [asset.id, `${asset.id}.png`, asset.storagePath, asset.size]);
+        }
+      }
       const nextVersionResult = await database.query<{ next_version: number }>(
         `SELECT coalesce(max(version_number), 0) + 1 AS next_version
            FROM main_material_catalog_versions`,
@@ -280,13 +318,19 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
              ON old.catalog_version_id = $2
             AND old.material_id = next.material_id
           WHERE next.catalog_version_id = $1`,
-        [id, current.id],
+        [id, current?.id ?? null],
       );
+      if (direct) for (const change of direct.changes) {
+        await database.query("DELETE FROM main_material_item_assets WHERE catalog_version_id=$1 AND material_id=$2", [id, change.item.materialId]);
+        for (const [order, assetId] of change.assetIds.entries()) {
+          await database.query(`INSERT INTO main_material_item_assets(catalog_version_id,material_id,asset_id,sort_order) VALUES($1,$2,$3,$4)`, [id, change.item.materialId, assetId, order]);
+        }
+      }
       await database.query(
         `UPDATE main_material_catalog_versions
             SET status = 'SUPERSEDED'
           WHERE id = $1 AND status = 'PUBLISHED'`,
-        [current.id],
+        [current?.id ?? null],
       );
       await database.query(
         `UPDATE main_material_catalog_versions
@@ -300,11 +344,13 @@ export class PgMainMaterialRepository implements MainMaterialRepository {
           WHERE id = $1 AND status = 'VALIDATED'`,
         [batchId, id],
       );
-      const report = await reconcileSafeDrafts(database, { apply: true, actorUserId, targetCatalogId: id });
+      const report = direct ? { scope: "DIRECT_IMPORT", applied: [], reason: "普通文件导入不强制项目换库" } : await reconcileSafeDrafts(database, { apply: true, actorUserId, targetCatalogId: id });
       await database.query(`INSERT INTO audit_events
         (id, action, actor_user_id, occurred_at, result, target_type, target_id, metadata)
         VALUES ($1, 'MAIN_MATERIAL_SAFE_UPDATE_ANALYZED', $2, current_timestamp,
           'SUCCESS', 'MAIN_MATERIAL_CATALOG', $3, $4)`, [randomUUID(), actorUserId, id, report]);
+      if (direct) await database.query(`INSERT INTO audit_events(id,action,actor_user_id,occurred_at,result,target_type,target_id,reason,metadata)
+        VALUES($1,'MAIN_MATERIAL_DIRECT_IMPORT_PUBLISHED',$2,current_timestamp,'SUCCESS','MAIN_MATERIAL_CATALOG',$3,$4,$5)`, [randomUUID(), actorUserId, id, direct.reason, { batchId, previewHash: direct.previewHash, changedIds: direct.changes.map(c => c.item.materialId) }]);
       return id;
     });
     const result = await this.database.query<CatalogRow>(

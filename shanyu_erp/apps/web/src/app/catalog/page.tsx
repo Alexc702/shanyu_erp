@@ -167,7 +167,7 @@ function MainMaterialCatalog({
   const inactiveCount = catalog?.items.filter((item) => item.status === "INACTIVE").length ?? 0;
   const missingImageCount = catalog?.items.filter((item) => item.assets.length === 0).length ?? 0;
   return <main className="page-content catalog-page max-w-[1600px]">
-    <section className="page-title-row"><div><p className="eyebrow">V2 · 主材 SKU</p><h1>主材库</h1><p>{catalog ? `当前版本 V${catalog.versionNumber} · 已发布 · 商品、价格、成本、图片与来源按版本追溯` : "集中维护主材型号、规格、颜色、价格与来源图片。"}</p></div>{canViewCost ? <Button asChild><Link href="/catalog/import?type=main"><FileUp />导入与发布</Link></Button> : null}</section>
+    <section className="page-title-row"><div><p className="eyebrow">V2 · 主材 SKU</p><h1>主材库</h1><p>{catalog ? `当前版本 V${catalog.versionNumber} · 已发布 · 商品、价格、成本、图片与来源按版本追溯` : "集中维护主材型号、规格、颜色、价格与来源图片。"}</p></div>{canViewCost ? <Button asChild><Link href="/catalog/import?type=main"><FileUp />导入主材</Link></Button> : null}</section>
     <nav className="catalog-tabs" aria-label="主材库类型"><Link className="catalog-tab" href="/catalog">半包工程项</Link><Link className="catalog-tab active" href="/catalog?type=main">主材 SKU</Link></nav>
     {!catalog ? <section className="panel empty-panel"><h2>尚无已发布主材版本</h2><p>主材库发布后可用于项目选型。</p></section> : <>
       <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
