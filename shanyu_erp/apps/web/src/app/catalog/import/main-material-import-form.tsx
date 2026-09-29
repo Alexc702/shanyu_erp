@@ -14,7 +14,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { createDirectUploadRequestId, DirectImportError, downloadDirectBlob, downloadDirectReference, previewDirectMaterials, publishDirectMaterials, uploadDirectMaterials } from "@/lib/main-material-direct-client";
 import { directChangeCounts, directUnitOptions, directUnitValue } from "@/lib/main-material-direct-result";
 
-const categories: [MainMaterialCategoryCode, string][] = [["TILE","瓷砖"],["SEAM","美缝"],["FLOOR","木地板"],["GLASS_DOOR","玻璃门"],["CEILING","集成吊顶"],["BATHROOM","卫浴"],["SHOWER","淋浴房"],["STONE","石材/岩板"],["SWITCH","开关面板"],["CUSTOM","定制类"]];
+const categories: [MainMaterialCategoryCode, string][] = [["TILE","瓷砖"],["SEAM","美缝"],["FLOOR","木地板"],["GLASS_DOOR","玻璃门"],["CEILING","集成吊顶"],["BATHROOM","卫浴"],["SHOWER","淋浴房"],["STONE","石材/岩板"],["SWITCH","开关面板"],["CUSTOM","定制类"],["ART_PAINT","艺术漆"]];
 const results = { NEW: "新增", UPDATE: "更新", SKIP: "跳过", EXCLUDE: "排除", UNRESOLVED: "待处理" };
 const fieldLabels:Record<string,string>={itemName:"品名",brand:"品牌",series:"系列",process:"工艺",model:"型号",spec:"规格",colors:"颜色",unit:"单位",costPrice:"成本",salePrice:"售价",remarks:"备注",status:"资料状态"};
 type RowInfo = NonNullable<DirectMaterialInformation["rows"]>[string];

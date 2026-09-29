@@ -195,6 +195,86 @@ describe("QuotationService", () => {
     expect(reopened.scopes.flatMap((scope) => scope.lines).find((row) => row.id === line.id)).toMatchObject({ quantity: null, selected: false, amount: null });
   });
 
+  it("allows all three paint quantities to be edited independently from their initial project area", async () => {
+    repository.template = { ...template, items: [...template.items,
+      item("paint-2", "PAINT", "PVC常规型阴阳角线", "M2", "8.0000"),
+      item("paint-3", "PAINT", "吊顶石膏板接缝、干壁钉防锈处理", "M2", "5.0000"),
+    ] };
+    let view = await service.getOrCreateDraft(lead, project.id);
+    const paint = view.scopes.find((scope) => scope.name === "十、油漆工程")!;
+    expect(paint.lines).toHaveLength(3);
+    expect(paint.lines.every((line) => line.quantitySource === "MANUAL" && line.quantity === "130.0000" && line.selected)).toBe(true);
+    for (const [index, line] of paint.lines.entries()) {
+      view = await service.updateLine(lead, project.id, line.id, {
+        expectedRevision: view.revision, quantity: String(10 + index), selected: true,
+      });
+      expect(view.scopes.flatMap((scope) => scope.lines).find((row) => row.id === line.id))
+        .toMatchObject({ quantity: `${10 + index}.0000`, saleUnitPrice: line.saleUnitPrice });
+    }
+    repository.draft = { ...repository.draft!, outerFrameArea: "200.0000" };
+    view = await service.getOrCreateDraft(lead, project.id);
+    expect(view.scopes.find((scope) => scope.id === paint.id)?.lines.map((line) => line.quantity))
+      .toEqual(["10.0000", "11.0000", "12.0000"]);
+    view = await service.updateLine(lead, project.id, paint.lines[0]!.id, {
+      expectedRevision: view.revision, quantity: null, selected: false,
+    });
+    const reopened = await service.getOrCreateDraft(lead, project.id);
+    expect(reopened.scopes.find((scope) => scope.id === paint.id)?.lines[0])
+      .toMatchObject({ quantity: null, selected: false, amount: null });
+  });
+
+  it.each([false, true])("makes existing paint defaults editable without changing current quantities or other lines (derived=%s)", async (derived) => {
+    service = new QuotationService(new AccessPolicy(), repository, { async append(record) { audits.push(record); } },
+      new HalfPackageCalculator(), undefined, {
+        async initializeAndSyncDraft() { throw new Error("Paint quantity editing must not synchronize main materials"); },
+      } as unknown as MainMaterialRepository);
+    repository.template = { ...template, items: [...template.items,
+      item("paint-2", "PAINT", "PVC常规型阴阳角线", "M2", "8.0000"),
+      item("paint-3", "PAINT", "吊顶石膏板接缝、干壁钉防锈处理", "M2", "5.0000"),
+    ] };
+    await service.getOrCreateDraft(lead, project.id);
+    repository.draft = { ...repository.draft!, parentVersionId: derived ? "historical-parent" : null,
+      scopes: repository.draft!.scopes.map((scope) => ({ ...scope, lines: scope.lines.map((line) =>
+        line.sectionCode === "PAINT" ? { ...line, quantityRule: { kind: "PROJECT_OUTER_FRAME_AREA" } as const,
+          manualQuantity: null } : line) })),
+    };
+    const before = structuredClone(repository.draft);
+    const view = await service.getOrCreateDraft(lead, project.id);
+    const changed = repository.draft!;
+    expect(changed.total).toBe(before.total);
+    expect(changed.adjustedTotal).toBe(before.adjustedTotal);
+    for (const scope of before.scopes) for (const line of scope.lines) {
+      const next = changed.scopes.flatMap((entry) => entry.lines).find((entry) => entry.id === line.id)!;
+      expect(next).toEqual(line.sectionCode === "PAINT"
+        ? { ...line, quantityRule: { kind: "MANUAL" }, manualQuantity: line.calculatedQuantity }
+        : line);
+    }
+    expect((await service.getOrCreateDraft(lead, project.id)).revision).toBe(view.revision);
+    const line = view.scopes.find((scope) => scope.name === "十、油漆工程")!.lines[0]!;
+    const saved = await service.updateLine(lead, project.id, line.id, {
+      expectedRevision: view.revision, selected: true, quantity: "25.5",
+    });
+    expect(saved.scopes.flatMap((scope) => scope.lines).find((entry) => entry.id === line.id)?.quantity).toBe("25.5000");
+    expect(before.scopes.flatMap((scope) => scope.lines).find((entry) => entry.id === line.id)?.quantityRule.kind)
+      .toBe("PROJECT_OUTER_FRAME_AREA");
+  });
+
+  it("does not repair or edit paint quantities in a quoted version", async () => {
+    await service.getOrCreateDraft(lead, project.id);
+    repository.draft = { ...repository.draft!, status: "QUOTED",
+      scopes: repository.draft!.scopes.map((scope) => ({ ...scope, lines: scope.lines.map((line) =>
+        line.sectionCode === "PAINT" ? { ...line, quantityRule: { kind: "PROJECT_OUTER_FRAME_AREA" } as const,
+          manualQuantity: null } : line) })),
+    };
+    const before = structuredClone(repository.draft);
+    const view = await service.getOrCreateDraft(lead, project.id);
+    expect(repository.draft).toEqual(before);
+    const line = view.scopes.find((scope) => scope.name === "十、油漆工程")!.lines[0]!;
+    await expect(service.updateLine(lead, project.id, line.id, {
+      expectedRevision: view.revision, selected: true, quantity: "25",
+    })).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it("repairs only electrical fields in inherited drafts without recalculating their snapshots", async () => {
     repository.template = { ...template, items: [...template.items,
       item("chint", "ELECTRICAL", "正泰空开更换", "M2", "8.0000", "5.0000", "正泰（含总开、空开，单个电箱配置）按外框面积计算"),

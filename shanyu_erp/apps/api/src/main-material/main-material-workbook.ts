@@ -14,6 +14,7 @@ import {
 } from "./main-material.repository";
 
 const categoryNames: Readonly<Record<MainMaterialCategoryCode, string>> = {
+  ART_PAINT: "艺术漆",
   BATHROOM: "卫浴",
   CEILING: "集成吊顶",
   CUSTOM: "定制类",

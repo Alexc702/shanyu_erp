@@ -150,7 +150,7 @@ export class QuotationService {
     }
     const existing = await this.quotationRepository.findDraft(projectId);
     if (existing) {
-      // Inherited drafts receive electrical corrections and unused duplicate-pipe cleanup only; never expand or reprice them.
+      // Inherited drafts receive targeted quantity corrections and unused duplicate-pipe cleanup only; never expand or reprice them.
       if (existing.parentVersionId) return toView(await this.repairAcceptanceDraft(actor, existing));
       const repaired = await this.repairAcceptanceDraft(actor, existing);
       return toView(
@@ -1037,10 +1037,13 @@ export class QuotationService {
     }
 
     const repairedScopeIds: string[] = [];
+    let syncMainMaterials = false;
     const scopes = draft.scopes.map((scope) => {
+      const editablePaint = repairPaintScope(scope, draft.outerFrameArea);
       const repaired = draft.parentVersionId
-        ? removeUnusedDuplicatePipes(repairElectricalScope(scope))
-        : repairAcceptanceScope(scope, template, draft.outerFrameArea);
+        ? removeUnusedDuplicatePipes(repairElectricalScope(editablePaint))
+        : repairAcceptanceScope(editablePaint, template, draft.outerFrameArea);
+      if (repaired !== editablePaint) syncMainMaterials = true;
       if (repaired !== scope) repairedScopeIds.push(scope.id);
       return repaired;
     });
@@ -1067,7 +1070,7 @@ export class QuotationService {
       }
       throw error;
     }
-    if (!draft.parentVersionId) await this.mainMaterialRepository.initializeAndSyncDraft(draft.projectId);
+    if (!draft.parentVersionId && syncMainMaterials) await this.mainMaterialRepository.initializeAndSyncDraft(draft.projectId);
     const synchronized =
       (await this.quotationRepository.findDraft(draft.projectId)) ?? saved;
     await this.auditRepository.append({
@@ -1292,7 +1295,8 @@ function buildScope(
     grossProfit: null,
     id: randomUUID(),
     itemName,
-    manualQuantity: item.sectionCode === "ELECTRICAL" && itemName === "正泰空开更换" ? initialManualArea : null,
+    manualQuantity: (item.sectionCode === "ELECTRICAL" && itemName === "正泰空开更换") ||
+      (item.sectionCode === "PAINT" && editablePaintItemNames.has(itemName)) ? initialManualArea : null,
     quantityRule: { kind: "MANUAL" } as QuantityRule,
     remarks: acceptanceRemarks(itemName, item.remarks),
     saleUnitPrice: item.saleUnitPrice,
@@ -1361,6 +1365,24 @@ function repairElectricalScope(scope: QuotationDraftScope): QuotationDraftScope 
     if (remarks === line.remarks) return line;
     changed = true;
     return { ...line, remarks };
+  });
+  return changed ? { ...scope, lines } : scope;
+}
+
+const editablePaintItemNames = new Set([
+  "3D放样",
+  "PVC常规型阴阳角线",
+  "吊顶石膏板接缝、干壁钉防锈处理",
+]);
+
+function repairPaintScope(scope: QuotationDraftScope, outerFrameArea: string): QuotationDraftScope {
+  let changed = false;
+  const lines = scope.lines.map((line) => {
+    if (line.sectionCode !== "PAINT" || !editablePaintItemNames.has(line.itemName) ||
+        line.quantityRule.kind !== "PROJECT_OUTER_FRAME_AREA") return line;
+    changed = true;
+    return { ...line, quantityRule: { kind: "MANUAL" } as const,
+      manualQuantity: line.selected ? line.calculatedQuantity ?? outerFrameArea : null };
   });
   return changed ? { ...scope, lines } : scope;
 }
@@ -1495,7 +1517,7 @@ function quantityRuleFor(
   >[],
 ): QuantityRule {
   if (line.sectionCode === "PAINT") {
-    return { kind: "PROJECT_OUTER_FRAME_AREA" };
+    return { kind: editablePaintItemNames.has(line.itemName) ? "MANUAL" : "PROJECT_OUTER_FRAME_AREA" };
   }
   if (
     line.sectionCode === "ELECTRICAL" &&

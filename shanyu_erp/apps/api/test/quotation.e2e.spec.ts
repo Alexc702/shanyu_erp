@@ -594,8 +594,35 @@ describe("half-package quotation PostgreSQL concurrency", () => {
           expect(quotation.scopes).toEqual(quotations[0]?.scopes);
         }
 
-        let initial = quotations[0];
-        if (!initial) throw new Error("并发请求未返回报价");
+        const firstQuotation = quotations[0];
+        if (!firstQuotation) throw new Error("并发请求未返回报价");
+        let initial: (typeof quotations)[number] = firstQuotation;
+        const paintLines = (initial.scopes as Array<{
+          name: string;
+          lines: Array<{ id: string; itemName: string; quantitySource: string; quantity: string }>;
+        }>).find((scope) => scope.name === "十、油漆工程")!.lines;
+        expect(paintLines.map((line) => line.itemName)).toEqual([
+          "3D放样", "PVC常规型阴阳角线", "吊顶石膏板接缝、干壁钉防锈处理",
+        ]);
+        for (const line of paintLines) {
+          expect(line).toMatchObject({ quantitySource: "MANUAL", quantity: "100.0000" });
+          const saved = await request(realApp.getHttpServer())
+            .patch(`/projects/${projectId}/half-package-quotation/lines/${line.id}`)
+            .set("Cookie", cookie)
+            .send({ expectedRevision: initial.revision, selected: true, quantity: "25.5" })
+            .expect(200);
+          const reopened = await request(realApp.getHttpServer())
+            .get(`/projects/${projectId}/half-package-quotation`)
+            .set("Cookie", cookie).expect(200);
+          expect(reopened.body.quotation.scopes.flatMap((scope: { lines: unknown[] }) => scope.lines))
+            .toContainEqual(expect.objectContaining({ id: line.id, quantity: "25.5000", quantitySource: "MANUAL" }));
+          const restored = await request(realApp.getHttpServer())
+            .patch(`/projects/${projectId}/half-package-quotation/lines/${line.id}`)
+            .set("Cookie", cookie)
+            .send({ expectedRevision: saved.body.quotation.revision, selected: true, quantity: "100" })
+            .expect(200);
+          initial = restored.body.quotation;
+        }
         const initialLines = (
           initial.scopes as Array<{ lines: Array<{ itemName: string; remarks: string }> }>
         ).flatMap((scope) => scope.lines);
@@ -816,9 +843,9 @@ describe("half-package quotation PostgreSQL concurrency", () => {
           .set("Cookie", cookie)
           .expect(200);
         expect(catalogResponse.body.catalog).toMatchObject({
-          name: "山屿 ERP 主材库 0919 总表统一版",
+          name: "山屿 ERP 主材库 0929 艺术漆与公牛售价更新",
         });
-        expect(catalogResponse.body.catalog.items).toHaveLength(601);
+        expect(catalogResponse.body.catalog.items).toHaveLength(609);
         let materialQuotation = materialResponse.body.quotation as {
           lines: Array<{
             baseQuantity: string | null;

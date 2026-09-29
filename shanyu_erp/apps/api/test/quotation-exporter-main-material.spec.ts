@@ -54,6 +54,22 @@ describe("QuotationExporter main material sheets", () => {
     expect(sheet?.getColumn(10).values).toContain(800);
     expect(exported.fileName).toContain("内部版");
   }, 20_000);
+
+  it("includes art paint only when selected and retains its quantity and prices", async () => {
+    const art: MainMaterialQuotation = { ...mainMaterial, lines: [{ ...mainMaterial.lines[0]!, categoryCode: "ART_PAINT", itemName: "北欧绮遇", model: "", brand: "佐敦纯色", quantity: "2.0000", saleUnitPrice: "88.00", saleAmount: "176.0000", costUnitPrice: "40.00", costAmount: "80.0000" }] };
+    const exported = await exporter.generate(quotation, "XLSX", "陆女士", art, "CLIENT");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(exported.payload as unknown as ExcelJS.Buffer);
+    const sheet = workbook.getWorksheet("主材报价单")!;
+    const detail = sheet.getColumn(3).values.findIndex(value => value === "北欧绮遇");
+    expect(detail).toBeGreaterThan(0);
+    expect(sheet.getRow(detail).getCell(6).value).toBe(2);
+    expect(sheet.getRow(detail).getCell(7).value).toBe(88);
+    expect(sheet.getRow(detail).getCell(8).value).toBe(176);
+    expect(sheet.getColumn(1).values).toContain("【十一、艺术漆】");
+    expect(sheet.getColumn(1).values).toContain("【十二、工 程 汇 总】");
+    expect(sheet.columnCount).toBe(9);
+  }, 20_000);
 });
 
 const quotation: QuotationDraft = {

@@ -16,6 +16,7 @@ const categories = [
   ["GLASS_DOOR", "房门 / 玻璃门"], ["CEILING", "集成吊顶"],
   ["BATHROOM", "卫浴"], ["SHOWER", "淋浴房"], ["STONE", "石材 / 岩板"],
   ["SWITCH", "开关面板"], ["CUSTOM", "定制类"],
+  ["ART_PAINT", "艺术漆"],
 ] as const;
 
 export default async function MainMaterialPreviewPage({ params }: { readonly params: Promise<{ projectId: string }> }) {

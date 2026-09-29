@@ -1,0 +1,236 @@
+{
+  "name": "山屿 ERP 主材库 0929 艺术漆与公牛售价更新",
+  "sourceHash": "f817aca9f8b5e46060f9607cab15b86b1616776c3786ede76e98b8e4560ab7cf",
+  "sourceFiles": {
+    "艺术漆主材库_v1.xlsx": "9305995f428750a652a1efe0ede751c610324e27d1b3cf1292b6d2cb4485227f",
+    "开关面板主材库_v1.xlsx": "568d83e504ef76ff6513d1a4c2f6273fdda48bf0e8ac790dac1f3136bb182b1e",
+    "山屿ERP主材库_v1.xlsx": "f817aca9f8b5e46060f9607cab15b86b1616776c3786ede76e98b8e4560ab7cf"
+  },
+  "items": [
+    {
+      "materialId": "MAT-ART_PAINT-A536D9BB21E0",
+      "categoryCode": "ART_PAINT",
+      "categoryName": "艺术漆",
+      "itemName": "北欧绮遇",
+      "brand": "佐敦纯色",
+      "series": "北欧绮遇",
+      "model": "",
+      "spec": "",
+      "colors": [],
+      "unit": "M²",
+      "salePrice": "88.00",
+      "costPrice": "40.00",
+      "attributes": {
+        "process": "艺术漆"
+      },
+      "status": "ACTIVE",
+      "recordVersion": 1,
+      "missingFields": "型号、规格、产品图",
+      "sourceFile": "主材库/艺术漆主材库_v1.xlsx",
+      "sourceSheet": "Sheet2",
+      "sourceRow": "2",
+      "priceDerivation": "源表成本/平方及售价按平方米原值录入；“规格”列的平方作为单位，不作价格换算。",
+      "remarks": "源表工艺：艺术漆；未提供型号，以系列作为选型项目名；规格及产品图留空。",
+      "assetIds": []
+    },
+    {
+      "materialId": "MAT-ART_PAINT-A3E8CECFFC11",
+      "categoryCode": "ART_PAINT",
+      "categoryName": "艺术漆",
+      "itemName": "北欧之家",
+      "brand": "佐敦纯色",
+      "series": "北欧之家",
+      "model": "",
+      "spec": "",
+      "colors": [],
+      "unit": "M²",
+      "salePrice": "110.00",
+      "costPrice": "50.00",
+      "attributes": {
+        "process": "艺术漆"
+      },
+      "status": "ACTIVE",
+      "recordVersion": 1,
+      "missingFields": "型号、规格、产品图",
+      "sourceFile": "主材库/艺术漆主材库_v1.xlsx",
+      "sourceSheet": "Sheet2",
+      "sourceRow": "3",
+      "priceDerivation": "源表成本/平方及售价按平方米原值录入；“规格”列的平方作为单位，不作价格换算。",
+      "remarks": "源表工艺：艺术漆；未提供型号，以系列作为选型项目名；规格及产品图留空。",
+      "assetIds": []
+    },
+    {
+      "materialId": "MAT-ART_PAINT-13E3E7E15341",
+      "categoryCode": "ART_PAINT",
+      "categoryName": "艺术漆",
+      "itemName": "秘境",
+      "brand": "佐敦纯色",
+      "series": "秘境",
+      "model": "",
+      "spec": "",
+      "colors": [],
+      "unit": "M²",
+      "salePrice": "130.00",
+      "costPrice": "60.00",
+      "attributes": {
+        "process": "艺术漆"
+      },
+      "status": "ACTIVE",
+      "recordVersion": 1,
+      "missingFields": "型号、规格、产品图",
+      "sourceFile": "主材库/艺术漆主材库_v1.xlsx",
+      "sourceSheet": "Sheet2",
+      "sourceRow": "4",
+      "priceDerivation": "源表成本/平方及售价按平方米原值录入；“规格”列的平方作为单位，不作价格换算。",
+      "remarks": "源表工艺：艺术漆；未提供型号，以系列作为选型项目名；规格及产品图留空。",
+      "assetIds": []
+    },
+    {
+      "materialId": "MAT-ART_PAINT-8D79FCD68DBD",
+      "categoryCode": "ART_PAINT",
+      "categoryName": "艺术漆",
+      "itemName": "之纯",
+      "brand": "佐敦纯色",
+      "series": "之纯",
+      "model": "",
+      "spec": "",
+      "colors": [],
+      "unit": "M²",
+      "salePrice": "150.00",
+      "costPrice": "70.00",
+      "attributes": {
+        "process": "艺术漆"
+      },
+      "status": "ACTIVE",
+      "recordVersion": 1,
+      "missingFields": "型号、规格、产品图",
+      "sourceFile": "主材库/艺术漆主材库_v1.xlsx",
+      "sourceSheet": "Sheet2",
+      "sourceRow": "5",
+      "priceDerivation": "源表成本/平方及售价按平方米原值录入；“规格”列的平方作为单位，不作价格换算。",
+      "remarks": "源表工艺：艺术漆；未提供型号，以系列作为选型项目名；规格及产品图留空。",
+      "assetIds": []
+    },
+    {
+      "materialId": "MAT-ART_PAINT-73FB86DBABF1",
+      "categoryCode": "ART_PAINT",
+      "categoryName": "艺术漆",
+      "itemName": "岩彩",
+      "brand": "佐敦微水泥",
+      "series": "岩彩",
+      "model": "",
+      "spec": "",
+      "colors": [],
+      "unit": "M²",
+      "salePrice": "188.00",
+      "costPrice": "80.00",
+      "attributes": {
+        "process": "艺术漆"
+      },
+      "status": "ACTIVE",
+      "recordVersion": 1,
+      "missingFields": "型号、规格、产品图",
+      "sourceFile": "主材库/艺术漆主材库_v1.xlsx",
+      "sourceSheet": "Sheet2",
+      "sourceRow": "6",
+      "priceDerivation": "源表成本/平方及售价按平方米原值录入；“规格”列的平方作为单位，不作价格换算。",
+      "remarks": "源表工艺：艺术漆；未提供型号，以系列作为选型项目名；规格及产品图留空。",
+      "assetIds": []
+    },
+    {
+      "materialId": "MAT-ART_PAINT-4619B4DFF666",
+      "categoryCode": "ART_PAINT",
+      "categoryName": "艺术漆",
+      "itemName": "雅晶石",
+      "brand": "嘉宝莉",
+      "series": "雅晶石",
+      "model": "",
+      "spec": "",
+      "colors": [],
+      "unit": "M²",
+      "salePrice": "110.00",
+      "costPrice": "55.00",
+      "attributes": {
+        "process": "艺术漆"
+      },
+      "status": "ACTIVE",
+      "recordVersion": 1,
+      "missingFields": "型号、规格、产品图",
+      "sourceFile": "主材库/艺术漆主材库_v1.xlsx",
+      "sourceSheet": "Sheet2",
+      "sourceRow": "7",
+      "priceDerivation": "源表成本/平方及售价按平方米原值录入；“规格”列的平方作为单位，不作价格换算。",
+      "remarks": "源表工艺：艺术漆；未提供型号，以系列作为选型项目名；规格及产品图留空。",
+      "assetIds": []
+    },
+    {
+      "materialId": "MAT-ART_PAINT-AB53A6D75345",
+      "categoryCode": "ART_PAINT",
+      "categoryName": "艺术漆",
+      "itemName": "天鹅绒",
+      "brand": "嘉宝莉",
+      "series": "天鹅绒",
+      "model": "",
+      "spec": "",
+      "colors": [],
+      "unit": "M²",
+      "salePrice": "120.00",
+      "costPrice": "65.00",
+      "attributes": {
+        "process": "艺术漆"
+      },
+      "status": "ACTIVE",
+      "recordVersion": 1,
+      "missingFields": "型号、规格、产品图",
+      "sourceFile": "主材库/艺术漆主材库_v1.xlsx",
+      "sourceSheet": "Sheet2",
+      "sourceRow": "8",
+      "priceDerivation": "源表成本/平方及售价按平方米原值录入；“规格”列的平方作为单位，不作价格换算。",
+      "remarks": "源表工艺：艺术漆；未提供型号，以系列作为选型项目名；规格及产品图留空。",
+      "assetIds": []
+    },
+    {
+      "materialId": "MAT-ART_PAINT-85B59B587A81",
+      "categoryCode": "ART_PAINT",
+      "categoryName": "艺术漆",
+      "itemName": "石灰岩",
+      "brand": "嘉宝莉",
+      "series": "石灰岩",
+      "model": "",
+      "spec": "",
+      "colors": [],
+      "unit": "M²",
+      "salePrice": "150.00",
+      "costPrice": "70.00",
+      "attributes": {
+        "process": "艺术漆"
+      },
+      "status": "ACTIVE",
+      "recordVersion": 1,
+      "missingFields": "型号、规格、产品图",
+      "sourceFile": "主材库/艺术漆主材库_v1.xlsx",
+      "sourceSheet": "Sheet2",
+      "sourceRow": "9",
+      "priceDerivation": "源表成本/平方及售价按平方米原值录入；“规格”列的平方作为单位，不作价格换算。",
+      "remarks": "源表工艺：艺术漆；未提供型号，以系列作为选型项目名；规格及产品图留空。",
+      "assetIds": []
+    }
+  ],
+  "switchPrices": [
+    {
+      "materialId": "MAT-SWITCH-3A72FA395FA7",
+      "model": "公牛雪芽白",
+      "salePrice": "20.00"
+    },
+    {
+      "materialId": "MAT-SWITCH-CC41CA91B647",
+      "model": "公牛月雾灰",
+      "salePrice": "20.00"
+    },
+    {
+      "materialId": "MAT-SWITCH-A39E84C35453",
+      "model": "公牛奶油咖",
+      "salePrice": "20.00"
+    }
+  ]
+}

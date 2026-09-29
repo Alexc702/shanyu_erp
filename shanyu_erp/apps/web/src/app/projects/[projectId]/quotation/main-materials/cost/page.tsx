@@ -177,5 +177,6 @@ function categoryName(code: string) {
     STONE: "石材 / 岩板",
     SWITCH: "开关面板",
     CUSTOM: "定制类",
+    ART_PAINT: "艺术漆",
   } as Record<string, string>)[code] ?? code;
 }

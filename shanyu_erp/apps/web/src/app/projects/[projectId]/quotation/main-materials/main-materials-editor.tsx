@@ -65,6 +65,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const categoryNames: Readonly<Record<MainMaterialCategoryCode, string>> = {
+  ART_PAINT: "艺术漆",
   BATHROOM: "卫浴", CEILING: "集成吊顶", CUSTOM: "定制类", FLOOR: "木地板",
   GLASS_DOOR: "房门 / 玻璃门", SEAM: "美缝", SHOWER: "淋浴房",
   STONE: "石材 / 岩板", SWITCH: "开关面板", TILE: "瓷砖",
@@ -72,7 +73,7 @@ const categoryNames: Readonly<Record<MainMaterialCategoryCode, string>> = {
 
 const categoryOrder: readonly MainMaterialCategoryCode[] = [
   "TILE", "SEAM", "FLOOR", "GLASS_DOOR", "CEILING",
-  "BATHROOM", "SHOWER", "STONE", "SWITCH", "CUSTOM",
+  "BATHROOM", "SHOWER", "STONE", "SWITCH", "CUSTOM", "ART_PAINT",
 ];
 
 const candidatePageSize = 12;

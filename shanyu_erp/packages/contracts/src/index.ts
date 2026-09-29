@@ -284,7 +284,8 @@ export type MainMaterialCategoryCode =
   | "SHOWER"
   | "STONE"
   | "SWITCH"
-  | "CUSTOM";
+  | "CUSTOM"
+  | "ART_PAINT";
 
 export type MainMaterialDataStatus = "ACTIVE" | "PENDING_DATA" | "INACTIVE";
 export type MainMaterialImportMode = "FULL" | "DELTA";

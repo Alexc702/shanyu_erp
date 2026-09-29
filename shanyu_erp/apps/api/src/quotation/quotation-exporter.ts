@@ -653,6 +653,7 @@ const materialTemplateSections = [
   { code: "STONE", detail: 112, heading: 111, subtotal: 117 },
   { code: "SWITCH", detail: 119, heading: 118, subtotal: 120 },
   { code: "CUSTOM", detail: 122, heading: 121, subtotal: 128 },
+  { code: "ART_PAINT", detail: 122, heading: 121, subtotal: 128 },
 ] as const;
 
 async function addMainMaterialSheet(
@@ -705,6 +706,7 @@ async function addMainMaterialSheet(
   sheet.getCell("I2").value = context.quotation.projectAddress;
   let outputRow = 5;
   for (const section of materialTemplateSections) {
+    if (section.code === "ART_PAINT" && !context.mainMaterial?.lines.some(line => line.categoryCode === "ART_PAINT" && line.itemVersionId && Number(line.quantity) > 0)) continue;
     const lines = (context.mainMaterial?.lines ?? []).filter(
       (line) =>
         line.categoryCode === section.code &&
@@ -714,7 +716,7 @@ async function addMainMaterialSheet(
     );
     copyStyledRow(source.getRow(section.heading), sheet.getRow(outputRow), lastColumn);
     sheet.mergeCells(outputRow, 1, outputRow, lastColumn);
-    sheet.getCell(outputRow, 1).value = source.getRow(section.heading).getCell(1).text;
+    sheet.getCell(outputRow, 1).value = section.code === "ART_PAINT" ? "【十一、艺术漆】" : source.getRow(section.heading).getCell(1).text;
     outputRow += 1;
     let subtotal = "0.0000";
     let costSubtotal = "0.0000";
@@ -759,7 +761,7 @@ async function addMainMaterialSheet(
   const main = context.mainMaterial;
   copyStyledRow(source.getRow(129), sheet.getRow(outputRow), lastColumn);
   sheet.mergeCells(outputRow, 1, outputRow, lastColumn);
-  sheet.getCell(outputRow, 1).value = "【十一、工 程 汇 总】";
+  sheet.getCell(outputRow, 1).value = context.mainMaterial?.lines.some(line => line.categoryCode === "ART_PAINT" && line.itemVersionId && Number(line.quantity) > 0) ? "【十二、工 程 汇 总】" : "【十一、工 程 汇 总】";
   outputRow += 1;
   const summary = [
     ["直接费", main?.directCost ?? "0.0000", ""],
@@ -1105,6 +1107,7 @@ function pdfRows(context: ExportContext): PdfRow[] {
   rows.push({ background: "blue", bold: true, cells: [`客户名称：${context.customerName}    工程地址：${context.quotation.projectAddress}`], height: 28, kind: "full", size: 11 });
   rows.push({ background: "blue", bold: true, cells: ["编号", "主材/型号", "单位", "数量", "单价", "金额", "品牌/颜色/规格"], height: 30, kind: "table", size: 11 });
   materialTemplateSections.forEach((section) => {
+    if (section.code === "ART_PAINT" && !context.mainMaterial?.lines.some(line => line.categoryCode === "ART_PAINT" && line.itemVersionId && Number(line.quantity) > 0)) return;
     const lines = (context.mainMaterial?.lines ?? []).filter(
       (line) => line.categoryCode === section.code && line.itemVersionId && Number(line.quantity) > 0,
     );
@@ -1226,6 +1229,7 @@ function drawPdfRow(
 
 function mainMaterialCategoryName(code: string): string {
   return ({
+    ART_PAINT: "艺术漆",
     BATHROOM: "卫浴",
     CEILING: "集成吊顶",
     CUSTOM: "定制类",

@@ -464,7 +464,7 @@ function basisLabel(analysis: ProjectCostAnalysis): string {
 }
 
 function categoryName(code: string): string {
-  return ({ BATHROOM: "卫浴", CEILING: "集成吊顶", CUSTOM: "定制类", FLOOR: "木地板", GLASS_DOOR: "房门／玻璃门", SEAM: "美缝", SERVICE_FEE: "服务费（10%）", SHOWER: "淋浴房", STONE: "石材／岩板", SWITCH: "开关面板", TILE: "瓷砖" } as Record<string, string>)[code] ?? code;
+  return ({ ART_PAINT: "艺术漆", BATHROOM: "卫浴", CEILING: "集成吊顶", CUSTOM: "定制类", FLOOR: "木地板", GLASS_DOOR: "房门／玻璃门", SEAM: "美缝", SERVICE_FEE: "服务费（10%）", SHOWER: "淋浴房", STONE: "石材／岩板", SWITCH: "开关面板", TILE: "瓷砖" } as Record<string, string>)[code] ?? code;
 }
 
 function money(value: string | null): string {

@@ -14,7 +14,7 @@ describe.skipIf(process.env.SHANYU_SAFE_UPDATE_DB_TEST!=="1")("direct-import mig
     const options={databaseUrl:{...connection,database:name},dir:resolve(process.cwd(),"../../migrations"),direction:"up" as const,migrationsTable:"schema_migrations",log:()=>{}};
     async function fingerprint(){const values=[];for(const table of ["main_material_catalog_versions","main_material_item_versions","main_material_assets","projects","half_package_quotations","main_material_quote_lines"]){values.push((await db.query(`SELECT jsonb_agg(to_jsonb(t) ORDER BY id) AS rows FROM ${table} t`)).rows);}return createHash("sha256").update(JSON.stringify(values)).digest("hex");}
     try{
-      if(upgrade){await runner({...options,count:37});const before=await fingerprint();await runner(options);expect(await fingerprint()).toBe(before);}else await runner(options);
+      if(upgrade){await runner({...options,count:37});const before=await fingerprint();await runner({...options,count:1});expect(await fingerprint()).toBe(before);}else await runner({...options,count:38});
       expect((await db.query("SELECT count(*)::int AS count FROM schema_migrations")).rows[0].count).toBe(38);
       expect((await db.query("SELECT count(*)::int AS count FROM direct_material_import_blobs")).rows[0].count).toBe(0);
       expect((await db.query("SELECT count(*)::int AS count FROM direct_material_imports")).rows[0].count).toBe(0);

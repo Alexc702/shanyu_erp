@@ -44,6 +44,7 @@ const categories: readonly { readonly code: MainMaterialCategoryCode; readonly n
   { code: "STONE", name: "石材｜岩板" },
   { code: "SWITCH", name: "开关面板" },
   { code: "CUSTOM", name: "定制类" },
+  { code: "ART_PAINT", name: "艺术漆" },
 ];
 
 type Operation = "UPSERT" | "DEACTIVATE" | "REACTIVATE";

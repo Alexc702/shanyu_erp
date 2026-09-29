@@ -10,7 +10,8 @@ let source: DirectSource, catalog: MainMaterialCatalog;
 beforeAll(async () => {
   source = await readDirectMaterialFile(await readFile(resolve(process.cwd(), "assets/main-materials/import-reference.xlsx")));
   const baseline = JSON.parse(await readFile(resolve(process.cwd(), "assets/main-materials/v1/catalog-0919.json"),"utf8"));
-  catalog = { id: "baseline", versionNumber: 7, name: "基线", publishedAt: new Date(0), items: baseline.items.map((item: MainMaterialItem) => ({ ...item, id: item.materialId, catalogVersionId: "baseline" })) };
+  const artPaint = JSON.parse(await readFile(resolve(process.cwd(), "assets/main-materials/v1/catalog-0929-art-paint.json"),"utf8"));
+  catalog = { id: "baseline", versionNumber: 7, name: "基线", publishedAt: new Date(0), items: [...baseline.items, ...artPaint.items].map((item: MainMaterialItem) => ({ ...item, id: item.materialId, catalogVersionId: "baseline" })) };
 });
 function confirmed(): DirectMaterialInformation { return { categoryCode: "TILE", unit: "M²", ambiguousPriceMeaning: "costPrice", rows: Object.fromEntries(source.sheets[0]!.rows.map(row => [row.row,{ itemName: "瓷砖" }])) }; }
 function clone() { return structuredClone(source); }

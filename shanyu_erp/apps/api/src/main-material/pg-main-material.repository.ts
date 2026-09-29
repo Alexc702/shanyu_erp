@@ -1080,7 +1080,7 @@ function normalizeSelectableState(
 }
 
 function isMainMaterialCategory(value: string): value is MainMaterialCategoryCode {
-  return ["TILE", "SEAM", "FLOOR", "GLASS_DOOR", "CEILING", "BATHROOM", "SHOWER", "STONE", "SWITCH", "CUSTOM"].includes(value);
+  return ["TILE", "SEAM", "FLOOR", "GLASS_DOOR", "CEILING", "BATHROOM", "SHOWER", "STONE", "SWITCH", "CUSTOM", "ART_PAINT"].includes(value);
 }
 
 function isMainMaterialStatus(value: string): value is MainMaterialDataStatus {

@@ -3,6 +3,7 @@ import { hash, type DirectSource, type DirectSourceRow } from "./main-material-d
 import type { MainMaterialCatalog, MainMaterialItem, NormalizedMainMaterialItem } from "./main-material.repository";
 
 export const directCategories: Record<MainMaterialCategoryCode, string> = {
+  ART_PAINT: "艺术漆",
   TILE: "瓷砖", SEAM: "美缝", FLOOR: "木地板", GLASS_DOOR: "房门 / 玻璃门", CEILING: "集成吊顶", BATHROOM: "卫浴", SHOWER: "淋浴房", STONE: "石材 / 岩板", SWITCH: "开关面板", CUSTOM: "定制类",
 };
 export interface DirectChange { item: NormalizedMainMaterialItem; expectedRecordVersion: number; assetIds: string[] }
