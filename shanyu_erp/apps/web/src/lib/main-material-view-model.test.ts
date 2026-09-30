@@ -29,6 +29,15 @@ import {
 } from "./main-material-view-model";
 
 describe("main material view model", () => {
+  it("shows 50×200 and 60×200 choices only under their corrected small-tile demands", () => {
+    for (const [name, current, former] of [
+      ["50*200mm小砖（胶泥粘帖）", "50*200", "70*200"],
+      ["60*200mm小砖（胶泥粘帖）", "60*200", "70*300"],
+    ]) {
+      expect(mainMaterialTileSpecCompatible(name!, current!, { itemName: "瓷砖", spec: current! })).toBe(true);
+      expect(mainMaterialTileSpecCompatible(name!, current!, { itemName: "瓷砖", spec: former! })).toBe(false);
+    }
+  });
   it.each(["移门 21AT", "开门 36A"])("shows %s with its catalog shower type and saved colour without changing data", (model) => {
     const shower: MainMaterialItemView = { ...item("shower", "枪灰拉丝", ""), categoryCode: "SHOWER", brand: "朗格", model,
       spec: "T型淋浴房\n内外开系列\n全套悬挂转轴淋浴房", attributes: {} };

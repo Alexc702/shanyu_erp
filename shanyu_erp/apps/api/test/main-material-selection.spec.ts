@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 import { isMainMaterialColorSelectionValid, isMainMaterialTileSpecCompatible } from "../src/main-material/main-material-selection";
 
 describe("castle tile demand compatibility", () => {
+  it("accepts the corrected small-tile size and rejects the former size", () => {
+    for (const [name, current, former] of [
+      ["50*200mm小砖（胶泥粘帖）", "50*200", "70*200"],
+      ["60*200mm小砖（胶泥粘帖）", "60*200", "70*300"],
+    ]) {
+      expect(isMainMaterialTileSpecCompatible(name!, current!, { itemName: "瓷砖", spec: current! })).toBe(true);
+      expect(isMainMaterialTileSpecCompatible(name!, current!, { itemName: "瓷砖", spec: former! })).toBe(false);
+    }
+  });
   it("matches castle products and the legacy generic-name combined size without accepting other tiles", () => {
     const demand = "多规格古堡砖（水泥砂浆粘贴）";
     const spec = "200*200/200*400/400*400/400*600";

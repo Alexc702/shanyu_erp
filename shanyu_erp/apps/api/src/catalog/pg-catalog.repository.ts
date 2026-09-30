@@ -493,7 +493,7 @@ function stableItemBaseKey(item: ImportItemRow): string {
   return `${item.section_code}:${createHash("sha256").update(identity).digest("hex")}`;
 }
 
-function mainMaterialDemandTag(itemName: string): MainMaterialDemandTag | null {
+export function mainMaterialDemandTag(itemName: string): MainMaterialDemandTag | null {
   const normalized = itemName.normalize("NFKC").trim();
   if (
     !/(地砖|墙砖|小砖|木纹砖|古堡砖)/.test(normalized) ||
@@ -502,11 +502,13 @@ function mainMaterialDemandTag(itemName: string): MainMaterialDemandTag | null {
     return null;
   }
   const size = normalized.match(/([0-9]+)\s*[*×xX]\s*([0-9]+)/);
+  const correctedSpec = normalized === "70*200mm小砖(胶泥粘帖)" ? "50*200"
+    : normalized === "70*300mm小砖(胶泥粘帖)" ? "60*200" : null;
   const targetSpec = normalized.includes("多规格")
     ? "多规格"
-    : size?.[1] && size[2]
+    : correctedSpec ?? (size?.[1] && size[2]
       ? `${size[1]}*${size[2]}`
-      : null;
+      : null);
   if (!targetSpec) {
     return null;
   }
