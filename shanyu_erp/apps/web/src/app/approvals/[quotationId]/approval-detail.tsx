@@ -5,6 +5,7 @@ import type {
   HalfPackageCostMargin,
   HalfPackageQuotation,
   MainMaterialQuotationView,
+  ProjectCostAnalysis,
   ProjectDetail,
 } from "@shanyu/contracts";
 import { ArrowLeft, ChartNoAxesCombined, Check, RotateCcw, X } from "lucide-react";
@@ -47,11 +48,13 @@ interface ModuleRow {
 }
 
 export function ApprovalDetail({
+  analysis,
   costMargin,
   initialQuotation,
   mainMaterial,
   project,
 }: {
+  readonly analysis: ProjectCostAnalysis;
   readonly costMargin: HalfPackageCostMargin;
   readonly initialQuotation: HalfPackageQuotation;
   readonly mainMaterial: MainMaterialQuotationView;
@@ -67,13 +70,11 @@ export function ApprovalDetail({
     quotation.status === "QUOTED" &&
     quotation.adjustmentStatus === "PENDING_APPROVAL";
   const canReturn = pending || quotation.status === "APPROVED";
-  const projectSales = quotation.adjustedTotal;
-  const projectCost = addDecimal4(
-    costMargin.expectedCost,
-    mainMaterial.summary.expectedCost ?? "0.0000",
-  );
-  const projectProfit = subtractDecimal4(projectSales, projectCost);
-  const projectMarginRate = decimalRate(projectProfit, projectSales);
+  const scenario = analysis.pending ?? analysis.current;
+  const projectSales = scenario.marginBasisIncome;
+  const projectCost = scenario.expectedCost;
+  const projectProfit = scenario.grossProfit;
+  const projectMarginRate = scenario.grossMarginRate;
   const modules: readonly ModuleRow[] = [
     {
       cost: costMargin.expectedCost,
@@ -102,7 +103,16 @@ export function ApprovalDetail({
       note: "报价 / 成本 / 返点独立展示",
       thirdParty: true,
     },
-    disabledModule("设计费"),
+    {
+      cost: scenario.designFeeExpectedCost,
+      detailsHref: null,
+      marginRate: scenario.designFeeGrossMarginRate,
+      name: "设计费",
+      note: "固定30%毛利 · 不代表已收款",
+      profitOrRebate: scenario.designFeeGrossProfit,
+      sales: scenario.designFeeAmount ?? null,
+      status: scenario.designFeeAmount == null ? "NOT_ENABLED" : "COMPLETED",
+    },
   ];
 
   async function decide(
@@ -223,25 +233,25 @@ export function ApprovalDetail({
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <BusinessMetric
-            label="项目报价 / 对客收入"
-            note="不含第三方代购"
+            label="毛利口径收入"
+            note="含设计费，第三方代购除外"
             value={`¥${displayMoney(projectSales)}`}
           />
           <BusinessMetric
             label="预计成本"
-            note={`当前${statusLabel(quotation.status)}版本`}
+            note="含设计费反算成本"
             value={`¥${displayMoney(projectCost)}`}
           />
           <BusinessMetric
             emphasis={moneyTone(projectProfit)}
             label="预计毛利"
-            note="项目报价 − 预计成本"
+            note="毛利口径收入 − 预计成本"
             value={`¥${displayMoney(projectProfit)}`}
           />
           <BusinessMetric
             emphasis={moneyTone(projectProfit)}
             label="综合毛利率"
-            note="预计毛利 ÷ 项目报价"
+            note="预计毛利 ÷ 毛利口径收入"
             value={formatMarginRate(projectMarginRate)}
           />
         </div>
@@ -314,7 +324,9 @@ export function ApprovalDetail({
                     {module.status === "COMPLETED" ? "已完成" : "未启用"}
                   </Badge>
                 </TableCell>
-                <ModuleValue value={module.sales} />
+                {module.name === "设计费" && module.sales === null
+                  ? <TableCell>未设置／—</TableCell>
+                  : <ModuleValue value={module.sales} />}
                 <ModuleValue value={module.cost} />
                 <ModuleValue
                   emphasis={
@@ -329,7 +341,7 @@ export function ApprovalDetail({
                   {module.thirdParty
                     ? "不计入"
                     : module.marginRate === null
-                      ? "未启用"
+                      ? module.name === "设计费" ? "—" : "未启用"
                       : formatMarginRate(module.marginRate)}
                 </TableCell>
                 <TableCell>
@@ -494,41 +506,6 @@ function formatArea(value: string): string {
 
 function moneyTone(value: string): string {
   return value.startsWith("-") ? "text-destructive" : "text-success";
-}
-
-function addDecimal4(left: string, right: string): string {
-  return fixed4(decimal4Units(left) + decimal4Units(right));
-}
-
-function subtractDecimal4(left: string, right: string): string {
-  return fixed4(decimal4Units(left) - decimal4Units(right));
-}
-
-function decimalRate(numerator: string, denominator: string): string | null {
-  const denominatorUnits = decimal4Units(denominator);
-  if (denominatorUnits === BigInt(0)) return null;
-  return fixed4(divideRounded(decimal4Units(numerator) * BigInt(10_000), denominatorUnits));
-}
-
-function decimal4Units(value: string): bigint {
-  const match = /^(-?)(\d+)(?:\.(\d{1,4}))?$/.exec(value.trim());
-  if (!match) throw new Error("金额格式不正确");
-  const units = BigInt(match[2] ?? "0") * BigInt(10_000) + BigInt((match[3] ?? "").padEnd(4, "0"));
-  return match[1] === "-" ? -units : units;
-}
-
-function divideRounded(numerator: bigint, denominator: bigint): bigint {
-  const negative = (numerator < BigInt(0)) !== (denominator < BigInt(0));
-  const left = numerator < BigInt(0) ? -numerator : numerator;
-  const right = denominator < BigInt(0) ? -denominator : denominator;
-  const quotient = (left + right / BigInt(2)) / right;
-  return negative ? -quotient : quotient;
-}
-
-function fixed4(units: bigint): string {
-  const sign = units < BigInt(0) ? "-" : "";
-  const absolute = units < BigInt(0) ? -units : units;
-  return `${sign}${absolute / BigInt(10_000)}.${String(absolute % BigInt(10_000)).padStart(4, "0")}`;
 }
 
 function statusLabel(status: HalfPackageQuotation["status"]): string {

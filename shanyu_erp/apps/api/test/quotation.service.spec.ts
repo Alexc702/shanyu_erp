@@ -825,16 +825,54 @@ describe("QuotationService", () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it.each([null, "0", "50"])("excludes design fee %s from cost metrics without changing customer payable", async (unitPrice) => {
+  it.each([null, "0", "50"])("includes design fee %s at a fixed 30% margin without double counting customer payable", async (unitPrice) => {
     const draft = await service.getOrCreateDraft(lead, project.id);
     const before = await service.getProjectCostAnalysis(owner, project.id);
     if (unitPrice !== null) await service.updateDesignFee(lead, project.id, unitPrice, draft.revision);
     const analysis = await service.getProjectCostAnalysis(owner, project.id);
     expect(analysis.current.designFeeAmount).toBe(unitPrice === null ? null : unitPrice === "0" ? "0.0000" : "6500.0000");
     expect(analysis.current.customerPayableTotal).toBe(unitPrice === "50" ? "18140.4200" : "11640.4200");
-    for (const key of ["marginBasisIncome", "expectedCost", "grossProfit", "grossMarginRate", "modules"] as const) {
-      expect(analysis.current[key]).toEqual(before.current[key]);
+    expect(analysis.current).toMatchObject(unitPrice === "50" ? {
+      marginBasisIncome: "18140.4200",
+      expectedCost: "15132.2000",
+      grossProfit: "3008.2200",
+      designFeeExpectedCost: "4550.0000",
+      designFeeGrossProfit: "1950.0000",
+      designFeeGrossMarginRate: "0.3000",
+    } : {
+      marginBasisIncome: before.current.marginBasisIncome,
+      expectedCost: before.current.expectedCost,
+      grossProfit: before.current.grossProfit,
+      designFeeExpectedCost: unitPrice === null ? null : "0.0000",
+      designFeeGrossProfit: unitPrice === null ? null : "0.0000",
+      designFeeGrossMarginRate: unitPrice === null ? null : "0.3000",
+    });
+    expect(analysis.current.modules).toEqual(before.current.modules);
+  });
+
+  it("rounds a 10000 design fee to 3000 profit and 7000 cost in both approval scenarios", async () => {
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const confirmed = await service.updateDesignFee(lead, project.id, "76.9231", draft.revision);
+    const quoted = await service.submit(lead, project.id, confirmed.revision);
+    await service.updateAdjustment(lead, quoted.id, {
+      action: "SUBMIT_FOR_APPROVAL",
+      discountRate: "0.9500",
+      expectedRevision: quoted.revision,
+      reason: "客户确认优惠",
+      writeOff: "100.0000",
+    });
+
+    const analysis = await service.getProjectCostAnalysis(owner, project.id);
+    for (const scenario of [analysis.current, analysis.pending]) {
+      expect(scenario).toMatchObject({
+        designFeeAmount: "10000.0000",
+        designFeeExpectedCost: "7000.0000",
+        designFeeGrossProfit: "3000.0000",
+        designFeeGrossMarginRate: "0.3000",
+      });
     }
+    expect(analysis.current.marginBasisIncome).toBe(analysis.current.customerPayableTotal);
+    expect(analysis.pending?.marginBasisIncome).toBe(analysis.pending?.customerPayableTotal);
   });
 
   it("keeps the current basis and pending adjustment as separate cost scenarios", async () => {

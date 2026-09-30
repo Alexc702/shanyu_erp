@@ -2162,7 +2162,12 @@ function projectCostScenario(
   customerPayableTotal: string,
 ): ProjectCostAnalysisScenario {
   const designFeeAmount = calculateProjectPricing(quotation).designFeeAmount;
-  const marginBasisIncome = subtractDecimal4(customerPayableTotal, designFeeAmount ?? "0.0000");
+  const designFeeGrossProfit = designFeeAmount === null ? null : fixed4(
+    divideRounded(decimal4Units(designFeeAmount) * 30n, 10_000n) * 100n,
+  );
+  const designFeeExpectedCost = designFeeAmount === null || designFeeGrossProfit === null
+    ? null : subtractDecimal4(designFeeAmount, designFeeGrossProfit);
+  const marginBasisIncome = customerPayableTotal;
   const [halfPackageIncome, mainMaterialIncome] = allocatedModuleIncome(
     quotation,
     mainMaterial,
@@ -2173,7 +2178,10 @@ function projectCostScenario(
     mainMaterial?.expectedCost ??
     quotation.mainMaterialExpectedCost ??
     "0.0000";
-  const expectedCost = addDecimal4(halfPackageCost, mainMaterialCost);
+  const expectedCost = addDecimal4(
+    addDecimal4(halfPackageCost, mainMaterialCost),
+    designFeeExpectedCost ?? "0.0000",
+  );
   const grossProfit = subtractDecimal4(marginBasisIncome, expectedCost);
   const halfPackageProfit = subtractDecimal4(
     halfPackageIncome,
@@ -2188,6 +2196,9 @@ function projectCostScenario(
   return {
     customerPayableTotal,
     designFeeAmount,
+    designFeeExpectedCost,
+    designFeeGrossProfit,
+    designFeeGrossMarginRate: designFeeAmount === null ? null : "0.3000",
     expectedCost,
     grossMarginRate: decimalRate(grossProfit, marginBasisIncome),
     grossProfit,

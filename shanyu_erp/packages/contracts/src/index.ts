@@ -700,6 +700,9 @@ export interface ProjectCostAnalysisModule {
 export interface ProjectCostAnalysisScenario {
   readonly customerPayableTotal: string;
   readonly designFeeAmount?: string | null;
+  readonly designFeeExpectedCost: string | null;
+  readonly designFeeGrossProfit: string | null;
+  readonly designFeeGrossMarginRate: string | null;
   readonly expectedCost: string;
   readonly grossMarginRate: string | null;
   readonly grossProfit: string;
