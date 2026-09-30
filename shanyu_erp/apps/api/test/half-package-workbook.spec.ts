@@ -6,6 +6,28 @@ import { describe, expect, it } from "vitest";
 import { validateHalfPackageWorkbook } from "../src/catalog/half-package-workbook";
 
 describe("validateHalfPackageWorkbook", () => {
+  it("accepts V6 with only the blank-quantity electrical point fee added", async () => {
+    const workbook = await readFile(resolve(process.cwd(), "../../../半包报价单_v6.xlsx"));
+    const result = await validateHalfPackageWorkbook(workbook);
+
+    expect(result.blockers).toEqual([]);
+    expect(result.report).toMatchObject({ itemCount: 179, salePriceCount: 179, costPriceCount: 179, formulaCount: 39 });
+    expect(result.sections.find((section) => section.code === "ELECTRICAL")?.itemCount).toBe(18);
+    expect(result.items.filter((item) => item.itemName === "半包水电工程项点位费")).toEqual([
+      expect.objectContaining({
+        costUnitPrice: "150.0000",
+        quantityFormula: null,
+        rawQuantity: null,
+        remarks: null,
+        saleUnitPrice: "300.0000",
+        sectionName: "十一、水电工程",
+        sourceRow: 194,
+        unit: "个",
+      }),
+    ]);
+    expect(result.items.find((item) => item.itemName === "装修建筑垃圾外运")?.sourceRow).toBe(197);
+  });
+
   it("validates the confirmed 8-section and 178-item V5 workbook", async () => {
     const workbook = await readFile(
       resolve(process.cwd(), "../../../半包报价单_v5.xlsx"),

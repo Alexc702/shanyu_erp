@@ -6,7 +6,7 @@ import ExcelJS from "exceljs";
 import pg from "pg";
 
 const { Pool } = pg;
-const sourcePath = resolve(process.cwd(), "../../../半包报价单_v5.xlsx");
+const sourcePath = resolve(process.cwd(), "../../../半包报价单_v6.xlsx");
 const expectedSections = [
   { code: "WALL", endRow: 24, name: "一、砌墙工程", startRow: 6 },
   { code: "LIVING_DINING", endRow: 78, name: "二、客餐厅工程", startRow: 27 },
@@ -21,11 +21,11 @@ const expectedSections = [
   { code: "PAINT", endRow: 174, name: "十、油漆工程", startRow: 172 },
   {
     code: "ELECTRICAL",
-    endRow: 193,
+    endRow: 194,
     name: "十一、水电工程",
     startRow: 177,
   },
-  { code: "OTHER", endRow: 198, name: "十二、其他工程", startRow: 196 },
+  { code: "OTHER", endRow: 199, name: "十二、其他工程", startRow: 197 },
 ];
 
 const sourceBuffer = await readFile(sourcePath);

@@ -106,6 +106,18 @@ describe("CatalogService", () => {
     });
   });
 
+  it("publishes V6 with exactly one added electrical point fee", async () => {
+    const buffer = await readFile(resolve(process.cwd(), "../../../半包报价单_v6.xlsx"));
+    const batch = await service.validateWorkbook(owner, { buffer, fileName: "半包报价单_v6.xlsx" });
+    expect(batch).toMatchObject({ status: "VALIDATED", validation: { blockerCount: 0, itemCount: 179 } });
+
+    const published = await service.publishBatch(owner, batch.id);
+    expect(published.items).toHaveLength(179);
+    expect(published.sections.find((section) => section.code === "ELECTRICAL")?.itemCount).toBe(18);
+    expect(published.items.filter((item) => item.itemName === "半包水电工程项点位费"))
+      .toEqual([expect.objectContaining({ unit: "个", saleUnitPrice: "300.0000", costUnitPrice: "150.0000", rawQuantity: null })]);
+  });
+
   it("persists blocking differences as a failed batch that cannot publish", async () => {
     const source = await readFile(
       resolve(process.cwd(), "../../../半包报价单_v5.xlsx"),

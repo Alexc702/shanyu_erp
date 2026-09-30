@@ -159,6 +159,12 @@ export interface QuotationRepository {
     scopes: readonly QuotationDraftScope[],
     expectedRevision: number,
   ): Promise<QuotationDraft>;
+  addDraftLine(
+    input: QuotationDraft,
+    scopeId: string,
+    line: QuotationDraftLine,
+    expectedRevision: number,
+  ): Promise<QuotationDraft>;
   saveDraft(
     input: QuotationDraft,
     expectedRevision: number,

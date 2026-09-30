@@ -1143,6 +1143,13 @@ class StaticQuotationRepository implements QuotationRepository {
     return structuredClone(input);
   }
 
+  async addDraftLine(input: QuotationDraft, scopeId: string, line: QuotationDraft["scopes"][number]["lines"][number]): Promise<QuotationDraft> {
+    if (!this.draft) throw new Error("missing quotation");
+    this.draft = { ...this.draft, revision: input.revision, scopes: this.draft.scopes.map((scope) =>
+      scope.id === scopeId ? { ...scope, lines: [...scope.lines, line] } : scope) };
+    return structuredClone(this.draft);
+  }
+
   async saveDraft(input: QuotationDraft): Promise<QuotationDraft> {
     this.draft = structuredClone(input);
     return structuredClone(input);

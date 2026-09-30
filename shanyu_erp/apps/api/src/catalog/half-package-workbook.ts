@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 
 const sourceSheetName = "半包报价模板";
+const pointFeeName = "半包水电工程项点位费";
 
 const expectedSections = [
   { code: "WALL", endRow: 24, headerRow: 5, name: "一、砌墙工程", startRow: 6 },
@@ -62,12 +63,21 @@ export async function validateHalfPackageWorkbook(
     return emptyValidation([`缺少工作表“${sourceSheetName}”`]);
   }
 
+  const hasPointFee = normalizedText(sheet.getRow(194).getCell(3).text) === pointFeeName;
+  const sectionsToRead = expectedSections.map((section) =>
+    section.code === "ELECTRICAL"
+      ? { ...section, endRow: section.endRow + Number(hasPointFee) }
+      : section.code === "OTHER" && hasPointFee
+        ? { ...section, headerRow: section.headerRow + 1, startRow: section.startRow + 1, endRow: section.endRow + 1 }
+        : section,
+  );
+
   const items: HalfPackageWorkbookItem[] = [];
   const sections: HalfPackageWorkbookSection[] = [];
   const warningSourceRows: number[] = [];
   const sectionBlockers: string[] = [];
 
-  for (const [sectionIndex, section] of expectedSections.entries()) {
+  for (const [sectionIndex, section] of sectionsToRead.entries()) {
     if (sectionHeaderText(sheet.getRow(section.headerRow).getCell(3).text) !== section.name) {
       sectionBlockers.push(
         `Excel 第 ${section.headerRow} 行报价分区应为“${section.name}”`,
@@ -107,7 +117,7 @@ export async function validateHalfPackageWorkbook(
     });
   }
 
-  const blockers = [...sectionBlockers, ...validateParsedItems(items, sections)];
+  const blockers = [...sectionBlockers, ...validateParsedItems(items, sections, hasPointFee)];
   const salePriceCount = items.filter((item) => item.saleUnitPrice).length;
   const costPriceCount = items.filter((item) => item.costUnitPrice).length;
 
@@ -130,13 +140,15 @@ export async function validateHalfPackageWorkbook(
 function validateParsedItems(
   items: readonly HalfPackageWorkbookItem[],
   sections: readonly HalfPackageWorkbookSection[],
+  hasPointFee: boolean,
 ): string[] {
   const blockers: string[] = [];
   if (sections.length !== 8) {
     blockers.push(`报价分区应为 8 个，实际为 ${sections.length} 个`);
   }
-  if (items.length !== 178) {
-    blockers.push(`标准工程项应为 178 项，实际为 ${items.length} 项`);
+  const expectedCount = hasPointFee ? 179 : 178;
+  if (items.length !== expectedCount) {
+    blockers.push(`标准工程项应为 ${expectedCount} 项，实际为 ${items.length} 项`);
   }
   for (const item of items) {
     if (!item.itemName || !item.unit) {
@@ -145,7 +157,7 @@ function validateParsedItems(
     if (!item.saleUnitPrice || !item.costUnitPrice) {
       blockers.push(`Excel 第 ${item.sourceRow} 行缺少销售价或成本价`);
     }
-    if (!item.remarks && !knownBlankRemarkRows.has(item.sourceRow)) {
+    if (!item.remarks && !knownBlankRemarkRows.has(item.sourceRow) && !(hasPointFee && item.sourceRow === 194)) {
       blockers.push(`Excel 第 ${item.sourceRow} 行缺少施工说明`);
     }
   }

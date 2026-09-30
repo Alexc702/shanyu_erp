@@ -109,6 +109,72 @@ describe("QuotationService", () => {
     expect(adjusted.designFeeAmount).toBe("6500.0000");
   });
 
+  it("starts the electrical point fee blank and prices it only after manual entry", async () => {
+    repository.template = { ...template, items: [...template.items,
+      item("electrical-point-fee", "ELECTRICAL", "半包水电工程项点位费", "个", "300.0000", "150.0000", null),
+    ] };
+    const draft = await service.getOrCreateDraft(lead, project.id);
+    const line = draft.scopes.flatMap((scope) => scope.lines).find((entry) => entry.itemName === "半包水电工程项点位费");
+    expect(line).toMatchObject({ quantity: null, selected: false, saleUnitPrice: "300.0000", unit: "个" });
+    expect(repository.draft?.scopes.flatMap((scope) => scope.lines).find((entry) => entry.id === line!.id))
+      .toMatchObject({ manualQuantity: null, quantityRule: { kind: "MANUAL" }, costUnitPrice: "150.0000" });
+    const saved = await service.updateLine(lead, project.id, line!.id, {
+      expectedRevision: draft.revision, selected: true, quantity: "2",
+    });
+    expect(saved.scopes.flatMap((scope) => scope.lines).find((entry) => entry.id === line!.id))
+      .toMatchObject({ quantity: "2.0000", amount: "600.0000" });
+    expect(repository.draft?.scopes.flatMap((scope) => scope.lines).find((entry) => entry.id === line!.id))
+      .toMatchObject({ costAmount: "300.0000" });
+    const confirmed = await service.updateDesignFee(lead, project.id, "0", saved.revision);
+    const quoted = await service.submit(lead, project.id, confirmed.revision);
+    const exported = await service.createExport(lead, quoted.id, "XLSX");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(exported.payload as unknown as Parameters<typeof workbook.xlsx.load>[0]);
+    const sheet = workbook.getWorksheet("半包报价单")!;
+    const rowNumber = sheet.getColumn(3).values.findIndex((value) => value === "半包水电工程项点位费");
+    expect(rowNumber).toBeGreaterThan(0);
+    expect([5, 6, 7, 8].map((column) => sheet.getRow(rowNumber).getCell(column).value))
+      .toEqual(["个", 2, 300, 600]);
+  });
+
+  it.each([false, true])("adds the published point fee once to an existing editable draft without changing its other lines (derived=%s)", async (derived) => {
+    const original = await service.getOrCreateDraft(lead, project.id);
+    if (derived) repository.draft = { ...repository.draft!, parentVersionId: "historical-parent" };
+    const before = structuredClone(repository.draft!);
+    repository.template = { ...template, id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", versionNumber: 2,
+      items: [...template.items,
+        item("electrical-point-fee", "ELECTRICAL", "半包水电工程项点位费", "个", "300.0000", "150.0000"),
+      ] };
+
+    const opened = await service.getOrCreateDraft(lead, project.id);
+    expect(opened.revision).toBe(original.revision + 1);
+    expect(opened.templateVersion).toBe(original.templateVersion);
+    expect(opened.total).toBe(original.total);
+    const pointFee = repository.draft!.scopes.flatMap((scope) => scope.lines)
+      .find((line) => line.itemName === "半包水电工程项点位费");
+    expect(pointFee).toMatchObject({ selected: false, manualQuantity: null,
+      quantityRule: { kind: "MANUAL" }, saleUnitPrice: "300.0000", costUnitPrice: "150.0000" });
+    expect(repository.draft!.scopes.flatMap((scope) => scope.lines)
+      .filter((line) => line.id !== pointFee!.id)).toEqual(before.scopes.flatMap((scope) => scope.lines));
+    const reopened = await service.getOrCreateDraft(lead, project.id);
+    expect(reopened.revision).toBe(opened.revision);
+    expect(reopened.scopes.flatMap((scope) => scope.lines)
+      .filter((line) => line.itemName === "半包水电工程项点位费")).toHaveLength(1);
+    expect(audits.at(-1)).toMatchObject({ action: "QUOTATION_DRAFT_REPAIRED" });
+  });
+
+  it("does not add the point fee to a read-only quotation", async () => {
+    await service.getOrCreateDraft(lead, project.id);
+    repository.draft = { ...repository.draft!, status: "QUOTED" };
+    const historical = structuredClone(repository.draft);
+    repository.template = { ...template, items: [...template.items,
+      item("electrical-point-fee", "ELECTRICAL", "半包水电工程项点位费", "个", "300.0000", "150.0000"),
+    ] };
+    const opened = await service.getOrCreateDraft(lead, project.id);
+    expect(opened.status).toBe("QUOTED");
+    expect(repository.draft).toEqual(historical);
+  });
+
   it("creates one draft from the published snapshot and all applicable sections", async () => {
     const quotation = await service.getOrCreateDraft(lead, project.id);
 
@@ -1629,6 +1695,13 @@ class InMemoryQuotationRepository implements QuotationRepository {
   async addDraftScopes(input: QuotationDraft): Promise<QuotationDraft> {
     this.draft = structuredClone(input);
     return structuredClone(input);
+  }
+
+  async addDraftLine(input: QuotationDraft, scopeId: string, line: QuotationDraft["scopes"][number]["lines"][number]): Promise<QuotationDraft> {
+    if (this.draft?.revision !== input.revision - 1) throw new QuotationRevisionConflictError();
+    this.draft = { ...this.draft, revision: input.revision, scopes: this.draft.scopes.map((scope) =>
+      scope.id === scopeId ? { ...scope, lines: [...scope.lines, line] } : scope) };
+    return structuredClone(this.draft);
   }
 
   async saveDraft(input: QuotationDraft): Promise<QuotationDraft> {

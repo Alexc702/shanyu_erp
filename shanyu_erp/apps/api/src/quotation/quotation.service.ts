@@ -150,12 +150,11 @@ export class QuotationService {
     }
     const existing = await this.quotationRepository.findDraft(projectId);
     if (existing) {
-      // Inherited drafts receive targeted quantity corrections and unused duplicate-pipe cleanup only; never expand or reprice them.
-      if (existing.parentVersionId) return toView(await this.repairAcceptanceDraft(actor, existing));
       const repaired = await this.repairAcceptanceDraft(actor, existing);
-      return toView(
-        await this.addMissingProjectScopes(actor, project, repaired),
-      );
+      const withScopes = existing.parentVersionId
+        ? repaired
+        : await this.addMissingProjectScopes(actor, project, repaired);
+      return toView(await this.syncElectricalPointFee(actor, withScopes));
     }
     const latest = await this.quotationRepository.findLatest(projectId);
     if (latest) {
@@ -921,7 +920,12 @@ export class QuotationService {
     }
     return submissionCheck(
       draft,
-      template.items.length,
+      template.items.length + Number(
+        draft.scopes.some((scope) => scope.lines.some((line) =>
+          line.itemName === "半包水电工程项点位费" &&
+          !template.items.some((item) => item.id === line.versionItemId),
+        )),
+      ),
       new Set(template.items.map((item) => item.sectionCode)).size,
     );
   }
@@ -1073,6 +1077,66 @@ export class QuotationService {
       targetType: "HALF_PACKAGE_QUOTATION",
     });
     return synchronized;
+  }
+
+  private async syncElectricalPointFee(
+    actor: SessionUser,
+    draft: QuotationDraft,
+  ): Promise<QuotationDraft> {
+    const name = "半包水电工程项点位费";
+    const scope = draft.scopes.find((candidate) =>
+      candidate.lines.some((line) => line.sectionCode === "ELECTRICAL"),
+    );
+    if (!scope || scope.lines.some((line) => line.itemName === name)) return draft;
+    const published = await this.quotationRepository.findPublishedTemplate();
+    const item = published?.items.find((candidate) =>
+      candidate.sectionCode === "ELECTRICAL" && candidate.itemName === name,
+    );
+    if (!item) return draft;
+
+    const line: QuotationDraftLine = {
+      amount: null,
+      calculatedQuantity: null,
+      costAmount: null,
+      costUnitPrice: item.costUnitPrice,
+      grossMarginRate: null,
+      grossProfit: null,
+      id: randomUUID(),
+      itemName: item.itemName,
+      manualQuantity: null,
+      quantityRule: { kind: "MANUAL" },
+      remarks: item.remarks,
+      saleUnitPrice: item.saleUnitPrice,
+      sectionCode: item.sectionCode,
+      sectionName: item.sectionName,
+      selected: false,
+      sortOrder: item.sortOrder,
+      unit: item.unit,
+      versionItemId: item.id,
+    };
+    let saved: QuotationDraft;
+    try {
+      saved = await this.quotationRepository.addDraftLine(
+        { ...draft, revision: draft.revision + 1 },
+        scope.id,
+        line,
+        draft.revision,
+      );
+    } catch (error) {
+      if (error instanceof QuotationRevisionConflictError) {
+        throw new ConflictException("报价已被其他操作更新，请刷新后重试");
+      }
+      throw error;
+    }
+    await this.auditRepository.append({
+      action: "QUOTATION_DRAFT_REPAIRED",
+      actorUserId: actor.id,
+      occurredAt: new Date(),
+      result: "SUCCESS",
+      targetId: saved.id,
+      targetType: "HALF_PACKAGE_QUOTATION",
+    });
+    return saved;
   }
 
   private calculate(draft: QuotationDraft): QuotationDraft {

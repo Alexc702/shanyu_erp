@@ -483,6 +483,28 @@ export class PgQuotationRepository implements QuotationRepository {
     return saved;
   }
 
+  async addDraftLine(
+    input: QuotationDraft,
+    scopeId: string,
+    line: QuotationDraftLine,
+    expectedRevision: number,
+  ): Promise<QuotationDraft> {
+    await this.database.transaction(async (database) => {
+      const updated = await database.query(
+        `UPDATE half_package_quotations
+            SET revision = $3, updated_at = current_timestamp
+          WHERE id = $1 AND project_id = $2 AND status = 'DRAFT'
+            AND is_current AND revision = $4`,
+        [input.id, input.projectId, input.revision, expectedRevision],
+      );
+      if (updated.rowCount !== 1) throw new QuotationRevisionConflictError();
+      await insertLine(database, scopeId, line);
+    });
+    const saved = await this.findDraft(input.projectId);
+    if (!saved) throw new Error("补齐半包报价工程项后无法读取结果");
+    return saved;
+  }
+
   async saveDraft(
     input: QuotationDraft,
     expectedRevision: number,
