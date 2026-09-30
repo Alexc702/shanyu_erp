@@ -203,11 +203,12 @@ function quantityForRule(
   outerFrameArea: bigint,
   resolveQuantity: (lineId: string) => bigint | null,
 ): bigint | null {
+  if (line.manualQuantity !== null) {
+    return parseDecimal4(line.manualQuantity);
+  }
   switch (line.quantityRule.kind) {
     case "MANUAL":
-      return line.manualQuantity === null
-        ? null
-        : parseDecimal4(line.manualQuantity);
+      return null;
     case "PROJECT_OUTER_FRAME_AREA":
       return outerFrameArea;
     case "SPACE_AREA":

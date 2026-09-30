@@ -346,7 +346,7 @@ export function QuotationEditor({
                         </td>
                         <td>{formatQuotationUnit(line.unit)}</td>
                         <td>
-                          {automatic ? (
+                          {automatic && !editable ? (
                             <span className="automatic-quantity">{formatDisplayNumber(line.quantity)}</span>
                           ) : (
                             <input

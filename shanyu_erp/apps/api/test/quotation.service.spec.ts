@@ -665,8 +665,8 @@ describe("QuotationService", () => {
     });
   });
 
-  it("does not let request data override automatic quantities or snapshot pricing", async () => {
-    const draft = await service.getOrCreateDraft(lead, project.id);
+  it("lets the project lead, owner and admin edit an automatic draft quantity without changing snapshot pricing", async () => {
+    let draft = await service.getOrCreateDraft(lead, project.id);
     const automaticLine = draft.scopes
       .flatMap((scope) => scope.lines)
       .find((line) => line.quantitySource === "PROJECT_OUTER_FRAME_AREA");
@@ -674,23 +674,32 @@ describe("QuotationService", () => {
       throw new Error("测试报价缺少自动工程项");
     }
 
-    await expect(
-      service.updateLine(lead, project.id, automaticLine.id, {
-        expectedRevision: 0,
-        quantity: "1.0000",
+    for (const [actor, quantity] of [[lead, "1"], [owner, "2"], [administrator, "3"]] as const) {
+      draft = await service.updateLine(actor, project.id, automaticLine.id, {
+        expectedRevision: draft.revision,
+        quantity,
         selected: true,
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(
-      service.updateLine(lead, project.id, automaticLine.id, {
-        expectedRevision: 0,
-        quantity: null,
-        selected: true,
-      }),
-    ).resolves.toMatchObject({ revision: 1 });
-    expect(repository.draft?.scopes.flatMap((scope) => scope.lines).find(
-      (line) => line.id === automaticLine.id,
-    )).toMatchObject({ saleUnitPrice: automaticLine.saleUnitPrice });
+      });
+      expect(draft.scopes.flatMap((scope) => scope.lines).find((line) => line.id === automaticLine.id))
+        .toMatchObject({ quantity: `${quantity}.0000`, saleUnitPrice: automaticLine.saleUnitPrice });
+    }
+    expect(repository.draft?.scopes.flatMap((scope) => scope.lines).find((line) => line.id === automaticLine.id))
+      .toMatchObject({ manualQuantity: "3.0000" });
+    for (const actor of [unrelatedLead, woodwork]) {
+      await expect(service.updateLine(actor, project.id, automaticLine.id, {
+        expectedRevision: draft.revision, quantity: "4", selected: true,
+      })).rejects.toBeInstanceOf(NotFoundException);
+    }
+    draft = await service.updateLine(lead, project.id, automaticLine.id, {
+      expectedRevision: draft.revision, quantity: null, selected: true,
+    });
+    expect(draft.scopes.flatMap((scope) => scope.lines).find((line) => line.id === automaticLine.id)?.quantity)
+      .toBe(automaticLine.quantity);
+    draft = await service.updateLine(lead, project.id, automaticLine.id, {
+      expectedRevision: draft.revision, quantity: null, selected: false,
+    });
+    expect(draft.scopes.flatMap((scope) => scope.lines).find((line) => line.id === automaticLine.id))
+      .toMatchObject({ quantity: null, selected: false, amount: null });
   });
 
   it("rejects stale saves and invalid manual quantities", async () => {

@@ -201,12 +201,6 @@ export class QuotationService {
       throw new NotFoundException("报价工程项不存在");
     }
     const normalizedQuantity = normalizeManualQuantity(input.quantity);
-    if (
-      currentLine.quantityRule.kind !== "MANUAL" &&
-      normalizedQuantity !== null
-    ) {
-      throw new BadRequestException("自动数量不能通过请求手工覆盖");
-    }
     if (!input.selected && normalizedQuantity !== null) {
       throw new BadRequestException("未选择的工程项不能填写数量");
     }
@@ -220,10 +214,7 @@ export class QuotationService {
           if (line.id === lineId) {
             return {
               ...line,
-              manualQuantity:
-                line.quantityRule.kind === "MANUAL"
-                  ? normalizedQuantity
-                  : null,
+              manualQuantity: normalizedQuantity,
               selected: input.selected,
             };
           }

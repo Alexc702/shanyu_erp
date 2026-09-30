@@ -104,6 +104,40 @@ describe("HalfPackageCalculator", () => {
     });
   });
 
+  it("uses edited quantities for every automatic rule while leaving untouched rules automatic", () => {
+    const input: QuotationCalculationInput = {
+      discountRate: "1.0000",
+      managementRate: "0.1000",
+      outerFrameArea: "100.0000",
+      scopes: [{
+        area: "20.0000",
+        height: "3.0000",
+        id: "scope",
+        lines: [
+          line("outer", "10.0000", { kind: "PROJECT_OUTER_FRAME_AREA" }, "5.0000"),
+          line("area", "10.0000", { kind: "SPACE_AREA" }, "6.0000"),
+          line("wall", "10.0000", { kind: "SPACE_PERIMETER_HEIGHT" }, "7.0000"),
+          line("source", "10.0000", { kind: "SPACE_AREA" }),
+          line("reference", "10.0000", { kind: "LINE_REFERENCE", referencedLineId: "source" }, "8.0000"),
+          line("automatic-reference", "10.0000", { kind: "LINE_REFERENCE", referencedLineId: "area" }),
+        ],
+        perimeter: "10.0000",
+      }],
+      writeOff: "0.0000",
+    };
+    const result = calculator.calculate(input);
+
+    expect(result.scopes[0]?.lines.map((entry) => entry.quantity)).toEqual([
+      "5.0000", "6.0000", "7.0000", "20.0000", "8.0000", "6.0000",
+    ]);
+    expect(result).toMatchObject({ directCost: "520.0000", managementFee: "52.0000", total: "572.0000" });
+    const changed = calculator.calculate({ ...input, outerFrameArea: "200.0000",
+      scopes: input.scopes.map((scope) => ({ ...scope, area: "30.0000", height: "4.0000", perimeter: "20.0000" })) });
+    expect(changed.scopes[0]?.lines.map((entry) => entry.quantity)).toEqual([
+      "5.0000", "6.0000", "7.0000", "30.0000", "8.0000", "6.0000",
+    ]);
+  });
+
   it("calculates line, scope, and quotation expected margin from the same snapshot", () => {
     const result = calculator.calculate({
       discountRate: "1.0000",
