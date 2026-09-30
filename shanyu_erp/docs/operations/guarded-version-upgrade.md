@@ -10,19 +10,21 @@
    `org.opencontainers.image.revision` 标签，架构为 `amd64`。构建时可使用
    `--label org.opencontainers.image.revision=<完整commit>`。镜像须包含本次新 CLI，
    配置包须包含 `scripts/deployment` 中的 `.sh` **和 `.py`** 文件。
+   打包后须核对归档中的 `server-guarded-upgrade.sh` 和 `release-manifest.py` 与该
+   commit 内容一致；不得沿用旧配置包或从未提交的工作区补拷脚本。
 2. 在隔离候选数据库执行迁移及本地回归，取得迁移后目标主材库 UUID 和内容哈希；
    确认迁移没有改写原账号、项目、历史报价。不要用原始 Excel 文件 SHA 代替内容哈希。
 3. 分别生成测试、生产发布清单，核对主机身份、当前版本、目标镜像 ID、持久卷。
    用户每次明确确认目标环境、版本和维护窗口后，才上传包、加载镜像、执行升级。
-4. 升级脚本获取与备份/恢复共用的 `flock`，检查环境和镜像及脚本能力；校验新
-   Compose 持久卷映射和内部端口未公开。不同终端的升级不能并发运行。
+4. 升级脚本获取与备份/恢复共用的 `flock`，检查环境和镜像及脚本能力；使用目标机
+   现有 Compose 配置校验候选镜像、持久卷映射和内部端口未公开。不同终端的升级不能并发运行。
 5. 进入维护窗口：停止 Caddy、Web、API 和导出 worker，保持 PostgreSQL 不动。
    这是有计划停机（公网暂不可连接），不是无感升级或 503 页面。
    仍有其他数据库连接或 PENDING/RUNNING 导出任务则停止；**不杀连接、不清队列**。
    应提前让导出队列空闲，避免中断正在导出的任务。
 6. 创建并校验部署前备份；测试必须 local，生产必须 COS 上传及回读通过。
    使用候选镜像的只读 CLI 记录 13 张业务表逐行 SHA-256、数量和原列集合。
-7. 保存旧镜像选择与配置，选择候选版本，仅执行向前迁移；按原列验证业务数据完全未变。
+7. 保存旧镜像选择与配置，保留目标机现有 Compose/Caddy 配置，仅切换镜像版本并执行向前迁移；按原列验证业务数据完全未变。
    新增列不参与旧数据指纹，已存在列发生回填/变化也会阻断，不能默默接受。
 8. 固定 UUID + 主材业务内容哈希执行 dry-run，先落盘并验证完整 JSON；再将预览的
    planHash 传入 apply。在同一个更新事务内锁库/报价/选型、重新分析；任何漂移回滚
@@ -46,7 +48,7 @@
 {
   "schema": 1,
   "environment": "test",
-  "origin": "http://115.159.50.166",
+  "origin": "http://43.143.112.208",
   "machineId": "<目标主机/etc/machine-id的32位值>",
   "previousRelease": "<只读核实的当前RELEASE_VERSION>",
   "release": "<本次RELEASE_VERSION>",
@@ -59,8 +61,10 @@
 }
 ```
 
-生产清单使用 `environment=production`、`origin=https://shanyuerp.art`，以及生产自己的
-machineId、previousRelease 和卷名；不可复制测试环境的身份字段。
+`origin` 必须填写目标机现有 `.env.production` 的 `WEB_ORIGIN`，并与目标机身份、环境、
+当前版本和卷名分别核对；示例 IP 不是脚本默认目标。生产环境的 origin 必须是 HTTPS。
+脚本不会复制发布包里的 Compose/Caddy 文件，也不会自动新增 443 或其他端口映射；
+如新版本确实依赖运行配置变更，应另行审核配置差异后升级，不在此流程中隐式覆盖。
 正式 SSH 使用用户已确认的 `shanyu-erp-prod`（124.223.104.225），不是旧交接别名。
 
 内容哈希包含目标库全部商品的业务字段、精确价格字符串和排序后的图片关联，排除
@@ -117,7 +121,7 @@ commit：<完整40位提交>
 现成配置包：<路径>；SHA-256：<哈希>
 发布清单：<release-test.json 或 release-production.json 的绝对路径>
 
-test 仅连接 shanyu-erp-test / 115.159.50.166 / http://115.159.50.166；local 备份，无 COS。
+test 仅连接本次确认的测试主机（如 43.143.112.208）；清单 origin 须等于现场 WEB_ORIGIN；local 备份，无 COS。
 production 仅连接 shanyu-erp-prod / 124.223.104.225 / https://shanyuerp.art；production+cos。
 不得连接另一个环境。SSH 使用 BatchMode=yes、StrictHostKeyChecking=yes；不接受未知指纹。
 
@@ -134,6 +138,7 @@ production 仅连接 shanyu-erp-prod / 124.223.104.225 / https://shanyuerp.art�
 docker load 加载已验证的现成镜像，禁止 docker build / pull；再次核对镜像 revision 和 ID。
 保存清单为 staging/release-<环境>.json（0600），配置包保持标准相对目录结构：
 compose.prod.yaml、Caddyfile、scripts/deployment/*.sh/*.py。
+升级只使用目标机现有 Compose/Caddy；部署前核对现有端口映射，不由发布包新增 443。
 从 staging 调用 server-upgrade.sh，两个参数分别为清单绝对路径、环境:发布版本。
 
 不覆盖 .env.production；保留所有账号、凭据、项目、历史/当前报价、审批、导出和审计。
@@ -158,9 +163,10 @@ compose.prod.yaml、Caddyfile、scripts/deployment/*.sh/*.py。
 ```bash
 # 替换为本次已确认版本；只运行所选环境的一条 SSH 命令。
 RELEASE='<本次RELEASE_VERSION>'
+TEST_SSH='<本次核验的测试机SSH别名或地址>'
 
 # 测试
-ssh -o BatchMode=yes -o StrictHostKeyChecking=yes shanyu-erp-test \
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$TEST_SSH" \
   "bash /srv/shanyu-erp/releases/$RELEASE/scripts/deployment/server-upgrade.sh /srv/shanyu-erp/releases/$RELEASE/release-test.json test:$RELEASE"
 
 # 正式（独立确认后执行；不是紧随测试自动连带发布）

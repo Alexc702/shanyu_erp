@@ -50,9 +50,6 @@ volume_at() {
 [ "$(volume_at postgres /var/lib/postgresql)" = "$postgres_volume" ]
 [ "$(volume_at api /app/export-files)" = "$exports_volume" ]
 [ "$(df -Pm "$DEPLOY_ROOT" | awk 'NR==2 {print $4}')" -ge 2048 ] || { echo 'Less than 2 GiB free; refused' >&2; exit 1; }
-bundle="$(cd "$SCRIPT_DIR/../.." && pwd)"
-require_file "$bundle/compose.prod.yaml"
-require_file "$bundle/Caddyfile"
 install -d -m 0700 "$DEPLOY_ROOT/deployment-reports"
 report="$(mktemp -d "$DEPLOY_ROOT/deployment-reports/$release.XXXXXXXX")"
 cp "$manifest" "$report/manifest.json"
@@ -60,6 +57,7 @@ cp "$COMPOSE_FILE" "$report/compose.previous.yaml"
 cp "$DEPLOY_ROOT/Caddyfile" "$report/Caddyfile.previous"
 cp "$RELEASE_ENV_FILE" "$report/release.previous.env"
 env_fingerprint="$(sha256sum "$ENV_FILE") $(stat -c '%a:%u:%g' "$ENV_FILE")"
+config_fingerprint="$(sha256sum "$COMPOSE_FILE" "$DEPLOY_ROOT/Caddyfile")"
 phase=preflight
 maintenance=0
 finished=0
@@ -80,9 +78,9 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 printf 'API_IMAGE=%s\nWEB_IMAGE=%s\nRELEASE_VERSION=%s\n' "$api" "$web" "$release" >"$report/release.next.env"
-SHANYU_RELEASE_ENV_FILE="$report/release.next.env" SHANYU_COMPOSE_FILE="$bundle/compose.prod.yaml" \
+SHANYU_RELEASE_ENV_FILE="$report/release.next.env" SHANYU_COMPOSE_FILE="$COMPOSE_FILE" \
   bash -c 'source "$1/server-common.sh"; compose config --quiet' sh "$SCRIPT_DIR"
-SHANYU_RELEASE_ENV_FILE="$report/release.next.env" SHANYU_COMPOSE_FILE="$bundle/compose.prod.yaml" \
+SHANYU_RELEASE_ENV_FILE="$report/release.next.env" SHANYU_COMPOSE_FILE="$COMPOSE_FILE" \
   bash -c 'source "$1/server-common.sh"; compose config --format json' sh "$SCRIPT_DIR" | \
   python3 "$SCRIPT_DIR/upgrade-evidence.py" volumes "$postgres_volume" "$exports_volume"
 # Planned downtime, not a 503 page. No firewall, DNS, volume or env file changes.
@@ -114,11 +112,10 @@ api_run() { RELEASE_ENV_FILE="$report/release.next.env" compose run --rm -T --no
 phase=baseline
 api_run scripts/deployment-data-baseline.mjs snapshot ${baseline_flag:+"$baseline_flag"} >"$report/before.json" 2>"$report/baseline.log"
 phase=select-release
+[ "$config_fingerprint" = "$(sha256sum "$COMPOSE_FILE" "$DEPLOY_ROOT/Caddyfile")" ] || { echo 'Deployment config changed during upgrade' >&2; exit 1; }
 if [ "$current" != "$release" ]; then cp "$RELEASE_ENV_FILE" "$DEPLOY_ROOT/.release.previous.env"; fi
 cp "$report/release.next.env" "$RELEASE_ENV_FILE.pending"
 mv "$RELEASE_ENV_FILE.pending" "$RELEASE_ENV_FILE"
-if [ "$bundle/compose.prod.yaml" != "$COMPOSE_FILE" ]; then cp "$bundle/compose.prod.yaml" "$COMPOSE_FILE"; fi
-if [ "$bundle/Caddyfile" != "$DEPLOY_ROOT/Caddyfile" ]; then cp "$bundle/Caddyfile" "$DEPLOY_ROOT/Caddyfile"; fi
 compose config --quiet
 check_image "$api" "$api_id"
 check_image "$web" "$web_id"
@@ -143,6 +140,7 @@ python3 "$SCRIPT_DIR/upgrade-evidence.py" input "$report/before.json" "$report/a
 phase=post-backup
 backup after
 [ "$env_fingerprint" = "$(sha256sum "$ENV_FILE") $(stat -c '%a:%u:%g' "$ENV_FILE")" ]
+[ "$config_fingerprint" = "$(sha256sum "$COMPOSE_FILE" "$DEPLOY_ROOT/Caddyfile")" ] || { echo 'Deployment config changed during upgrade' >&2; exit 1; }
 phase=internal-health
 compose up -d --no-deps --pull never --wait --wait-timeout 180 api web >"$report/start.log" 2>&1
 compose up -d --no-deps --pull never export-storage-init >>"$report/start.log" 2>&1

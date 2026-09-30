@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Validate the reviewed release manifest. Never reads secrets or runs shell text."""
 import json
+import ipaddress
 import re
 import sys
+from urllib.parse import urlsplit
 
 
 def validate(value):
@@ -14,9 +16,25 @@ def validate(value):
     if value["schema"] != 1 or value["environment"] not in ("test", "production"):
         raise ValueError("Unsupported schema/environment")
     environment = value["environment"]
-    origin = {"test": "http://115.159.50.166", "production": "https://shanyuerp.art"}[environment]
-    if value["origin"] != origin:
-        raise ValueError("Origin does not match environment")
+    origin = value["origin"]
+    if not isinstance(origin, str):
+        raise ValueError("Invalid origin")
+    parsed = urlsplit(origin)
+    if (parsed.scheme not in ("http", "https") or not parsed.netloc or
+            parsed.username is not None or parsed.password is not None or
+            parsed.path or parsed.query or parsed.fragment or
+            origin != f"{parsed.scheme}://{parsed.netloc}" or
+            parsed.port == 0 or (environment == "production" and parsed.scheme != "https")):
+        raise ValueError("Invalid origin")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Invalid origin host")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                   for label in host.split(".")):
+            raise ValueError("Invalid origin host")
     tag = r"[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}"
     release = match(value["release"], tag)
     output = [environment, origin, release, match(value["commit"], r"[0-9a-f]{40}"),

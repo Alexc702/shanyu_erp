@@ -81,13 +81,14 @@ class UpgradeTests(unittest.TestCase):
         self.bin.mkdir()
         for filename in ("server-upgrade.sh", "server-guarded-upgrade.sh", "server-common.sh", "release-manifest.py", "upgrade-evidence.py"):
             shutil.copy(SCRIPTS / filename, self.scripts / filename)
-        for directory in (self.bundle, self.live):
-            (directory / "compose.prod.yaml").write_text("name: shanyu-erp\n")
-            (directory / "Caddyfile").write_text(":80 {}\n")
-        (self.live / ".env.production").write_text("SHANYU_DEPLOYMENT_ENVIRONMENT=test\nSHANYU_BACKUP_MODE=local\nWEB_ORIGIN=http://115.159.50.166\n")
+        (self.bundle / "compose.prod.yaml").write_text("name: shanyu-erp\nservices:\n  caddy:\n    ports:\n      - '80:80'\n      - '443:443'\n")
+        (self.bundle / "Caddyfile").write_text(":443 {}\n")
+        (self.live / "compose.prod.yaml").write_text("name: shanyu-erp\nservices:\n  caddy:\n    ports:\n      - '80:80'\n")
+        (self.live / "Caddyfile").write_text(":80 {}\n")
+        (self.live / ".env.production").write_text("SHANYU_DEPLOYMENT_ENVIRONMENT=test\nSHANYU_BACKUP_MODE=local\nWEB_ORIGIN=http://43.143.112.208\n")
         (self.live / ".env.production").chmod(0o600)
         (self.live / ".release.env").write_text("API_IMAGE=old-api\nWEB_IMAGE=old-web\nRELEASE_VERSION=old\n")
-        self.value = {"schema": 1, "environment": "test", "origin": "http://115.159.50.166", "release": "test-next",
+        self.value = {"schema": 1, "environment": "test", "origin": "http://43.143.112.208", "release": "test-next",
                       "previousRelease": "old", "commit": "d" * 40, "machineId": "a" * 32,
                       "api": {"ref": "shanyu-erp-api:test-next", "id": "sha256:" + "b" * 64},
                       "web": {"ref": "shanyu-erp-web:test-next", "id": "sha256:" + "c" * 64},
@@ -127,6 +128,8 @@ if [ "${FAKE_COS_OK:-0}" = 1 ]; then printf 'synthetic COS readback marker' >"$p
 
     def test_success_order_reports_permissions_and_repeat(self):
         before = (self.live / ".env.production").read_bytes()
+        live_compose = (self.live / "compose.prod.yaml").read_bytes()
+        live_caddy = (self.live / "Caddyfile").read_bytes()
         result = self.run_upgrade()
         self.assertEqual(result.returncode, 0, result.stderr)
         commands = (self.root / "commands").read_text()
@@ -141,6 +144,9 @@ if [ "${FAKE_COS_OK:-0}" = 1 ]; then printf 'synthetic COS readback marker' >"$p
             self.assertEqual((report / name).stat().st_mode & 0o077, 0)
         self.assertEqual(report.stat().st_mode & 0o777, 0o700)
         self.assertEqual(before, (self.live / ".env.production").read_bytes())
+        self.assertEqual(live_compose, (self.live / "compose.prod.yaml").read_bytes())
+        self.assertEqual(live_caddy, (self.live / "Caddyfile").read_bytes())
+        self.assertNotIn(str(self.bundle / "compose.prod.yaml"), commands)
         previous = (self.live / ".release.previous.env").read_bytes()
         self.assertEqual(self.run_upgrade().returncode, 0)
         self.assertEqual(previous, (self.live / ".release.previous.env").read_bytes())
@@ -198,11 +204,25 @@ if [ "${FAKE_COS_OK:-0}" = 1 ]; then printf 'synthetic COS readback marker' >"$p
 
     def test_manifest_rejects_wrong_environment_injection_and_missing_pin(self):
         MANIFEST.validate(self.value)
-        for field, value in (("origin", "https://124.223.104.225"), ("release", "$(touch bad)"), ("machineId", "")):
+        for field, value in (("origin", "http://43.143.112.208/path"),
+                             ("origin", "http://43.143.112.208:99999"),
+                             ("origin", "http://user@43.143.112.208"),
+                             ("release", "$(touch bad)"), ("machineId", "")):
             with self.assertRaises(ValueError):
                 MANIFEST.validate({**self.value, field: value})
         with self.assertRaises(KeyError):
             MANIFEST.validate({**self.value, "catalog": {"id": self.value["catalog"]["id"]}})
+        with self.assertRaises(ValueError):
+            MANIFEST.validate({**self.value, "environment": "production"})
+        MANIFEST.validate({**self.value, "environment": "production", "origin": "https://new.example.com"})
+
+    def test_new_test_origin_must_match_live_environment_before_maintenance(self):
+        self.value["origin"] = "http://test.example.com:8080"
+        self.manifest.write_text(json.dumps(self.value))
+        self.assertNotEqual(self.run_upgrade().returncode, 0)
+        self.assertFalse((self.live / ".upgrade-maintenance").exists())
+        (self.live / ".env.production").write_text("SHANYU_DEPLOYMENT_ENVIRONMENT=test\nSHANYU_BACKUP_MODE=local\nWEB_ORIGIN=http://test.example.com:8080\n")
+        self.assertEqual(self.run_upgrade().returncode, 0)
 
     def test_production_requires_cos_evidence_and_https(self):
         self.value.update(environment="production", origin="https://shanyuerp.art")
